@@ -3,6 +3,7 @@ import {
   Achievement,
   Application,
   BankSnapshot,
+  Certification,
   CoverLetterBlock,
   CoverLetterDraft,
   CoverLetterPrioritizedFix,
@@ -16,9 +17,11 @@ import {
   PositionedText,
   PrioritizedFix,
   Project,
+  RawDocument,
   Result,
   RoundTripReport,
   Skill,
+  SkillCategory,
   TEMPLATE_SPEC_VERSION,
   TailoredBullet,
   UserPreferences,
@@ -1501,110 +1504,115 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             };
           }
 
-          const currentBank = await deps.bankRepo.getSnapshot();
-          const { provider, supportsJsonSchema } = await getActiveLlmProvider();
-
-          let parsedData: z.infer<typeof LlmStructuredResumeSchema>;
-          try {
-            parsedData = await executeStructuredLlmCall(
-              provider,
-              buildStructureResumePrompt(rawDoc.text),
-              LlmStructuredResumeSchema,
-              supportsJsonSchema,
-            );
-          } catch {
-            parsedData = fallbackParseResumeText(rawDoc.text);
+        if (
+          file.name.toLowerCase().endsWith('.json') ||
+          rawDoc.formatId === 'json' ||
+          rawDoc.text.trim().startsWith('{')
+        ) {
+          const directJsonRes = await this.parseJsonAndPropose(
+            rawDoc.text,
+            file.name,
+          );
+          if (directJsonRes.ok) {
+            return directJsonRes;
           }
+        }
 
-          const existingCompanies = new Set(
-            currentBank.experiences.map((e) => e.company.toLowerCase().trim()),
+        const currentBank = await deps.bankRepo.getSnapshot();
+        const { provider, supportsJsonSchema } = await getActiveLlmProvider();
+
+        let parsedData: z.infer<typeof LlmStructuredResumeSchema>;
+        try {
+          parsedData = await executeStructuredLlmCall(
+            provider,
+            buildStructureResumePrompt(rawDoc.text),
+            LlmStructuredResumeSchema,
+            supportsJsonSchema,
           );
-          const existingSkills = new Set(
-            currentBank.skills.map((s) => normalizeKeyword(s.name)),
-          );
+        } catch {
+          parsedData = fallbackParseResumeText(rawDoc.text);
+        }
 
-          const proposedExperiences = (parsedData.experiences ?? []).map(
-            (exp) => {
-              const expId = deps.idGen.nextId('exp');
-              const isDuplicate = existingCompanies.has(
-                exp.company.toLowerCase().trim(),
-              );
-              const experience: Experience = {
-                id: expId,
-                company: exp.company,
-                title: exp.title,
-                location: exp.location ?? 'Remote',
-                start: exp.start || '2022',
-                end: exp.end || 'Present',
-              };
-              const achievements: Achievement[] = exp.achievements.map((a) => ({
-                id: deps.idGen.nextId('ach'),
-                experienceId: expId,
-                action: a.action,
-                result: a.result,
-                metric: a.metric,
-                skillIds: [],
-                tags: a.tags ?? ['imported'],
-              }));
-              return { experience, achievements, isDuplicate };
-            },
-          );
+        const candidate = buildCandidateFromStructuredData(
+          parsedData as Record<string, unknown>,
+          rawDoc,
+          currentBank,
+          deps.idGen,
+        );
 
-          const proposedSkills = (parsedData.skills ?? []).map((s) => {
-            const norm = normalizeKeyword(s.name);
-            return {
-              skill: {
-                id: deps.idGen.nextId('skill'),
-                name: s.name,
-                category: s.category ?? 'Tools',
-                aliases: s.aliases ?? [],
-              } as Skill,
-              isDuplicate: existingSkills.has(norm),
-            };
-          });
-
-          const proposedEducations: Education[] = [];
-          const proposedProjects: Project[] = [];
-
+        return {
+          ok: true,
+          value: candidate,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('SCANNED_PDF')) {
           return {
-            ok: true,
-            value: {
-              rawDocument: rawDoc,
-              proposedProfile: {
-                name: parsedData.name,
-                headline: parsedData.headline,
-                email: parsedData.email,
-                phone: parsedData.phone,
-                location: parsedData.location,
-              },
-              proposedExperiences,
-              proposedSkills,
-              proposedEducations,
-              proposedProjects,
-              proposedCertifications: [],
+            ok: false,
+            error: {
+              code: 'IMPORT_SCANNED_PDF',
+              message:
+                'Scanned PDF detected with no selectable text layer. Please upload a text-based PDF or Markdown file.',
             },
           };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes('SCANNED_PDF')) {
-            return {
-              ok: false,
-              error: {
-                code: 'IMPORT_SCANNED_PDF',
-                message:
-                  'Scanned PDF detected with no selectable text layer. Please upload a text-based PDF or Markdown file.',
-              },
-            };
-          }
+        }
+        return {
+          ok: false,
+          error: {
+            code: 'IMPORT_PARSE_FAILED',
+            message: `Could not parse "${file.name}": ${msg}`,
+          },
+        };
+      }
+    },
+
+    async parseJsonAndPropose(
+      rawJson: string,
+      sourceName = 'External LLM',
+    ): Promise<Result<ParsedResumeCandidate>> {
+      try {
+        const trimmed = rawJson.trim();
+        const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        const candidateJson = fenced ? fenced[1].trim() : trimmed;
+        const parsed = JSON.parse(candidateJson);
+        if (typeof parsed !== 'object' || parsed === null) {
           return {
             ok: false,
             error: {
               code: 'IMPORT_PARSE_FAILED',
-              message: `Could not parse "${file.name}": ${msg}`,
+              message: 'The content is not a valid JSON object.',
             },
           };
         }
-      },
+        const currentBank = await deps.bankRepo.getSnapshot();
+        const candidate = buildCandidateFromStructuredData(
+          parsed as Record<string, unknown>,
+          {
+            fileName: sourceName.endsWith('.json')
+              ? sourceName
+              : `${sourceName}.json`,
+            formatId: 'json',
+            text: candidateJson,
+            pageCount: 1,
+          },
+          currentBank,
+          deps.idGen,
+        );
+        return { ok: true, value: candidate };
+      } catch (err) {
+        return {
+          ok: false,
+          error: {
+            code: 'IMPORT_PARSE_FAILED',
+            message:
+              err instanceof Error
+                ? `JSON parse error: ${err.message}`
+                : 'Invalid JSON content.',
+            hint: 'Please check that the JSON is valid and formatted correctly.',
+          },
+        };
+      }
+    },
 
       async commitImport(
         candidate: ParsedResumeCandidate,
@@ -3441,8 +3449,13 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       async importAllDataJson(rawJson: string) {
         try {
           const parsed = JSON.parse(rawJson);
-          if (parsed.bank) {
-            await deps.bankRepo.saveSnapshot(parsed.bank);
+          const targetBank =
+            parsed.bank ??
+            (parsed.profile && Array.isArray(parsed.experiences)
+              ? parsed
+              : null);
+          if (targetBank) {
+            await deps.bankRepo.saveSnapshot(targetBank);
           }
           if (Array.isArray(parsed.applications)) {
             for (const app of parsed.applications) {
@@ -4528,6 +4541,194 @@ function fallbackParseResumeText(
       category: k.kind === 'tool' ? 'Infrastructure' : 'Languages',
       aliases: [],
     })),
+  };
+}
+
+export function buildCandidateFromStructuredData(
+  parsedData: Record<string, unknown>,
+  rawDoc: RawDocument,
+  currentBank: BankSnapshot,
+  idGen: IdGenerator,
+): ParsedResumeCandidate {
+  const root =
+    parsedData.bank && typeof parsedData.bank === 'object'
+      ? (parsedData.bank as Record<string, unknown>)
+      : parsedData;
+
+  const existingCompanies = new Set(
+    currentBank.experiences.map((e) => e.company.toLowerCase().trim()),
+  );
+  const existingSkills = new Set(
+    currentBank.skills.map((s) => normalizeKeyword(s.name)),
+  );
+
+  const rawExperiences = Array.isArray(root.experiences)
+    ? (root.experiences as Array<Record<string, unknown>>)
+    : [];
+  const rawAchievements = Array.isArray(root.achievements)
+    ? (root.achievements as Array<Record<string, unknown>>)
+    : [];
+
+  const proposedExperiences = rawExperiences.map((exp, expIdx) => {
+    const expId = typeof exp.id === 'string' ? exp.id : idGen.nextId('exp');
+    const company = String(exp.company || `Company ${expIdx + 1}`);
+    const title = String(exp.title || 'Software Engineer');
+    const isDuplicate = existingCompanies.has(company.toLowerCase().trim());
+    const experience: Experience = {
+      id: expId,
+      company,
+      title,
+      location: typeof exp.location === 'string' ? exp.location : 'Remote',
+      start: typeof exp.start === 'string' && exp.start ? exp.start : '2022',
+      end: typeof exp.end === 'string' && exp.end ? exp.end : 'Present',
+    };
+
+    let achList = Array.isArray(exp.achievements) ? exp.achievements : [];
+    if (achList.length === 0 && rawAchievements.length > 0) {
+      achList = rawAchievements.filter(
+        (a) =>
+          a &&
+          typeof a === 'object' &&
+          (a.experienceId === exp.id || a.experienceId === expId),
+      );
+    }
+
+    const achievements: Achievement[] = achList.map((a, aIdx) => {
+      const achId =
+        typeof a === 'object' && a && typeof a.id === 'string'
+          ? a.id
+          : idGen.nextId('ach');
+      if (typeof a === 'string') {
+        const metricMatch = a.match(/\$?\d+(?:[.,]\d+)*(?:%|x|ms|s|k|m|b|\+)/i);
+        return {
+          id: achId,
+          experienceId: expId,
+          action: a,
+          result: 'delivering measurable engineering impact',
+          metric: metricMatch ? metricMatch[0] : undefined,
+          skillIds: [],
+          tags: ['imported'],
+        };
+      }
+      const aObj = (a && typeof a === 'object' ? a : {}) as Record<
+        string,
+        unknown
+      >;
+      return {
+        id: achId,
+        experienceId: expId,
+        action: String(
+          aObj.action ||
+            aObj.description ||
+            aObj.text ||
+            `Achievement ${aIdx + 1}`,
+        ),
+        result: String(
+          aObj.result || aObj.impact || 'delivering measurable production impact',
+        ),
+        metric: typeof aObj.metric === 'string' ? aObj.metric : undefined,
+        skillIds: Array.isArray(aObj.skillIds)
+          ? (aObj.skillIds as string[])
+          : [],
+        tags: Array.isArray(aObj.tags) ? (aObj.tags as string[]) : ['imported'],
+      };
+    });
+
+    return { experience, achievements, isDuplicate };
+  });
+
+  const rawSkills = Array.isArray(root.skills) ? root.skills : [];
+  const proposedSkills = rawSkills.map((s, sIdx) => {
+    const sObj =
+      typeof s === 'string'
+        ? { name: s }
+        : s && typeof s === 'object'
+          ? (s as Record<string, unknown>)
+          : { name: `Skill ${sIdx + 1}` };
+    const name = String(sObj.name || `Skill ${sIdx + 1}`);
+    const norm = normalizeKeyword(name);
+    const validCategories = [
+      'Languages',
+      'Frameworks',
+      'Infrastructure',
+      'Data & AI',
+      'Practices',
+      'Tools',
+    ];
+    const category = (
+      validCategories.includes(String(sObj.category))
+        ? String(sObj.category)
+        : 'Tools'
+    ) as SkillCategory;
+    return {
+      skill: {
+        id: typeof sObj.id === 'string' ? sObj.id : idGen.nextId('skill'),
+        name,
+        category,
+        aliases: Array.isArray(sObj.aliases) ? (sObj.aliases as string[]) : [],
+      } as Skill,
+      isDuplicate: existingSkills.has(norm),
+    };
+  });
+
+  const rawEducations = Array.isArray(root.educations)
+    ? (root.educations as Array<Record<string, unknown>>)
+    : [];
+  const proposedEducations: Education[] = rawEducations.map((e, eIdx) => ({
+    id: typeof e.id === 'string' ? e.id : idGen.nextId('edu'),
+    institution: String(e.institution || `Institution ${eIdx + 1}`),
+    degree: String(e.degree || 'Degree'),
+    field: typeof e.field === 'string' ? e.field : '',
+    location: typeof e.location === 'string' ? e.location : '',
+    start: typeof e.start === 'string' ? e.start : '',
+    end: typeof e.end === 'string' ? e.end : '',
+    highlights: typeof e.highlights === 'string' ? e.highlights : undefined,
+  }));
+
+  const rawProjects = Array.isArray(root.projects)
+    ? (root.projects as Array<Record<string, unknown>>)
+    : [];
+  const proposedProjects: Project[] = rawProjects.map((p, pIdx) => ({
+    id: typeof p.id === 'string' ? p.id : idGen.nextId('proj'),
+    name: String(p.name || `Project ${pIdx + 1}`),
+    role: String(p.role || 'Creator & Maintainer'),
+    description: String(p.description || ''),
+    link: typeof p.link === 'string' ? p.link : undefined,
+    skillIds: Array.isArray(p.skillIds) ? (p.skillIds as string[]) : [],
+    highlights: Array.isArray(p.highlights) ? (p.highlights as string[]) : [],
+  }));
+
+  const rawCerts = Array.isArray(root.certifications)
+    ? (root.certifications as Array<Record<string, unknown>>)
+    : [];
+  const proposedCertifications: Certification[] = rawCerts.map((c, cIdx) => ({
+    id: typeof c.id === 'string' ? c.id : idGen.nextId('cert'),
+    name: String(c.name || `Certification ${cIdx + 1}`),
+    issuer: String(c.issuer || ''),
+    date: typeof c.date === 'string' ? c.date : '',
+    credentialId: typeof c.credentialId === 'string' ? c.credentialId : undefined,
+  }));
+
+  const profile = (
+    root.profile && typeof root.profile === 'object' ? root.profile : root
+  ) as Record<string, unknown>;
+
+  return {
+    rawDocument: rawDoc,
+    proposedProfile: {
+      name: typeof profile.name === 'string' ? profile.name : undefined,
+      headline:
+        typeof profile.headline === 'string' ? profile.headline : undefined,
+      email: typeof profile.email === 'string' ? profile.email : undefined,
+      phone: typeof profile.phone === 'string' ? profile.phone : undefined,
+      location:
+        typeof profile.location === 'string' ? profile.location : undefined,
+    },
+    proposedExperiences,
+    proposedSkills,
+    proposedEducations,
+    proposedProjects,
+    proposedCertifications,
   };
 }
 

@@ -1,13 +1,16 @@
 import {
   Briefcase,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Edit3,
   FolderGit2,
   GraduationCap,
   MoreHorizontal,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   User,
@@ -63,6 +66,77 @@ const SKILL_CATEGORIES: SkillCategory[] = [
   'Tools',
 ];
 
+const EXTERNAL_LLM_PROMPT_TEMPLATE = `Please convert my attached CV / resume into the following JSON structure for the Cevin Experience Bank.
+Return ONLY valid raw JSON with no markdown wrapping and no conversational prose.
+
+{
+  "profile": {
+    "name": "Full Name",
+    "headline": "Professional Headline",
+    "email": "email@example.com",
+    "phone": "+1 (555) 000-0000",
+    "location": "City, State",
+    "links": [
+      { "label": "GitHub", "url": "https://github.com/..." },
+      { "label": "LinkedIn", "url": "https://linkedin.com/in/..." }
+    ]
+  },
+  "experiences": [
+    {
+      "company": "Company Name",
+      "title": "Role Title",
+      "location": "City, State / Remote",
+      "start": "2022-01",
+      "end": "Present",
+      "achievements": [
+        {
+          "action": "Action you spearheaded or engineered (past tense verb)",
+          "result": "quantifiable business or technical outcome achieved",
+          "metric": "e.g. 35% latency reduction or $2M volume (optional)",
+          "tags": ["infrastructure", "go"]
+        }
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "name": "Skill Name",
+      "category": "Languages",
+      "aliases": ["Alias"]
+    }
+  ],
+  "educations": [
+    {
+      "institution": "University / Institution",
+      "degree": "Degree Title",
+      "field": "Field of Study",
+      "location": "City, State",
+      "start": "2016",
+      "end": "2020",
+      "highlights": "Honors / coursework"
+    }
+  ],
+  "projects": [
+    {
+      "name": "Project Name",
+      "role": "Creator & Maintainer",
+      "description": "Short project description",
+      "link": "https://...",
+      "highlights": ["Adoption or key result"]
+    }
+  ],
+  "certifications": [
+    {
+      "name": "Certification Name",
+      "issuer": "Issuing Body",
+      "date": "2024"
+    }
+  ]
+}
+
+Valid categories for skills are ONLY: "Languages", "Frameworks", "Infrastructure", "Data & AI", "Practices", or "Tools".
+Make sure achievements describe quantifiable outcomes with past tense verbs.`;
+
 export function BankView() {
   const useCases = useCevinUseCases();
   const addToast = useUiStore((s) => s.addToast);
@@ -81,6 +155,11 @@ export function BankView() {
     string | null
   >(null);
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  const [importMethod, setImportMethod] = useState<'upload' | 'llm-prompt'>(
+    'upload',
+  );
+  const [pastedJson, setPastedJson] = useState('');
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [proposedImport, setProposedImport] =
     useState<ParsedResumeCandidate | null>(null);
@@ -256,7 +335,16 @@ export function BankView() {
 
   const handleFileUpload = async (file: File) => {
     setIsParsingFile(true);
-    const res = await useCases.importResumeFile.parseAndPropose(file);
+    let res;
+    if (file.name.toLowerCase().endsWith('.json')) {
+      const text = await file.text();
+      res = await useCases.importResumeFile.parseJsonAndPropose(
+        text,
+        file.name,
+      );
+    } else {
+      res = await useCases.importResumeFile.parseAndPropose(file);
+    }
     setIsParsingFile(false);
     if (!res.ok) {
       addToast(res.error.message, 'danger');
@@ -283,8 +371,14 @@ export function BankView() {
     bank.experiences.find((e) => e.id === editingRoleId) ?? null;
 
   const importFormats = useCases.listImportFormats.execute();
-  const acceptedExts = importFormats.flatMap((f) => f.extensions);
-  const acceptedLabels = importFormats.map((f) => f.label);
+  const acceptedExts = [
+    ...importFormats.flatMap((f) => f.extensions),
+    '.json',
+  ];
+  const acceptedLabels = [
+    ...importFormats.map((f) => f.label),
+    'JSON backup or LLM export',
+  ];
 
   return (
     <div className="space-y-6 pb-16">
@@ -1310,17 +1404,130 @@ export function BankView() {
       {/* Import Resume Drawer */}
       <Drawer
         open={importDrawerOpen}
-        onOpenChange={setImportDrawerOpen}
+        onOpenChange={(open) => {
+          setImportDrawerOpen(open);
+          if (!open) {
+            setProposedImport(null);
+            setPastedJson('');
+          }
+        }}
         title="Import Resume into Experience Bank"
-        description="Upload a text-based PDF or Markdown resume. You can review proposed roles and skills before merging."
+        description="Upload a resume file (PDF, Markdown, JSON) or copy our prompt to parse your CV with Claude, ChatGPT, or Gemini."
       >
         <div className="space-y-4">
-          <FileDropzone
-            acceptedExtensions={acceptedExts}
-            acceptedLabels={acceptedLabels}
-            isBusy={isParsingFile}
-            onFileSelected={(file) => void handleFileUpload(file)}
+          <SegmentedControl<'upload' | 'llm-prompt'>
+            ariaLabel="Import method"
+            value={importMethod}
+            onValueChange={(val) => {
+              setImportMethod(val);
+              setProposedImport(null);
+            }}
+            options={[
+              { value: 'upload', label: 'Upload file (PDF, MD, JSON)' },
+              { value: 'llm-prompt', label: 'External LLM prompt & paste' },
+            ]}
           />
+
+          {importMethod === 'upload' ? (
+            <div className="space-y-3">
+              <FileDropzone
+                acceptedExtensions={acceptedExts}
+                acceptedLabels={acceptedLabels}
+                isBusy={isParsingFile}
+                onFileSelected={(file) => void handleFileUpload(file)}
+              />
+              <div className="flex items-center justify-between text-xs text-ink-muted px-1">
+                <span>Want to map your CV using Claude, ChatGPT, or Gemini?</span>
+                <button
+                  type="button"
+                  onClick={() => setImportMethod('llm-prompt')}
+                  className="text-accent font-semibold hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Copy prompt</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 text-xs">
+              <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-ink inline-flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-accent" />
+                    <span>Step 1: Copy prompt for Claude / ChatGPT / Gemini</span>
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(
+                        EXTERNAL_LLM_PROMPT_TEMPLATE,
+                      );
+                      setCopiedPrompt(true);
+                      setTimeout(() => setCopiedPrompt(false), 2000);
+                      addToast('Copied LLM prompt to clipboard.', 'success');
+                    }}
+                  >
+                    {copiedPrompt ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-success" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy prompt</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-ink-muted text-[11px] leading-relaxed">
+                  Paste this prompt along with your CV or markdown file into
+                  your preferred LLM. It maps your profile, roles, achievements,
+                  and skills directly to Cevin’s structure.
+                </p>
+                <div className="relative rounded-md bg-canvas border border-border p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] text-ink-muted leading-relaxed">
+                  {EXTERNAL_LLM_PROMPT_TEMPLATE}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block font-semibold text-ink">
+                  Step 2: Paste the JSON returned by your LLM
+                </label>
+                <textarea
+                  value={pastedJson}
+                  onChange={(e) => setPastedJson(e.target.value)}
+                  placeholder={`{\n  "profile": { "name": "..." },\n  "experiences": [ ... ],\n  "skills": [ ... ]\n}`}
+                  rows={6}
+                  className="w-full rounded-md border border-border bg-surface p-2.5 font-mono text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-hidden focus:ring-1 focus:ring-accent"
+                />
+                <div className="flex justify-end">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!pastedJson.trim() || isParsingFile}
+                    onClick={async () => {
+                      setIsParsingFile(true);
+                      const res =
+                        await useCases.importResumeFile.parseJsonAndPropose(
+                          pastedJson,
+                          'External LLM',
+                        );
+                      setIsParsingFile(false);
+                      if (res.ok) {
+                        setProposedImport(res.value);
+                      } else {
+                        addToast(res.error.message, 'danger');
+                      }
+                    }}
+                  >
+                    <span>Parse & review JSON</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {proposedImport && (
             <div className="space-y-4 p-4 rounded-lg bg-surface-sunken border border-hairline text-xs">

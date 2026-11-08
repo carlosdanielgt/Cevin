@@ -14,8 +14,9 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Upload,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppSettings,
   ConnectionDiagnosticResult,
@@ -90,6 +91,7 @@ export function SettingsView({
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationStep, setCalibrationStep] = useState('');
   const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
 
   const loadAll = useCallback(async () => {
     const [loadedSettings, summary, loadedPrefs] = await Promise.all([
@@ -795,6 +797,42 @@ export function SettingsView({
               >
                 <Download className="w-4 h-4" />
                 <span>Export backup (.json)</span>
+              </Button>
+
+              <input
+                ref={jsonInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const res =
+                      await useCases.manageBank.importAllDataJson(text);
+                    if (res.ok) {
+                      addToast(
+                        'Restored workspace from JSON backup.',
+                        'success',
+                      );
+                      void loadAll();
+                    } else {
+                      addToast(res.error.message, 'danger');
+                    }
+                  } catch {
+                    addToast('Failed to read JSON backup file.', 'danger');
+                  }
+                  e.target.value = '';
+                }}
+              />
+
+              <Button
+                variant="secondary"
+                onClick={() => jsonInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4" />
+                <span>Import backup (.json)</span>
               </Button>
 
               <Button

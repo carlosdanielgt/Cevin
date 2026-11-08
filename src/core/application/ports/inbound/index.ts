@@ -59,6 +59,10 @@ export interface ParsedResumeCandidate {
 
 export interface ImportResumeFileUseCase {
   parseAndPropose(file: File): Promise<Result<ParsedResumeCandidate>>;
+  parseJsonAndPropose(
+    rawJson: string,
+    sourceName?: string,
+  ): Promise<Result<ParsedResumeCandidate>>;
   commitImport(
     candidate: ParsedResumeCandidate,
     duplicateStrategy: 'merge' | 'skip',
