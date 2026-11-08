@@ -1,0 +1,1371 @@
+import {
+  Briefcase,
+  ChevronDown,
+  ChevronRight,
+  Edit3,
+  FolderGit2,
+  GraduationCap,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  User,
+  Wrench,
+} from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ParsedResumeCandidate } from '../../../../../core/application';
+import {
+  Achievement,
+  BankSnapshot,
+  Education,
+  Experience,
+  Project,
+  Skill,
+  SkillCategory,
+  assembleBulletText,
+  formatCount,
+} from '../../../../../core/domain';
+import { useCevinUseCases, useUiStore } from '../../context';
+import {
+  Avatar,
+  Badge,
+  Button,
+  Drawer,
+  EmptyState,
+  FileDropzone,
+  IconButton,
+  Input,
+  MetricChip,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  SegmentedControl,
+  Select,
+  TagChip,
+  Textarea,
+} from '../../ui/primitives';
+import { PageHeader, TimelineRail } from '../../ui/signatures';
+
+type BankSection =
+  | 'experience'
+  | 'skills'
+  | 'projects'
+  | 'education'
+  | 'profile';
+
+const SKILL_CATEGORIES: SkillCategory[] = [
+  'Languages',
+  'Frameworks',
+  'Infrastructure',
+  'Data & AI',
+  'Practices',
+  'Tools',
+];
+
+export function BankView() {
+  const useCases = useCevinUseCases();
+  const addToast = useUiStore((s) => s.addToast);
+
+  const [bank, setBank] = useState<BankSnapshot | null>(null);
+  const [activeSection, setActiveSection] = useState<BankSection>('experience');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [expandedRoleIds, setExpandedRoleIds] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Drawers & inline edit states
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [editingAchievementId, setEditingAchievementId] = useState<
+    string | null
+  >(null);
+  const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  const [isParsingFile, setIsParsingFile] = useState(false);
+  const [proposedImport, setProposedImport] =
+    useState<ParsedResumeCandidate | null>(null);
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'merge' | 'skip'>(
+    'merge',
+  );
+
+  // New skill state
+  const [newSkillName, setNewSkillName] = useState('');
+  const [newSkillCategory, setNewSkillCategory] =
+    useState<SkillCategory>('Languages');
+  const [newSkillAliases, setNewSkillAliases] = useState('');
+
+  const loadBank = useCallback(async () => {
+    const loaded = await useCases.manageBank.getBank();
+    setBank(loaded);
+    if (loaded.experiences[0]) {
+      setExpandedRoleIds((prev) =>
+        Object.keys(prev).length === 0
+          ? { [loaded.experiences[0].id]: true }
+          : prev,
+      );
+    }
+  }, [useCases]);
+
+  useEffect(() => {
+    void loadBank();
+  }, [loadBank]);
+
+  const persistBank = async (next: BankSnapshot) => {
+    setBank(next);
+    await useCases.manageBank.saveBank(next);
+  };
+
+  const allTags = useMemo(() => {
+    if (!bank) return [];
+    const counts = new Map<string, number>();
+    for (const ach of bank.achievements) {
+      for (const tag of ach.tags) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1]);
+  }, [bank]);
+
+  if (!bank) {
+    return (
+      <div className="p-8 text-sm text-ink-muted">
+        Loading Experience Bank…
+      </div>
+    );
+  }
+
+  const q = searchQuery.trim().toLowerCase();
+
+  const handleAddRole = async () => {
+    const newId = `exp-${Date.now()}`;
+    const newExp: Experience = {
+      id: newId,
+      company: 'New Company',
+      title: 'Senior Software Engineer',
+      location: 'Remote',
+      start: '2024',
+      end: 'Present',
+    };
+    const newAch: Achievement = {
+      id: `ach-${Date.now()}`,
+      experienceId: newId,
+      action: 'Designed and shipped core production service',
+      result: 'improving reliability across customer workloads',
+      metric: 'by 30%',
+      skillIds: [],
+      tags: ['backend'],
+    };
+    const next: BankSnapshot = {
+      ...bank,
+      experiences: [newExp, ...bank.experiences],
+      achievements: [newAch, ...bank.achievements],
+    };
+    await persistBank(next);
+    setExpandedRoleIds((prev) => ({ ...prev, [newId]: true }));
+    setEditingRoleId(newId);
+    addToast('Added new role to your Experience Bank.', 'success');
+  };
+
+  const handleDeleteRoleWithUndo = async (exp: Experience) => {
+    const previousSnapshot = bank;
+    const next: BankSnapshot = {
+      ...bank,
+      experiences: bank.experiences.filter((e) => e.id !== exp.id),
+      achievements: bank.achievements.filter((a) => a.experienceId !== exp.id),
+    };
+    setEditingRoleId(null);
+    await persistBank(next);
+    addToast(`Deleted role at ${exp.company}`, {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  const handleAddAchievement = async (experienceId: string) => {
+    const newAch: Achievement = {
+      id: `ach-${Date.now()}`,
+      experienceId,
+      action: 'Implemented key architectural improvement',
+      result: 'reducing operational overhead for the engineering team',
+      metric: 'by 25%',
+      skillIds: [],
+      tags: ['architecture'],
+    };
+    await persistBank({
+      ...bank,
+      achievements: [...bank.achievements, newAch],
+    });
+    setExpandedRoleIds((prev) => ({ ...prev, [experienceId]: true }));
+    setEditingAchievementId(newAch.id);
+  };
+
+  const handleDeleteAchievementWithUndo = async (ach: Achievement) => {
+    const previousSnapshot = bank;
+    await persistBank({
+      ...bank,
+      achievements: bank.achievements.filter((a) => a.id !== ach.id),
+    });
+    addToast('Deleted achievement from Bank.', {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  const handleAddSkill = async () => {
+    if (!newSkillName.trim()) return;
+    const created: Skill = {
+      id: `skill-${Date.now()}`,
+      name: newSkillName.trim(),
+      category: newSkillCategory,
+      aliases: newSkillAliases
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+    await persistBank({
+      ...bank,
+      skills: [...bank.skills, created],
+    });
+    setNewSkillName('');
+    setNewSkillAliases('');
+    addToast(`Added skill "${created.name}".`, 'success');
+  };
+
+  const handleDeleteSkillWithUndo = async (skill: Skill) => {
+    const previousSnapshot = bank;
+    await persistBank({
+      ...bank,
+      skills: bank.skills.filter((s) => s.id !== skill.id),
+    });
+    addToast(`Removed skill "${skill.name}".`, {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setIsParsingFile(true);
+    const res = await useCases.importResumeFile.parseAndPropose(file);
+    setIsParsingFile(false);
+    if (!res.ok) {
+      addToast(res.error.message, 'danger');
+      return;
+    }
+    setProposedImport(res.value);
+  };
+
+  const handleCommitImport = async () => {
+    if (!proposedImport) return;
+    const res = await useCases.importResumeFile.commitImport(
+      proposedImport,
+      duplicateStrategy,
+    );
+    if (res.ok) {
+      setBank(res.value);
+      setProposedImport(null);
+      setImportDrawerOpen(false);
+      addToast('Imported resume into your Experience Bank.', 'success');
+    }
+  };
+
+  const editingRole =
+    bank.experiences.find((e) => e.id === editingRoleId) ?? null;
+
+  const importFormats = useCases.listImportFormats.execute();
+  const acceptedExts = importFormats.flatMap((f) => f.extensions);
+  const acceptedLabels = importFormats.map((f) => f.label);
+
+  return (
+    <div className="space-y-6 pb-16">
+      <PageHeader
+        title="Experience Bank"
+        subtitle="Your central library of verified roles, quantified achievements, and skills. Cevin selects and rephrases from this Bank and never invents facts."
+        actions={
+          <div className="flex items-center gap-2.5">
+            <Button
+              variant="secondary"
+              onClick={() => setImportDrawerOpen(true)}
+            >
+              <Upload className="w-4 h-4" />
+              <span>Import resume</span>
+            </Button>
+            {activeSection === 'experience' && (
+              <Button variant="primary" onClick={() => void handleAddRole()}>
+                <Plus className="w-4 h-4" />
+                <span>Add role</span>
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      {/* Top Section Switcher & Search */}
+      <div className="bg-surface border border-border rounded-xl p-3 shadow-xs flex flex-wrap items-center justify-between gap-4">
+        <SegmentedControl<BankSection>
+          ariaLabel="Experience Bank sections"
+          value={activeSection}
+          onValueChange={setActiveSection}
+          options={[
+            {
+              value: 'experience',
+              label: 'Experience',
+              count: bank.experiences.length,
+            },
+            {
+              value: 'skills',
+              label: 'Skills',
+              count: bank.skills.length,
+            },
+            {
+              value: 'projects',
+              label: 'Projects',
+              count: bank.projects.length,
+            },
+            {
+              value: 'education',
+              label: 'Education',
+              count: bank.educations.length,
+            },
+            {
+              value: 'profile',
+              label: 'Contact & Header',
+            },
+          ]}
+        />
+
+        {activeSection === 'experience' && (
+          <div className="flex items-center gap-2">
+            {allTags.length > 0 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant={selectedTag ? 'tonal' : 'secondary'}
+                    size="sm"
+                  >
+                    <span>
+                      {selectedTag ? `Tag: ${selectedTag}` : 'Tags'}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-64 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-ink">
+                      Filter by tag
+                    </span>
+                    {selectedTag && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTag(null)}
+                        className="text-accent hover:underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allTags.map(([tag, count]) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() =>
+                          setSelectedTag(selectedTag === tag ? null : tag)
+                        }
+                        className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
+                          selectedTag === tag
+                            ? 'bg-accent text-white font-semibold'
+                            : 'bg-surface-sunken border border-hairline text-ink-muted hover:text-ink'
+                        }`}
+                      >
+                        {tag}{' '}
+                        <span className="opacity-75 tabular-nums">{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+
+            <div className="relative w-72">
+              <Search className="w-4 h-4 text-ink-subtle absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search achievements or metrics…"
+                aria-label="Search achievements"
+                className="pl-9"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 1: EXPERIENCE TIMELINE */}
+      {activeSection === 'experience' && (
+        <div className="space-y-4">
+
+          {bank.experiences.length === 0 ? (
+            <EmptyState
+              illustrationKind="bank"
+              title="Your Experience Bank is empty"
+              description="Import an existing PDF or Markdown resume, or add your first role to start tailoring."
+              actionLabel="Import resume"
+              onAction={() => setImportDrawerOpen(true)}
+              secondaryActionLabel="Add role manually"
+              onSecondaryAction={() => void handleAddRole()}
+            />
+          ) : (
+            <div>
+              {bank.experiences.map((exp, idx) => {
+                const roleAchievements = bank.achievements.filter((a) => {
+                  if (a.experienceId !== exp.id) return false;
+                  const matchesTag =
+                    !selectedTag || a.tags.includes(selectedTag);
+                  const matchesSearch =
+                    !q ||
+                    exp.company.toLowerCase().includes(q) ||
+                    exp.title.toLowerCase().includes(q) ||
+                    a.action.toLowerCase().includes(q) ||
+                    a.result.toLowerCase().includes(q) ||
+                    (a.metric ?? '').toLowerCase().includes(q) ||
+                    a.tags.some((t) => t.toLowerCase().includes(q));
+                  return matchesTag && matchesSearch;
+                });
+
+                const isExpanded = Boolean(expandedRoleIds[exp.id]);
+                const isCurrent = exp.end.toLowerCase().includes('present');
+                const isLast = idx === bank.experiences.length - 1;
+
+                return (
+                  <TimelineRail
+                    key={exp.id}
+                    isCurrent={isCurrent}
+                    isLast={isLast}
+                  >
+                    <div className="group/role bg-surface border border-border rounded-xl shadow-xs overflow-hidden">
+                      {/* Role Card Header: 36px Avatar, Role · Company, dates, count badge, hover/focus-within Edit role + Add achievement + ⋯ overflow menu, chevron */}
+                      <div className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-surface-sunken/40 transition-colors">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedRoleIds((prev) => ({
+                              ...prev,
+                              [exp.id]: !prev[exp.id],
+                            }))
+                          }
+                          className="flex items-center gap-3 text-left flex-1 min-w-0 cursor-pointer"
+                        >
+                          <Avatar name={exp.company} size="sm" />
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-ink">
+                                {exp.title}
+                              </span>
+                              <span className="text-ink-subtle">·</span>
+                              <span className="text-sm font-medium text-ink-muted">
+                                {exp.company}
+                              </span>
+                            </div>
+                            <div className="text-xs text-ink-subtle tabular-nums mt-0.5">
+                              {exp.start} – {exp.end} · {exp.location}
+                            </div>
+                          </div>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <Badge tone="neutral">
+                            {formatCount(roleAchievements.length, 'achievement')}
+                          </Badge>
+                          <div className="flex items-center gap-1.5 opacity-0 group-hover/role:opacity-100 group-focus-within/role:opacity-100 transition-opacity">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingRoleId(exp.id)}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Edit role</span>
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => void handleAddAchievement(exp.id)}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Add achievement</span>
+                            </Button>
+                          </div>
+
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <IconButton
+                                label={`Role actions for ${exp.company}`}
+                                size="sm"
+                              >
+                                <MoreHorizontal className="w-4 h-4" />
+                              </IconButton>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-48 p-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingRoleId(exp.id)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Edit role</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleAddAchievement(exp.id)
+                                }
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add achievement</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteRoleWithUndo(exp)
+                                }
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete role</span>
+                              </button>
+                            </PopoverContent>
+                          </Popover>
+
+                          <IconButton
+                            label={
+                              isExpanded ? 'Collapse role' : 'Expand role'
+                            }
+                            size="sm"
+                            onClick={() =>
+                              setExpandedRoleIds((prev) => ({
+                                ...prev,
+                                [exp.id]: !prev[exp.id],
+                              }))
+                            }
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </IconButton>
+                        </div>
+                      </div>
+
+                      {/* Accordion Body: Clean Achievement Rows (no inline role metadata inputs) */}
+                      {isExpanded && (
+                        <div className="p-4 pt-3 border-t border-hairline space-y-2.5">
+                          {roleAchievements.map((ach) => {
+                            const isEditing = editingAchievementId === ach.id;
+                            return (
+                              <div
+                                key={ach.id}
+                                className="group p-3.5 rounded-lg border border-hairline bg-surface hover:border-border-strong transition-colors"
+                              >
+                                {!isEditing ? (
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div
+                                      onClick={() =>
+                                        setEditingAchievementId(ach.id)
+                                      }
+                                      className="space-y-2 flex-1 cursor-pointer"
+                                    >
+                                      <p className="text-sm text-ink leading-relaxed">
+                                        {assembleBulletText(ach)}
+                                      </p>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        {ach.metric && (
+                                          <MetricChip>{ach.metric}</MetricChip>
+                                        )}
+                                        {ach.tags.map((tag) => (
+                                          <TagChip key={tag}>{tag}</TagChip>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    {/* Hover Edit button + ⋯ menu (no red trash icon on row) */}
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() =>
+                                          setEditingAchievementId(ach.id)
+                                        }
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                        <span>Edit</span>
+                                      </Button>
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <IconButton
+                                            label="Achievement options"
+                                            size="sm"
+                                          >
+                                            <MoreHorizontal className="w-4 h-4" />
+                                          </IconButton>
+                                        </PopoverTrigger>
+                                        <PopoverContent
+                                          align="end"
+                                          className="w-48 p-1"
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setEditingAchievementId(ach.id)
+                                            }
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                            <span>Edit achievement</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              void handleDeleteAchievementWithUndo(
+                                                ach,
+                                              )
+                                            }
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span>Delete achievement</span>
+                                          </button>
+                                        </PopoverContent>
+                                      </Popover>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                                      <div className="md:col-span-5">
+                                        <label className="block text-xs font-medium text-ink-muted mb-1">
+                                          Action (what you built or led)
+                                        </label>
+                                        <Input
+                                          value={ach.action}
+                                          onChange={(e) => {
+                                            const nextAchs =
+                                              bank.achievements.map((a) =>
+                                                a.id === ach.id
+                                                  ? {
+                                                      ...a,
+                                                      action: e.target.value,
+                                                    }
+                                                  : a,
+                                              );
+                                            void persistBank({
+                                              ...bank,
+                                              achievements: nextAchs,
+                                            });
+                                          }}
+                                        />
+                                      </div>
+                                      <div className="md:col-span-3">
+                                        <label className="block text-xs font-medium text-ink-muted mb-1">
+                                          Metric / number
+                                        </label>
+                                        <Input
+                                          value={ach.metric ?? ''}
+                                          onChange={(e) => {
+                                            const nextAchs =
+                                              bank.achievements.map((a) =>
+                                                a.id === ach.id
+                                                  ? {
+                                                      ...a,
+                                                      metric: e.target.value,
+                                                    }
+                                                  : a,
+                                              );
+                                            void persistBank({
+                                              ...bank,
+                                              achievements: nextAchs,
+                                            });
+                                          }}
+                                          placeholder="e.g. by 38%"
+                                        />
+                                      </div>
+                                      <div className="md:col-span-4">
+                                        <label className="block text-xs font-medium text-ink-muted mb-1">
+                                          Result / impact
+                                        </label>
+                                        <Input
+                                          value={ach.result}
+                                          onChange={(e) => {
+                                            const nextAchs =
+                                              bank.achievements.map((a) =>
+                                                a.id === ach.id
+                                                  ? {
+                                                      ...a,
+                                                      result: e.target.value,
+                                                    }
+                                                  : a,
+                                              );
+                                            void persistBank({
+                                              ...bank,
+                                              achievements: nextAchs,
+                                            });
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                      <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                                        <span className="text-xs text-ink-muted shrink-0">
+                                          Tags:
+                                        </span>
+                                        <Input
+                                          value={ach.tags.join(', ')}
+                                          onChange={(e) => {
+                                            const nextTags = e.target.value
+                                              .split(',')
+                                              .map((s) => s.trim())
+                                              .filter(Boolean);
+                                            const nextAchs =
+                                              bank.achievements.map((a) =>
+                                                a.id === ach.id
+                                                  ? { ...a, tags: nextTags }
+                                                  : a,
+                                              );
+                                            void persistBank({
+                                              ...bank,
+                                              achievements: nextAchs,
+                                            });
+                                          }}
+                                          className="h-8 text-xs"
+                                        />
+                                      </div>
+                                      <Button
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={() =>
+                                          setEditingAchievementId(null)
+                                        }
+                                      >
+                                        Done
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </TimelineRail>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 2: SKILLS GROUPED BY CATEGORY WITH POPOVER EDITOR */}
+      {activeSection === 'skills' && (
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6">
+          <div className="flex flex-wrap items-end justify-between gap-4 p-4 rounded-lg bg-surface-sunken border border-hairline">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Skill name
+                </label>
+                <Input
+                  value={newSkillName}
+                  onChange={(e) => setNewSkillName(e.target.value)}
+                  placeholder="e.g. OpenTelemetry"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Category
+                </label>
+                <Select<SkillCategory>
+                  ariaLabel="Skill category"
+                  value={newSkillCategory}
+                  onValueChange={setNewSkillCategory}
+                  options={SKILL_CATEGORIES.map((c) => ({
+                    value: c,
+                    label: c,
+                  }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Aliases (comma-separated)
+                </label>
+                <Input
+                  value={newSkillAliases}
+                  onChange={(e) => setNewSkillAliases(e.target.value)}
+                  placeholder="OTel, OpenTelemetry Collector"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => void handleAddSkill()}>
+                <Plus className="w-4 h-4" />
+                <span>Add skill</span>
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  const res = await useCases.manageBank.mergeDuplicateSkills();
+                  setBank(res.snapshot);
+                  addToast(
+                    res.mergedCount > 0
+                      ? `Merged ${formatCount(res.mergedCount, 'duplicate skill')}.`
+                      : 'No duplicate skills found.',
+                    'info',
+                  );
+                }}
+              >
+                Merge duplicates
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {SKILL_CATEGORIES.map((category) => {
+              const catSkills = bank.skills.filter(
+                (s) => s.category === category,
+              );
+              if (catSkills.length === 0) return null;
+
+              return (
+                <div key={category} className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-ink">
+                      {category}
+                    </h3>
+                    <Badge tone="neutral">{catSkills.length}</Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {catSkills.map((skill) => (
+                      <Popover key={skill.id}>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-sunken hover:bg-accent-50 border border-hairline hover:border-accent/30 text-xs font-medium text-ink transition-colors cursor-pointer"
+                          >
+                            <span>{skill.name}</span>
+                            {skill.aliases.length > 0 && (
+                              <span className="text-ink-subtle">
+                                ({skill.aliases.join(', ')})
+                              </span>
+                            )}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-72 space-y-3">
+                          <div className="text-xs font-semibold text-ink">
+                            Edit skill
+                          </div>
+                          <div>
+                            <label className="block text-xs text-ink-muted mb-1">
+                              Name
+                            </label>
+                            <Input
+                              value={skill.name}
+                              onChange={(e) => {
+                                const nextSkills = bank.skills.map((s) =>
+                                  s.id === skill.id
+                                    ? { ...s, name: e.target.value }
+                                    : s,
+                                );
+                                void persistBank({
+                                  ...bank,
+                                  skills: nextSkills,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-ink-muted mb-1">
+                              Category
+                            </label>
+                            <Select<SkillCategory>
+                              ariaLabel="Edit skill category"
+                              value={skill.category}
+                              onValueChange={(nextCat) => {
+                                const nextSkills = bank.skills.map((s) =>
+                                  s.id === skill.id
+                                    ? { ...s, category: nextCat }
+                                    : s,
+                                );
+                                void persistBank({
+                                  ...bank,
+                                  skills: nextSkills,
+                                });
+                              }}
+                              options={SKILL_CATEGORIES.map((c) => ({
+                                value: c,
+                                label: c,
+                              }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-ink-muted mb-1">
+                              Aliases (comma-separated)
+                            </label>
+                            <Input
+                              value={skill.aliases.join(', ')}
+                              onChange={(e) => {
+                                const aliases = e.target.value
+                                  .split(',')
+                                  .map((a) => a.trim())
+                                  .filter(Boolean);
+                                const nextSkills = bank.skills.map((s) =>
+                                  s.id === skill.id ? { ...s, aliases } : s,
+                                );
+                                void persistBank({
+                                  ...bank,
+                                  skills: nextSkills,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="pt-2 border-t border-hairline flex justify-between items-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDeleteSkillWithUndo(skill)
+                              }
+                              className="inline-flex items-center gap-1 text-xs text-danger-700 hover:underline cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete skill</span>
+                            </button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 3: PROJECTS */}
+      {activeSection === 'projects' && (
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-display font-semibold text-ink">
+              Projects ({bank.projects.length})
+            </h2>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                const newProj: Project = {
+                  id: `proj-${Date.now()}`,
+                  name: 'New Project',
+                  role: 'Creator & Maintainer',
+                  description: 'High-performance open-source library or tool.',
+                  skillIds: [],
+                  highlights: [],
+                };
+                await persistBank({
+                  ...bank,
+                  projects: [...bank.projects, newProj],
+                });
+              }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add project</span>
+            </Button>
+          </div>
+          <div className="space-y-3">
+            {bank.projects.map((proj) => (
+              <div
+                key={proj.id}
+                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    value={proj.name}
+                    onChange={(e) => {
+                      const next = bank.projects.map((p) =>
+                        p.id === proj.id ? { ...p, name: e.target.value } : p,
+                      );
+                      void persistBank({ ...bank, projects: next });
+                    }}
+                    placeholder="Project name"
+                  />
+                  <Input
+                    value={proj.role}
+                    onChange={(e) => {
+                      const next = bank.projects.map((p) =>
+                        p.id === proj.id ? { ...p, role: e.target.value } : p,
+                      );
+                      void persistBank({ ...bank, projects: next });
+                    }}
+                    placeholder="Role"
+                  />
+                </div>
+                <Textarea
+                  rows={2}
+                  value={proj.description}
+                  onChange={(e) => {
+                    const next = bank.projects.map((p) =>
+                      p.id === proj.id
+                        ? { ...p, description: e.target.value }
+                        : p,
+                    );
+                    void persistBank({ ...bank, projects: next });
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 4: EDUCATION */}
+      {activeSection === 'education' && (
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-display font-semibold text-ink">
+              Education ({bank.educations.length})
+            </h2>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                const newEdu: Education = {
+                  id: `edu-${Date.now()}`,
+                  institution: 'University Name',
+                  degree: 'B.S.',
+                  field: 'Computer Science',
+                  location: '',
+                  start: '2016',
+                  end: '2020',
+                };
+                await persistBank({
+                  ...bank,
+                  educations: [...bank.educations, newEdu],
+                });
+              }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add education</span>
+            </Button>
+          </div>
+          <div className="space-y-3">
+            {bank.educations.map((edu) => (
+              <div
+                key={edu.id}
+                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline grid grid-cols-1 sm:grid-cols-3 gap-3"
+              >
+                <Input
+                  value={edu.institution}
+                  onChange={(e) => {
+                    const next = bank.educations.map((item) =>
+                      item.id === edu.id
+                        ? { ...item, institution: e.target.value }
+                        : item,
+                    );
+                    void persistBank({ ...bank, educations: next });
+                  }}
+                  placeholder="Institution"
+                />
+                <Input
+                  value={edu.degree}
+                  onChange={(e) => {
+                    const next = bank.educations.map((item) =>
+                      item.id === edu.id
+                        ? { ...item, degree: e.target.value }
+                        : item,
+                    );
+                    void persistBank({ ...bank, educations: next });
+                  }}
+                  placeholder="Degree"
+                />
+                <Input
+                  value={edu.field}
+                  onChange={(e) => {
+                    const next = bank.educations.map((item) =>
+                      item.id === edu.id
+                        ? { ...item, field: e.target.value }
+                        : item,
+                    );
+                    void persistBank({ ...bank, educations: next });
+                  }}
+                  placeholder="Field of study"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 5: PROFILE & CONTACT */}
+      {activeSection === 'profile' && (
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4 max-w-3xl">
+          <h2 className="text-base font-display font-semibold text-ink">
+            Candidate Contact & Default Header
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-ink-muted mb-1">
+                Full name
+              </label>
+              <Input
+                value={bank.profile.name}
+                onChange={(e) =>
+                  void persistBank({
+                    ...bank,
+                    profile: { ...bank.profile, name: e.target.value },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-muted mb-1">
+                Default headline
+              </label>
+              <Input
+                value={bank.profile.headline}
+                onChange={(e) =>
+                  void persistBank({
+                    ...bank,
+                    profile: { ...bank.profile, headline: e.target.value },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-muted mb-1">
+                Email
+              </label>
+              <Input
+                value={bank.profile.email}
+                onChange={(e) =>
+                  void persistBank({
+                    ...bank,
+                    profile: { ...bank.profile, email: e.target.value },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-muted mb-1">
+                Phone
+              </label>
+              <Input
+                value={bank.profile.phone}
+                onChange={(e) =>
+                  void persistBank({
+                    ...bank,
+                    profile: { ...bank.profile, phone: e.target.value },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-muted mb-1">
+                Location
+              </label>
+              <Input
+                value={bank.profile.location}
+                onChange={(e) =>
+                  void persistBank({
+                    ...bank,
+                    profile: { ...bank.profile, location: e.target.value },
+                  })
+                }
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Role Metadata Editor Drawer */}
+      <Drawer
+        open={Boolean(editingRole)}
+        onOpenChange={(open) => {
+          if (!open) setEditingRoleId(null);
+        }}
+        title={editingRole ? `Edit Role — ${editingRole.company}` : 'Edit Role'}
+        description="Update employer, role title, location, and dates."
+      >
+        {editingRole && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Role title
+              </label>
+              <Input
+                value={editingRole.title}
+                onChange={(e) => {
+                  const nextExps = bank.experiences.map((item) =>
+                    item.id === editingRole.id
+                      ? { ...item, title: e.target.value }
+                      : item,
+                  );
+                  void persistBank({ ...bank, experiences: nextExps });
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Company
+              </label>
+              <Input
+                value={editingRole.company}
+                onChange={(e) => {
+                  const nextExps = bank.experiences.map((item) =>
+                    item.id === editingRole.id
+                      ? { ...item, company: e.target.value }
+                      : item,
+                  );
+                  void persistBank({ ...bank, experiences: nextExps });
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Start date
+                </label>
+                <Input
+                  value={editingRole.start}
+                  onChange={(e) => {
+                    const nextExps = bank.experiences.map((item) =>
+                      item.id === editingRole.id
+                        ? { ...item, start: e.target.value }
+                        : item,
+                    );
+                    void persistBank({ ...bank, experiences: nextExps });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  End date
+                </label>
+                <Input
+                  value={editingRole.end}
+                  onChange={(e) => {
+                    const nextExps = bank.experiences.map((item) =>
+                      item.id === editingRole.id
+                        ? { ...item, end: e.target.value }
+                        : item,
+                    );
+                    void persistBank({ ...bank, experiences: nextExps });
+                  }}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Location
+              </label>
+              <Input
+                value={editingRole.location}
+                onChange={(e) => {
+                  const nextExps = bank.experiences.map((item) =>
+                    item.id === editingRole.id
+                      ? { ...item, location: e.target.value }
+                      : item,
+                  );
+                  void persistBank({ ...bank, experiences: nextExps });
+                }}
+              />
+            </div>
+
+            <div className="pt-4 border-t border-hairline flex items-center justify-between">
+              <Button
+                variant="outline-danger"
+                size="sm"
+                onClick={() => void handleDeleteRoleWithUndo(editingRole)}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete role</span>
+              </Button>
+              <Button variant="primary" onClick={() => setEditingRoleId(null)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Import Resume Drawer */}
+      <Drawer
+        open={importDrawerOpen}
+        onOpenChange={setImportDrawerOpen}
+        title="Import Resume into Experience Bank"
+        description="Upload a text-based PDF or Markdown resume. You can review proposed roles and skills before merging."
+      >
+        <div className="space-y-4">
+          <FileDropzone
+            acceptedExtensions={acceptedExts}
+            acceptedLabels={acceptedLabels}
+            isBusy={isParsingFile}
+            onFileSelected={(file) => void handleFileUpload(file)}
+          />
+
+          {proposedImport && (
+            <div className="space-y-4 p-4 rounded-lg bg-surface-sunken border border-hairline text-xs">
+              <div className="font-semibold text-ink">
+                Proposed import from {proposedImport.rawDocument.fileName}
+              </div>
+              <div className="text-ink-muted">
+                Found{' '}
+                {formatCount(proposedImport.proposedExperiences.length, 'role')}{' '}
+                and{' '}
+                {formatCount(proposedImport.proposedSkills.length, 'skill')}.
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Duplicate handling:</span>
+                <SegmentedControl<'merge' | 'skip'>
+                  ariaLabel="Duplicate strategy"
+                  size="sm"
+                  value={duplicateStrategy}
+                  onValueChange={setDuplicateStrategy}
+                  options={[
+                    { value: 'merge', label: 'Merge' },
+                    { value: 'skip', label: 'Skip' },
+                  ]}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setProposedImport(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleCommitImport()}
+                >
+                  Commit to Bank
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Drawer>
+    </div>
+  );
+}

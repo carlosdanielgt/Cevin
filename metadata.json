@@ -1,0 +1,6 @@
+{
+  "name": "Cevin — Local-First Resume Tailoring Studio",
+  "description": "Truthful, local-first resume tailoring studio with an atomic Experience Bank, Voice dial, deterministic ATS readiness analysis, and hexagonal architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

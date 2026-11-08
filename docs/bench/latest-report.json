@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-11-07T02:18:57.916Z",
+  "model": "llama3.1:8b",
+  "profileId": "llama3_1_8b",
+  "mode": "simulated-m1-16gb-profile (Ollama not running locally; used deterministic M1 16GB timing model)",
+  "parallelSlots": 2,
+  "numCtxPerSlot": 4096,
+  "fixtures": {
+    "bullets": 20,
+    "jobDescriptions": 5,
+    "coverLetters": 3,
+    "coverLetterBlocks": 12
+  },
+  "metrics": {
+    "totalLlmCalls": 45,
+    "prefillTokensPerSecAvg": 2380,
+    "decodeTokensPerSecAvg": 45,
+    "wallClockMsP50": 13,
+    "wallClockMsP95": 15,
+    "batch8BulletsParallelWallMs": 53,
+    "secondRunCacheHitRate": "8/8 (100%)",
+    "secondRunBatch8WallMs": 0,
+    "maxTokensPerCall": 672,
+    "tokenBudgetCap": 4096,
+    "firstAttemptValidationPassRate": "20/20 (100%)",
+    "repairsTriggered": 0,
+    "baselineFallbacksUsed": 0,
+    "coverLetterBlocksPassed": "12/12",
+    "unhandledJsonOrValidationErrors": 0
+  }
+}

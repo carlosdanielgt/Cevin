@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: "Fraunces", "Georgia", serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Surface ladder (Light: warm linen -> white panel -> recessed desk; Dark: deep slate ladder) */
+  --color-canvas: light-dark(#F4F1EB, #0D1015);
+  --color-surface: light-dark(#FFFFFF, #151A22);
+  --color-surface-sunken: light-dark(#EBE7DF, #0A0D11);
+  --color-surface-raised: light-dark(#F8F6F1, #1C232E);
+  --color-surface-overlay: light-dark(#FFFFFF, #1E2531);
+
+  /* Paper stays crisp white in both light and dark modes (WYSIWYG) */
+  --color-paper: #FFFFFF;
+  --color-paper-ink: #151A22;
+  --color-paper-muted: #525B6C;
+  --color-paper-border: #D8D4CA;
+
+  /* Ink scale for the dark sidebar anchor */
+  --color-sidebar: light-dark(#0E1218, #090B0F);
+  --color-ink-950: #0E1218;
+  --color-ink-900: #151A22;
+  --color-ink-800: #1E2531;
+  --color-ink-700: #2A3342;
+  --color-ink-400: #9BA5B7;
+  --color-ink-100: #E6E9EF;
+
+  /* Primary typography colors (WCAG AA >= 4.5:1 verified in both themes) */
+  --color-ink: light-dark(#151A22, #F3F5F8);
+  --color-ink-muted: light-dark(#525B6C, #A3ADBF);
+  --color-ink-subtle: light-dark(#5E6778, #8E99AD);
+
+  /* Borders & hairlines */
+  --color-hairline: light-dark(rgb(20 24 31 / 0.08), rgb(255 255 255 / 0.08));
+  --color-border: light-dark(#DED9CE, #262F3D);
+  --color-border-strong: light-dark(rgb(20 24 31 / 0.16), rgb(255 255 255 / 0.18));
+
+  /* Cobalt accent & semantic tints */
+  --color-accent: light-dark(#2448C8, #688BFF);
+  --color-accent-hover: light-dark(#1C3AA6, #82A0FF);
+  --color-accent-50: light-dark(#EEF2FF, #172243);
+  --color-accent-600: light-dark(#2448C8, #688BFF);
+  --color-accent-700: light-dark(#1D3BA6, #94B0FF);
+  --color-accent-subtle: light-dark(#E3E9FD, #1A264A);
+
+  --color-success: light-dark(#166E45, #47C98B);
+  --color-success-50: light-dark(#ECFDF3, #0F291E);
+  --color-success-600: light-dark(#166E45, #47C98B);
+  --color-success-700: light-dark(#115736, #6EE7B7);
+  --color-success-subtle: light-dark(#DCFCE7, #123123);
+
+  --color-warning: light-dark(#9A5206, #F5A524);
+  --color-warning-50: light-dark(#FEF7EC, #2C1E0A);
+  --color-warning-600: light-dark(#9A5206, #F5A524);
+  --color-warning-700: light-dark(#7C4004, #FCD34D);
+  --color-warning-subtle: light-dark(#FDECCE, #33220B);
+
+  --color-danger: light-dark(#B42318, #F97066);
+  --color-danger-50: light-dark(#FEF2F2, #2D1414);
+  --color-danger-600: light-dark(#B42318, #F97066);
+  --color-danger-700: light-dark(#911B12, #FDA29B);
+  --color-danger-subtle: light-dark(#FEE2E2, #361717);
+
+  --color-info: light-dark(#1D4ED8, #60A5FA);
+  --color-info-50: light-dark(#EFF6FF, #142444);
+  --color-info-600: light-dark(#1D4ED8, #60A5FA);
+  --color-info-700: light-dark(#1E40AF, #93C5FD);
+  --color-info-subtle: light-dark(#DBEAFE, #172A4F);
+
+  /* 8 curated deterministic company avatar hue pairs */
+  --color-avatar-0-bg: light-dark(#E3E9FD, #1B284E);
+  --color-avatar-0-fg: light-dark(#1D3BA6, #94B0FF);
+  --color-avatar-1-bg: light-dark(#DCFCE7, #123324);
+  --color-avatar-1-fg: light-dark(#115736, #6EE7B7);
+  --color-avatar-2-bg: light-dark(#FDECCE, #35230C);
+  --color-avatar-2-fg: light-dark(#7C4004, #FCD34D);
+  --color-avatar-3-bg: light-dark(#F3E8FF, #2B1942);
+  --color-avatar-3-fg: light-dark(#581C87, #D8B4FE);
+  --color-avatar-4-bg: light-dark(#FFE4E6, #381520);
+  --color-avatar-4-fg: light-dark(#9F1239, #FDA4AF);
+  --color-avatar-5-bg: light-dark(#E0F2FE, #112A3E);
+  --color-avatar-5-fg: light-dark(#075985, #7DD3FC);
+  --color-avatar-6-bg: light-dark(#CCFBF1, #102F2D);
+  --color-avatar-6-fg: light-dark(#115E59, #5EEAD4);
+  --color-avatar-7-bg: light-dark(#EAE7E0, #232934);
+  --color-avatar-7-fg: light-dark(#2A3342, #D0D7E2);
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  /* Warm two-layer shadows */
+  --shadow-xs: 0 1px 2px rgb(20 24 31 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(20 24 31 / 0.06), 0 2px 6px rgb(20 24 31 / 0.04);
+  --shadow-md: 0 2px 4px rgb(20 24 31 / 0.06), 0 8px 20px rgb(20 24 31 / 0.08);
+  --shadow-lg: 0 4px 8px rgb(20 24 31 / 0.08), 0 20px 40px rgb(20 24 31 / 0.14);
+  --shadow-paper: 0 1px 1px rgb(20 24 31 / 0.08), 0 10px 30px rgb(20 24 31 / 0.14);
+  --shadow-subtle: 0 1px 2px rgb(20 24 31 / 0.06), 0 2px 6px rgb(20 24 31 / 0.04);
+  --shadow-raised: 0 2px 4px rgb(20 24 31 / 0.06), 0 8px 20px rgb(20 24 31 / 0.08);
+  --shadow-overlay: 0 4px 8px rgb(20 24 31 / 0.08), 0 20px 40px rgb(20 24 31 / 0.14);
+
+  /* Layout widths */
+  --spacing-sidebar: 232px;
+  --spacing-rail: 72px;
+
+  /* Motion */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 140ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+}
