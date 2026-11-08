@@ -137,6 +137,7 @@ export function StudioView({
   const addToast = useUiStore((s) => s.addToast);
   const previewZoom = useUiStore((s) => s.previewZoom);
   const setPreviewZoom = useUiStore((s) => s.setPreviewZoom);
+  const connectionStatus = useUiStore((s) => s.connectionStatus);
   const setConnectionStatus = useUiStore((s) => s.setConnectionStatus);
 
   const [app, setApp] = useState<Application | null>(null);
@@ -703,6 +704,30 @@ export function StudioView({
     .filter((r) => r.priority === 'must-have')
     .map((r) => r.text);
 
+  const isLlmActive = Boolean(
+    rewritingBulletId ||
+      isTailoringAll ||
+      isGeneratingLetter ||
+      rewritingBlockId ||
+      isAnalyzingJob ||
+      connectionStatus.state === 'busy' ||
+      connectionStatus.state === 'warming',
+  );
+
+  const llmActiveLabel = rewritingBulletId
+    ? `Rewriting bullet in ${app.voice} voice…`
+    : isTailoringAll
+      ? 'Writing executive summary…'
+      : isGeneratingLetter
+        ? `Writing cover letter with ${connectionStatus.modelName || 'LLM'}…`
+        : rewritingBlockId
+          ? 'Rewriting paragraph…'
+          : isAnalyzingJob
+            ? 'Extracting job requirements…'
+            : connectionStatus.state === 'warming'
+              ? 'Warming model…'
+              : 'Working…';
+
   return (
     <div className="space-y-4">
       {/* Slim 2-Row Studio Header */}
@@ -725,10 +750,17 @@ export function StudioView({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
-              <span className="w-2 h-2 rounded-full bg-success" />
-              <span>Saved just now</span>
-            </span>
+            {isLlmActive ? (
+              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-accent-50 text-accent-700 border border-accent/30 text-xs font-medium animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
+                <span>{llmActiveLabel}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
+                <span className="w-2 h-2 rounded-full bg-success" />
+                <span>Saved just now</span>
+              </span>
+            )}
 
             <div className="flex items-center gap-2">
               {activeDoc === 'coverLetter' ? (
@@ -804,6 +836,18 @@ export function StudioView({
           />
         </div>
       </header>
+
+      {/* Subtle editorial working progress bar */}
+      {isLlmActive && (
+        <div
+          role="progressbar"
+          aria-label={llmActiveLabel}
+          aria-busy="true"
+          className="h-1 w-full bg-accent-100 rounded-full overflow-hidden -mt-2 mb-2"
+        >
+          <div className="h-full bg-accent animate-pulse w-full transition-all duration-300" />
+        </div>
+      )}
 
       {/* Split Workspace: 12-col grid (Left 5 cols Work Panel, Right 7 cols DeskPreview) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -1277,8 +1321,12 @@ export function StudioView({
                         }
                         onClick={() => void handleRewriteSummary()}
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-accent" />
-                        <span>Rewrite</span>
+                        {isTailoringAll ? (
+                          <span className="w-3.5 h-3.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 text-accent" />
+                        )}
+                        <span>{isTailoringAll ? 'Working…' : 'Rewrite'}</span>
                       </Button>
                       <IconButton
                         label={

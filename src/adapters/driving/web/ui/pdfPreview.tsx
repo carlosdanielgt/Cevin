@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import {
   BlockBoundingBox,
   CoverLetterDocument,
@@ -22,10 +23,7 @@ async function loadPdfJs() {
   if (!pdfjsPromise) {
     pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((mod) => {
       if (typeof window !== 'undefined' && mod.GlobalWorkerOptions) {
-        mod.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/legacy/build/pdf.worker.mjs',
-          import.meta.url,
-        ).toString();
+        mod.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
       }
       return mod;
     });
@@ -478,13 +476,36 @@ function SinglePagePdfCanvas({
       const canvas = canvasRef.current;
       if (!canvas) return;
 
+      const spec = PAGE_SIZES[pageSize] ?? PAGE_SIZES.letter;
+      const dpr =
+        typeof window !== 'undefined'
+          ? Math.min(2, window.devicePixelRatio || 1.5)
+          : 1.5;
+      const scale = ZOOM_RENDER_SCALES[zoom] * dpr;
+      const defaultWidth = Math.round(spec.widthPt * scale);
+      const defaultHeight = Math.round(spec.heightPt * scale);
+
+      // Pre-size the canvas immediately to prevent collapsed 300x150 default aspect ratio
+      if (canvas.width !== defaultWidth || canvas.height !== defaultHeight) {
+        canvas.width = defaultWidth;
+        canvas.height = defaultHeight;
+        const initialCtx = canvas.getContext('2d');
+        if (initialCtx) {
+          initialCtx.fillStyle = '#FFFFFF';
+          initialCtx.fillRect(0, 0, defaultWidth, defaultHeight);
+        }
+      }
+
       try {
         const pdfjs = await loadPdfJs();
         if (cancelled) return;
 
         // Pass a fresh copy of Uint8Array so pdfjs worker transfer doesn't detach the caller's buffer
         const dataCopy = new Uint8Array(pdfBytes);
-        const loadingTask = pdfjs.getDocument({ data: dataCopy });
+        const loadingTask = pdfjs.getDocument({
+          data: dataCopy,
+          useSystemFonts: true,
+        });
         const pdfDoc = await loadingTask.promise;
         if (cancelled) return;
 
@@ -492,11 +513,6 @@ function SinglePagePdfCanvas({
         const pdfPage = await pdfDoc.getPage(clampedPage);
         if (cancelled) return;
 
-        const dpr =
-          typeof window !== 'undefined'
-            ? Math.min(2, window.devicePixelRatio || 1.5)
-            : 1.5;
-        const scale = ZOOM_RENDER_SCALES[zoom] * dpr;
         const viewport = pdfPage.getViewport({ scale });
 
         // Render onto an offscreen canvas first so the visible canvas never flickers blank
@@ -534,8 +550,37 @@ function SinglePagePdfCanvas({
           visibleCtx.drawImage(offscreen, 0, 0);
         }
         onRenderDoneRef.current?.();
-      } catch {
-        // Ignore cancelled render task errors
+      } catch (err) {
+        console.warn(
+          'PDF.js canvas render encountered an issue, drawing vector preview directly:',
+          err,
+        );
+        if (cancelled) return;
+        const visibleCtx = canvas.getContext('2d');
+        if (visibleCtx) {
+          visibleCtx.fillStyle = '#FFFFFF';
+          visibleCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Fallback vector rendering from positionedText
+          const pageTexts = positionedText.filter(
+            (pt) => pt.page === pageNumber,
+          );
+          for (const item of pageTexts) {
+            const fontFamilies =
+              doc.meta.templateId === 'modern'
+                ? 'Plus Jakarta Sans, -apple-system, sans-serif'
+                : doc.meta.templateId === 'compact'
+                  ? 'Plus Jakarta Sans, -apple-system, sans-serif'
+                  : 'Fraunces, Georgia, serif';
+            const weight = item.bold ? '600 ' : '400 ';
+            const pxSize = Math.max(7, (item.fontSize ?? 10) * scale);
+            visibleCtx.font = `${weight}${pxSize}px ${fontFamilies}`;
+            visibleCtx.fillStyle = '#111827';
+            visibleCtx.textBaseline = 'top';
+            visibleCtx.fillText(item.text, item.x * scale, item.y * scale);
+          }
+        }
+        onRenderDoneRef.current?.();
       }
     }
 
@@ -796,7 +841,10 @@ export function PdfThumbnail({
         const pdfjs = await loadPdfJs();
         if (cancelled) return;
         const dataCopy = new Uint8Array(effectiveBytes);
-        const pdfDoc = await pdfjs.getDocument({ data: dataCopy }).promise;
+        const pdfDoc = await pdfjs.getDocument({
+          data: dataCopy,
+          useSystemFonts: true,
+        }).promise;
         if (cancelled) return;
         const page1 = await pdfDoc.getPage(1);
         if (cancelled) return;

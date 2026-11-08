@@ -5843,7 +5843,7 @@ export function QuickCheckDialog({
       <DialogContent
         title="Quick check a job posting"
         description="Paste a job description to see practical fit against your preferences and requirement coverage against your Experience Bank before tailoring."
-        className="max-w-5xl"
+        className="w-[96vw] max-w-6xl xl:max-w-7xl p-6 lg:p-7"
       >
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -5858,8 +5858,8 @@ export function QuickCheckDialog({
                 </label>
                 <AutoGrowTextarea
                   id="quickcheck-posting-textarea"
-                  minRows={9}
-                  maxRows={14}
+                  minRows={11}
+                  maxRows={18}
                   value={rawPosting}
                   onChange={(e) => setRawPosting(e.target.value)}
                   placeholder="Paste the full job description here (Role:, Company:, location, work mode, requirements, salary)…"
@@ -5966,14 +5966,21 @@ export function QuickCheckDialog({
                 disabled={isBusy}
                 onClick={() => void handleSaveProspect()}
               >
-                Save as prospect
+                {isBusy ? 'Saving…' : 'Save as prospect'}
               </Button>
               <Button
                 variant="primary"
                 disabled={isBusy}
                 onClick={() => void handleStartTailoring()}
               >
-                Start tailoring
+                {isBusy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Preparing workspace…</span>
+                  </span>
+                ) : (
+                  'Start tailoring'
+                )}
               </Button>
             </div>
           </div>
