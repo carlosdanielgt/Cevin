@@ -4,6 +4,8 @@ import {
   BankRankingResult,
   BankSnapshot,
   Certification,
+  CevinActivityKind,
+  CevinActivityPhase,
   CoverLetterBlockType,
   CoverLetterLength,
   CoverLetterPrioritizedFix,
@@ -190,9 +192,11 @@ export interface ScoreResumeUseCase {
   confirmIHaveThisSkill(params: {
     applicationId: string;
     skillName: string;
+    requirementTerm?: string;
     aliases?: string[];
     category?: Skill['category'];
     attachExperienceId?: string;
+    experienceId?: string;
     newAchievement?: { action: string; result: string; metric?: string };
   }): Promise<
     Result<{
@@ -290,10 +294,12 @@ export interface ManageBankUseCase {
   addSkillFromGap(term: string): Promise<BankSnapshot>;
   addSkillAndOptionalAchievement(params: {
     skillName: string;
+    requirementTerm?: string;
     category?: Skill['category'];
     aliases?: string[];
     achievementId?: string;
     experienceId?: string;
+    attachExperienceId?: string;
     newAchievement?: { action: string; result: string; metric?: string };
     applicationId?: string;
   }): Promise<{
@@ -506,6 +512,25 @@ export interface HarnessPerformanceUseCase {
   clearResultCache(): Promise<void>;
 }
 
+export interface CevinActivitySnapshot {
+  phase: CevinActivityPhase;
+  kind: CevinActivityKind;
+  label: string;
+  activeCount: number;
+  queuedCount: number;
+  maxSlots: number;
+  warmingUp: boolean;
+  batchCompleted?: number;
+  batchTotal?: number;
+  progress?: number;
+  updatedAtMs: number;
+}
+
+export interface CevinActivityUseCase {
+  getSnapshot(): CevinActivitySnapshot;
+  subscribe(listener: (snapshot: CevinActivitySnapshot) => void): () => void;
+}
+
 export interface CevinUseCases {
   importResumeFile: ImportResumeFileUseCase;
   analyzeJobDescription: AnalyzeJobDescriptionUseCase;
@@ -542,6 +567,7 @@ export interface CevinUseCases {
   listLlmProviders: ListLlmProvidersUseCase;
   testLlmConnection: TestLlmConnectionUseCase;
   performance: HarnessPerformanceUseCase;
+  activity: CevinActivityUseCase;
 }
 
 

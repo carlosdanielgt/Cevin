@@ -146,6 +146,7 @@ export interface BuildCoverageSummaryParams {
   parsedJob?: ParsedJob | null;
   bank: BankSnapshot;
   resumeText?: string;
+  selectedSkillIds?: string[];
   dismissedRequirementIds?: string[];
   dismissedTerms?: string[];
 }
@@ -162,6 +163,7 @@ export function buildGroupedCoverageSummary(
     parsedJob,
     bank,
     resumeText,
+    selectedSkillIds,
     dismissedRequirementIds = [],
     dismissedTerms = [],
   } = params;
@@ -190,13 +192,23 @@ export function buildGroupedCoverageSummary(
     ...dismissedTerms.map((t) => normalizeKeyword(t)),
   ]);
 
+  const activeSkills = selectedSkillIds
+    ? bank.skills.filter((s) => selectedSkillIds.includes(s.id))
+    : bank.skills;
+  const activeSkillsCorpus = activeSkills
+    .map((s) => `${s.name} ${s.aliases.join(' ')}`)
+    .join(' \n ');
+
   const bankCorpus = [
     ...bank.skills.map((s) => `${s.name} ${s.aliases.join(' ')}`),
     ...bank.achievements.map((a) => `${a.action} ${a.result} ${a.metric ?? ''}`),
-    ...bank.projects.map((p) => `${p.name} ${p.description}`),
+    ...bank.projects.map((p) => `${p.name} ${p.description} ${p.highlights.join(' ')}`),
+    ...bank.certifications.map((c) => `${c.name} ${c.issuer}`),
   ].join(' \n ');
 
-  const evalCorpus = resumeText?.trim() ? resumeText : bankCorpus;
+  const evalCorpus = resumeText?.trim()
+    ? `${resumeText} \n ${activeSkillsCorpus}`
+    : bankCorpus;
 
   const allItems: CoverageItem[] = [];
   const dismissedTermsList: string[] = [];
@@ -227,16 +239,25 @@ export function buildGroupedCoverageSummary(
     );
 
     const evidence = findBankEvidenceForTerm(req.text, bank);
-    const relatedSkill = bank.skills.find((s) => {
+    const exactBankSkill = bank.skills.find((s) => {
       const sNorm = normalizeKeyword(s.name);
       return (
         sNorm === reqNorm ||
-        s.aliases.some((a) => normalizeKeyword(a) === reqNorm)
+        s.aliases.some((a) => normalizeKeyword(a) === reqNorm) ||
+        evaluateKeywordPresence(
+          req.text,
+          `${s.name} ${s.aliases.join(' ')}`,
+          customAliases,
+        ) === 'covered'
       );
     });
 
+    const isExactSkillSelected =
+      Boolean(exactBankSkill) &&
+      (!selectedSkillIds || selectedSkillIds.includes(exactBankSkill!.id));
+
     let status: 'covered' | 'partial' | 'gap';
-    if (presence === 'covered') {
+    if (presence === 'covered' || isExactSkillSelected) {
       status = 'covered';
     } else if (presence === 'partial') {
       status = 'partial';
@@ -246,13 +267,25 @@ export function buildGroupedCoverageSummary(
       status = 'gap';
     }
 
+    const candidateRelatedName =
+      exactBankSkill?.name ??
+      evidence.find((e) => e.kind === 'skill')?.title;
+    const isRedundantRelated =
+      Boolean(candidateRelatedName) &&
+      (candidateRelatedName!.toLowerCase().trim() ===
+        req.text.toLowerCase().trim() ||
+        normalizeKeyword(candidateRelatedName!) === reqNorm);
+
     allItems.push({
       id: req.id,
       term: req.text,
       priority: req.priority,
       status,
       requirement: req,
-      relatedBankTerm: relatedSkill?.name,
+      relatedBankTerm:
+        status === 'partial' && !isRedundantRelated
+          ? candidateRelatedName
+          : undefined,
       evidence: evidence.length > 0 ? evidence : undefined,
     });
   }

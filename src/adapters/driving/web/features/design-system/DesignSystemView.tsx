@@ -16,6 +16,9 @@ import {
   BulletRow,
   Button,
   Card,
+  CevinLogo,
+  CevinMark,
+  CevinStatusIndicator,
   Checkbox,
   CompactStepper,
   CoverageBar,
@@ -598,6 +601,138 @@ export function DesignSystemView() {
           actionLabel="Primary Action"
           onAction={() => undefined}
         />
+      </Card>
+
+      {/* 07. Pure-Geometry Cevin Logo & Animated Working Mark */}
+      <Card className="p-6 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-display font-semibold text-ink">
+              07. Pure-Geometry Cevin Logo & Animated Working Mark
+            </h2>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Constructed purely from SVG geometric primitives (arcs, lines, circles) with zero fonts or transforms on static shapes.
+            </p>
+          </div>
+          <Badge tone="accent">5 States × 4 Sizes × Tile & Glyph</Badge>
+        </div>
+
+        {/* Option A & Option B Wordmark Lockups */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="p-5 rounded-xl bg-[#F4F1EB] border border-border space-y-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-[#525B6C]">
+              Light Surface (#F4F1EB) — Option A (Folded Sheet) & Option B (Bullet C)
+            </div>
+            <div className="flex flex-wrap items-center gap-6">
+              <CevinLogo option="A" scheme="color" height={44} />
+              <CevinLogo option="B" scheme="color" height={44} />
+            </div>
+            <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-[#D8D3C8]">
+              <CevinLogo option="A" scheme="mono" height={32} />
+              <CevinLogo option="B" scheme="mono" height={32} />
+              <CevinLogo option="A" scheme="color" iconOnly height={32} />
+              <CevinLogo option="B" scheme="color" iconOnly height={32} />
+            </div>
+          </div>
+
+          <div className="p-5 rounded-xl bg-[#151A22] border border-[#2A3342] text-[#F4F1EB] space-y-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-[#9CA5B5]">
+              Dark Surface (#151A22) — Option A & Option B Dark Variants
+            </div>
+            <div className="flex flex-wrap items-center gap-6">
+              <CevinLogo option="A" scheme="dark" height={44} />
+              <CevinLogo option="B" scheme="dark" height={44} />
+            </div>
+            <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-[#2A3342]">
+              <CevinLogo option="A" scheme="dark" iconOnly height={32} />
+              <CevinLogo option="B" scheme="dark" iconOnly height={32} />
+            </div>
+          </div>
+        </div>
+
+        {/* CevinMark All States × Sizes × Variants */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {(['tile', 'glyph'] as const).map((variant) => (
+            <div
+              key={variant}
+              className="p-4 rounded-xl bg-surface-sunken border border-hairline space-y-4"
+            >
+              <div className="text-xs font-semibold text-ink uppercase tracking-wider">
+                CevinMark — {variant} rendition (Light & Dark)
+              </div>
+              <div className="grid grid-cols-5 gap-3">
+                {(['idle', 'thinking', 'writing', 'done', 'error'] as const).map(
+                  (st) => (
+                    <div
+                      key={st}
+                      className="p-3 rounded-lg bg-surface border border-border flex flex-col items-center gap-2.5"
+                    >
+                      <span className="text-[11px] font-mono font-semibold text-ink-muted">
+                        {st}
+                      </span>
+                      <div className="flex items-end gap-2">
+                        {([16, 24, 40, 64] as const).map((sz) => (
+                          <CevinMark
+                            key={sz}
+                            state={st}
+                            size={sz}
+                            variant={variant}
+                          />
+                        ))}
+                      </div>
+                      <div className="w-full pt-2 border-t border-hairline flex items-center justify-center gap-2 bg-[#151A22] text-[#F4F1EB] rounded-sm py-1.5">
+                        <CevinMark
+                          state={st}
+                          size={16}
+                          variant={variant}
+                          className="text-[#F4F1EB]"
+                        />
+                        <CevinMark
+                          state={st}
+                          size={24}
+                          variant={variant}
+                          className="text-[#F4F1EB]"
+                        />
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Determinate Progress & Touchpoint Copy Specimens */}
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-hairline">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-xs font-semibold text-ink-muted">
+              Determinate Progress (0.25 / 0.50 / 0.75):
+            </span>
+            <CevinMark state="thinking" size={24} variant="tile" progress={0.25} />
+            <CevinMark state="thinking" size={24} variant="tile" progress={0.5} />
+            <CevinMark state="thinking" size={24} variant="tile" progress={0.75} />
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <CevinStatusIndicator
+              state="thinking"
+              size={16}
+              variant="glyph"
+              label="Cevin is reading the posting"
+            />
+            <CevinStatusIndicator
+              state="writing"
+              size={16}
+              variant="glyph"
+              label="Cevin is rewriting (2 of 6)"
+            />
+            <CevinStatusIndicator
+              state="thinking"
+              size={16}
+              variant="glyph"
+              label="Cevin is warming up"
+            />
+          </div>
+        </div>
       </Card>
     </div>
   );

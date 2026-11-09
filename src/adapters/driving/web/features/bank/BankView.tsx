@@ -36,6 +36,7 @@ import {
   Avatar,
   Badge,
   Button,
+  CevinStatusIndicator,
   Drawer,
   EmptyState,
   FileDropzone,
@@ -1900,7 +1901,17 @@ export function BankView() {
                       }
                     }}
                   >
-                    <span>Parse & review JSON</span>
+                    {isParsingFile ? (
+                      <CevinStatusIndicator
+                        state="thinking"
+                        size={16}
+                        variant="glyph"
+                        label="Cevin is reading your resume"
+                        className="text-white"
+                      />
+                    ) : (
+                      <span>Parse & review JSON</span>
+                    )}
                   </Button>
                 </div>
               </div>

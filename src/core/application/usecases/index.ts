@@ -175,6 +175,54 @@ function ensureCoverLetterDraft(
   return createDefaultCoverLetterDraft(app, bank);
 }
 
+function syncApplicationWithBank(
+  app: Application,
+  bank: BankSnapshot,
+): { app: Application; changed: boolean } {
+  const excludedSet = new Set(app.workingDraft.excludedSkillIds ?? []);
+  const bankSkillIdSet = new Set(bank.skills.map((s) => s.id));
+  const currentSelected = app.workingDraft.selectedSkillIds.filter((id) =>
+    bankSkillIdSet.has(id),
+  );
+  const selectedSet = new Set(currentSelected);
+  let skillsChanged =
+    currentSelected.length !== app.workingDraft.selectedSkillIds.length;
+
+  for (const skill of bank.skills) {
+    if (!selectedSet.has(skill.id) && !excludedSet.has(skill.id)) {
+      currentSelected.push(skill.id);
+      selectedSet.add(skill.id);
+      skillsChanged = true;
+    }
+  }
+
+  if (!skillsChanged) {
+    return { app, changed: false };
+  }
+
+  const nextWorkingDraft = {
+    ...app.workingDraft,
+    selectedSkillIds: currentSelected,
+  };
+  const clDraft = ensureCoverLetterDraft(app, bank);
+  const nextApp: Application = {
+    ...app,
+    workingDraft: nextWorkingDraft,
+    coverLetterDraft: clDraft,
+    documents: {
+      resume: nextWorkingDraft,
+      coverLetter: clDraft,
+    },
+  };
+  nextApp.latestScores = computeAtsAndJobMatchScores(
+    nextApp,
+    bank,
+    app.latestScores.roundTrip,
+  ).scores;
+
+  return { app: nextApp, changed: true };
+}
+
 const DEFAULT_LLAMA31_PROFILE: ModelProfile = {
   id: 'llama3_1_8b',
   label: 'Llama 3.1 8B (Tuned for llama3.1:8b)',
@@ -528,6 +576,173 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       out[i] = binary.charCodeAt(i);
     }
     return out;
+  };
+
+  const addSkillAndAchievementInternal = async ({
+    skillName,
+    requirementTerm,
+    category = 'Tools',
+    aliases = [],
+    achievementId,
+    experienceId,
+    attachExperienceId,
+    newAchievement,
+    applicationId,
+  }: {
+    skillName: string;
+    requirementTerm?: string;
+    category?: Skill['category'];
+    aliases?: string[];
+    achievementId?: string;
+    experienceId?: string;
+    attachExperienceId?: string;
+    newAchievement?: { action: string; result: string; metric?: string };
+    applicationId?: string;
+  }): Promise<{
+    bank: BankSnapshot;
+    skill: Skill;
+    application?: Application;
+  }> => {
+    const bank = await deps.bankRepo.getSnapshot();
+    const cleanName = skillName.trim();
+    const norm = normalizeKeyword(cleanName);
+    const cleanReqTerm = requirementTerm?.trim() ?? '';
+    const reqNorm = cleanReqTerm ? normalizeKeyword(cleanReqTerm) : '';
+    const extraAliases =
+      cleanReqTerm && reqNorm && reqNorm !== norm ? [cleanReqTerm] : [];
+    const cleanAliases = Array.from(
+      new Set(
+        [...aliases, ...extraAliases].map((a) => a.trim()).filter(Boolean),
+      ),
+    );
+
+    let skill = bank.skills.find(
+      (s) =>
+        normalizeKeyword(s.name) === norm ||
+        s.aliases.some((a) => normalizeKeyword(a) === norm) ||
+        (reqNorm
+          ? normalizeKeyword(s.name) === reqNorm ||
+            s.aliases.some((a) => normalizeKeyword(a) === reqNorm)
+          : false),
+    );
+    if (!skill) {
+      skill = {
+        id: deps.idGen.nextId('skill'),
+        name: cleanName,
+        category,
+        aliases: cleanAliases,
+      };
+      bank.skills.push(skill);
+    } else {
+      skill.aliases = Array.from(
+        new Set([...skill.aliases, ...cleanAliases]),
+      ).filter((a) => normalizeKeyword(a) !== normalizeKeyword(skill!.name));
+    }
+
+    if (achievementId) {
+      const targetAch = bank.achievements.find((a) => a.id === achievementId);
+      if (targetAch) {
+        if (!targetAch.skillIds.includes(skill.id)) {
+          targetAch.skillIds = [...targetAch.skillIds, skill.id];
+        }
+        const tagLower = cleanName.toLowerCase();
+        if (!targetAch.tags.includes(tagLower)) {
+          targetAch.tags = [...targetAch.tags, tagLower];
+        }
+      }
+    }
+
+    const effectiveExperienceId = (attachExperienceId ?? experienceId)?.trim();
+    let createdAch: Achievement | null = null;
+    if (
+      effectiveExperienceId &&
+      newAchievement &&
+      newAchievement.action.trim() &&
+      newAchievement.result.trim()
+    ) {
+      createdAch = {
+        id: deps.idGen.nextId('ach'),
+        experienceId: effectiveExperienceId,
+        action: newAchievement.action.trim(),
+        result: newAchievement.result.trim(),
+        metric: newAchievement.metric?.trim() || undefined,
+        skillIds: [skill.id],
+        tags: [
+          cleanName.toLowerCase(),
+          ...cleanAliases.map((a) => a.toLowerCase()),
+        ],
+      };
+      bank.achievements.push(createdAch);
+    }
+
+    await deps.bankRepo.saveSnapshot(bank);
+
+    let updatedApplication: Application | undefined;
+    const allApps = await deps.appRepo.listApplications();
+    const targetApps =
+      applicationId && !allApps.some((a) => a.id === applicationId)
+        ? [
+            ...allApps,
+            ...(await (async () => {
+              const found = await deps.appRepo.getApplication(applicationId);
+              return found ? [found] : [];
+            })()),
+          ]
+        : allApps;
+
+    for (const app of targetApps) {
+      const isTargetApp = app.id === applicationId;
+      const draft = { ...app.workingDraft };
+      const nextExcluded = (draft.excludedSkillIds ?? []).filter(
+        (id) => id !== skill.id,
+      );
+      draft.excludedSkillIds = nextExcluded;
+
+      if (!draft.selectedSkillIds.includes(skill.id)) {
+        draft.selectedSkillIds = [...draft.selectedSkillIds, skill.id];
+      }
+      if (isTargetApp && createdAch) {
+        if (!draft.selectedAchievementIds.includes(createdAch.id)) {
+          draft.selectedAchievementIds = [
+            ...draft.selectedAchievementIds,
+            createdAch.id,
+          ];
+        }
+        draft.bullets = [
+          ...draft.bullets,
+          {
+            id: `bullet-${createdAch.id}`,
+            experienceId: createdAch.experienceId,
+            text: formatAchievementInVoice(createdAch, app.voice),
+            originalText: formatAchievementInVoice(createdAch, 'professional'),
+            sourceIds: [createdAch.id],
+            locked: false,
+            unverifiedClaims: [],
+          },
+        ];
+      }
+
+      const nextApp: Application = {
+        ...app,
+        workingDraft: draft,
+        documents: {
+          resume: draft,
+          coverLetter: ensureCoverLetterDraft(app, bank),
+        },
+        updatedAt: deps.clock.nowIso(),
+      };
+      nextApp.latestScores = computeAtsAndJobMatchScores(
+        nextApp,
+        bank,
+        app.latestScores.roundTrip,
+      ).scores;
+      await deps.appRepo.saveApplication(nextApp);
+      if (isTargetApp) {
+        updatedApplication = nextApp;
+      }
+    }
+
+    return { bank, skill, application: updatedApplication };
   };
 
   const renderPreviewUseCase: RenderPreviewUseCase = {
@@ -1180,22 +1395,25 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
 
     if (useLlmIfNeeded) {
       const candidateKeys = ['location', 'workPermits', 'employmentType'] as const;
-      for (const factKey of candidateKeys) {
-        const snippet = facts[factKey].triggerSnippet;
-        if (!snippet) continue;
-        try {
-          const res = await gateway.executeTask(
-            extractJobFactTask,
-            {
-              factKey,
-              snippet,
-              rawPosting,
-            },
-            {
-              itemKey: `jobfact-${factKey}`,
-              priority: 'background',
-            },
-          );
+      const hasTrigger = candidateKeys.some((k) => Boolean(facts[k].triggerSnippet));
+      if (hasTrigger) {
+        await gateway.runWithActivity('reading-posting', async () => {
+          for (const factKey of candidateKeys) {
+            const snippet = facts[factKey].triggerSnippet;
+            if (!snippet) continue;
+            try {
+              const res = await gateway.executeTask(
+                extractJobFactTask,
+                {
+                  factKey,
+                  snippet,
+                  rawPosting,
+                },
+                {
+                  itemKey: `jobfact-${factKey}`,
+                  priority: 'background',
+                },
+              );
 
           if (!res.fellBackToBaseline) {
             const parsed = JSON.parse(res.text) as {
@@ -1289,9 +1507,11 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
               }
             }
           }
-        } catch {
-          // Keep rule baseline on any LLM error
-        }
+            } catch {
+              // Keep rule baseline on any LLM error
+            }
+          }
+        });
       }
     }
 
@@ -1374,7 +1594,10 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     },
 
     testLlmConnection: {
-      execute: testConnectionInternal,
+      execute: (providerId, configOverride) =>
+        gateway.runWithActivity('checking', () =>
+          testConnectionInternal(providerId, configOverride),
+        ),
       async getSidebarStatus(): Promise<SidebarConnectionStatus> {
         const settings = await deps.settingsRepo.getSettings();
         const activity = gateway.getLiveActivity();
@@ -1526,11 +1749,15 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
 
         let parsedData: z.infer<typeof LlmStructuredResumeSchema>;
         try {
-          parsedData = await executeStructuredLlmCall(
-            provider,
-            buildStructureResumePrompt(rawDoc.text),
-            LlmStructuredResumeSchema,
-            supportsJsonSchema,
+          parsedData = await gateway.runWithActivity(
+            'reading-resume',
+            async () =>
+              executeStructuredLlmCall(
+                provider,
+                buildStructureResumePrompt(rawDoc.text),
+                LlmStructuredResumeSchema,
+                supportsJsonSchema,
+              ),
           );
         } catch {
           parsedData = fallbackParseResumeText(rawDoc.text);
@@ -1686,63 +1913,71 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         };
 
         await deps.bankRepo.saveSnapshot(nextSnapshot);
+        const existingApps = await deps.appRepo.listApplications();
+        for (const existingApp of existingApps) {
+          const synced = syncApplicationWithBank(existingApp, nextSnapshot);
+          if (synced.changed) {
+            await deps.appRepo.saveApplication(synced.app);
+          }
+        }
         return { ok: true, value: nextSnapshot };
       },
     },
 
     analyzeJobDescription: {
       async execute(applicationId: string, rawJobDescription: string) {
-        const app = await deps.appRepo.getApplication(applicationId);
-        if (!app) {
-          return {
-            ok: false,
-            error: { code: 'NOT_FOUND', message: 'Application not found.' },
-          };
-        }
-
-        const bank = await deps.bankRepo.getSnapshot();
-        const { providerId } = await getActiveLlmProvider();
-
-        // Always run the deterministic Job-Brief extractor first (<5ms, 0 LLM tokens)
-        const compactBrief = extractDeterministicJobBrief(rawJobDescription);
-        const parsedJob: ParsedJob = {
-          ...compactBrief.parsedJob,
-        };
-
-        // Optional lightweight 200-token refinement via LlmGateway when connected to Ollama
-        if (providerId !== 'mock') {
-          try {
-            const refinedRes = await gateway.executeTask(
-              refineJobBriefTask,
-              {
-                deterministicBriefText: compactBrief.briefText,
-                rawSnippet: rawJobDescription.slice(0, 900),
-                defaultTitle: parsedJob.title,
-                defaultCompany: parsedJob.company,
-                defaultSeniority: parsedJob.seniority,
-                defaultTopSkills: compactBrief.topSkills,
-              },
-              {
-                itemKey: `brief-${applicationId}`,
-                priority: 'interactive',
-              },
-            );
-            const parsedRefined = RefinedJobBriefSchema.parse(
-              JSON.parse(refinedRes.text),
-            );
-            if (parsedRefined.title.trim()) {
-              parsedJob.title = parsedRefined.title.trim();
-            }
-            if (parsedRefined.company.trim()) {
-              parsedJob.company = parsedRefined.company.trim();
-            }
-            if (parsedRefined.seniority.trim()) {
-              parsedJob.seniority = parsedRefined.seniority.trim();
-            }
-          } catch {
-            // Keep deterministic brief
+        return gateway.runWithActivity('reading-posting', async () => {
+          const app = await deps.appRepo.getApplication(applicationId);
+          if (!app) {
+            return {
+              ok: false,
+              error: { code: 'NOT_FOUND', message: 'Application not found.' },
+            };
           }
-        }
+
+          const bank = await deps.bankRepo.getSnapshot();
+          const { providerId } = await getActiveLlmProvider();
+
+          // Always run the deterministic Job-Brief extractor first (<5ms, 0 LLM tokens)
+          const compactBrief = extractDeterministicJobBrief(rawJobDescription);
+          const parsedJob: ParsedJob = {
+            ...compactBrief.parsedJob,
+          };
+
+          // Optional lightweight 200-token refinement via LlmGateway when connected to Ollama
+          if (providerId !== 'mock') {
+            try {
+              const refinedRes = await gateway.executeTask(
+                refineJobBriefTask,
+                {
+                  deterministicBriefText: compactBrief.briefText,
+                  rawSnippet: rawJobDescription.slice(0, 900),
+                  defaultTitle: parsedJob.title,
+                  defaultCompany: parsedJob.company,
+                  defaultSeniority: parsedJob.seniority,
+                  defaultTopSkills: compactBrief.topSkills,
+                },
+                {
+                  itemKey: `brief-${applicationId}`,
+                  priority: 'interactive',
+                },
+              );
+              const parsedRefined = RefinedJobBriefSchema.parse(
+                JSON.parse(refinedRes.text),
+              );
+              if (parsedRefined.title.trim()) {
+                parsedJob.title = parsedRefined.title.trim();
+              }
+              if (parsedRefined.company.trim()) {
+                parsedJob.company = parsedRefined.company.trim();
+              }
+              if (parsedRefined.seniority.trim()) {
+                parsedJob.seniority = parsedRefined.seniority.trim();
+              }
+            } catch {
+              // Keep deterministic brief
+            }
+          }
 
         const extractedKw = extractDomainKeywordsFromText(rawJobDescription);
         const existingKwNorms = new Set(
@@ -1830,8 +2065,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         const analysis = computeAtsAndJobMatchScores(updatedApp, bank);
         updatedApp.latestScores = analysis.scores;
 
-        await deps.appRepo.saveApplication(updatedApp);
-        return { ok: true, value: { application: updatedApp, parsedJob } };
+          await deps.appRepo.saveApplication(updatedApp);
+          return { ok: true, value: { application: updatedApp, parsedJob } };
+        });
       },
     },
 
@@ -2060,71 +2296,81 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         const totalToRewrite = jobsToRun.length;
 
         // Dispatch all unlocked bullets concurrently through LlmGateway (bounded by parallelSlots = 2)
-        await Promise.all(
-          jobsToRun.map(async ({ index, bulletId, ach }, i) => {
-            const exp = expById.get(ach.experienceId);
-            const linkedSkills = ach.skillIds
-              .map((sId) => skillById.get(sId)?.name)
-              .filter((n): n is string => Boolean(n));
+        await gateway.runWithActivity(
+          'rewriting',
+          async () => {
+            await Promise.all(
+              jobsToRun.map(async ({ index, bulletId, ach }, i) => {
+                const exp = expById.get(ach.experienceId);
+                const linkedSkills = ach.skillIds
+                  .map((sId) => skillById.get(sId)?.name)
+                  .filter((n): n is string => Boolean(n));
 
-            try {
-              const res = await gateway.executeTask(
-                rewriteBulletTask,
-                {
-                  bulletId,
-                  action: ach.action,
-                  result: ach.result,
-                  metric: ach.metric,
-                  company: exp?.company ?? '',
-                  roleTitle: exp?.title ?? '',
-                  allowedTerms: [...linkedSkills, ...ach.tags],
-                  jdOnlyTerms,
-                  briefText: compactBrief.briefText,
-                  briefHash: compactBrief.briefHash,
-                  voice,
-                  variationSeed: i,
-                },
-                {
-                  itemKey: `bullet-${applicationId}-${bulletId}`,
-                  priority: i < 4 ? 'visible' : 'background',
-                },
-              );
+                try {
+                  const res = await gateway.executeTask(
+                    rewriteBulletTask,
+                    {
+                      bulletId,
+                      action: ach.action,
+                      result: ach.result,
+                      metric: ach.metric,
+                      company: exp?.company ?? '',
+                      roleTitle: exp?.title ?? '',
+                      allowedTerms: [...linkedSkills, ...ach.tags],
+                      jdOnlyTerms,
+                      briefText: compactBrief.briefText,
+                      briefHash: compactBrief.briefHash,
+                      voice,
+                      variationSeed: i,
+                    },
+                    {
+                      itemKey: `bullet-${applicationId}-${bulletId}`,
+                      priority: i < 4 ? 'visible' : 'background',
+                    },
+                  );
 
-              const grounding = validateBulletGrounding(
-                res.text,
-                [ach.id],
-                bank,
-              );
-              workingBullets[index] = {
-                ...workingBullets[index],
-                text: res.text,
-                unverifiedClaims: grounding.unverifiedClaims,
-                keptOriginalWording: res.keptOriginalWording,
-                attemptCount: res.attemptCount,
-              };
-              completedCount += 1;
+                  const grounding = validateBulletGrounding(
+                    res.text,
+                    [ach.id],
+                    bank,
+                  );
+                  workingBullets[index] = {
+                    ...workingBullets[index],
+                    text: res.text,
+                    unverifiedClaims: grounding.unverifiedClaims,
+                    keptOriginalWording: res.keptOriginalWording,
+                    attemptCount: res.attemptCount,
+                  };
+                  completedCount += 1;
+                  gateway.updateBatchProgress(completedCount, totalToRewrite);
 
-              if (onBulletProgress) {
-                const partialDraft = {
-                  ...app.workingDraft,
-                  bullets: [...workingBullets],
-                };
-                const partialApp: Application = {
-                  ...app,
-                  voice,
-                  workingDraft: partialDraft,
-                };
-                onBulletProgress(
-                  bulletId,
-                  partialApp,
-                  completedCount,
-                  totalToRewrite,
-                );
-              }
-            } catch {
-              // Cancelled or superseded; keep existing deterministic baseline in workingBullets[index]
-            }
-          }),
+                  if (onBulletProgress) {
+                    const partialDraft = {
+                      ...app.workingDraft,
+                      bullets: [...workingBullets],
+                    };
+                    const partialApp: Application = {
+                      ...app,
+                      voice,
+                      workingDraft: partialDraft,
+                    };
+                    onBulletProgress(
+                      bulletId,
+                      partialApp,
+                      completedCount,
+                      totalToRewrite,
+                    );
+                  }
+                } catch {
+                  // Cancelled or superseded; keep existing deterministic baseline in workingBullets[index]
+                }
+              }),
+            );
+          },
+          {
+            batchCompleted: 0,
+            batchTotal: totalToRewrite > 1 ? totalToRewrite : undefined,
+          },
         );
 
         let nextSummary = app.workingDraft.summary;
@@ -2141,23 +2387,25 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           );
 
           try {
-            const sumRes = await gateway.executeTask(
-              writeSummaryTask,
-              {
-                headline: bank.profile.headline,
-                targetRole: app.roleTitle || bank.profile.headline,
-                targetCompany: app.company,
-                verifiedSkills: topSkills,
-                verifiedCompanies: companies,
-                topMetricSnippet: firstMetricAch?.metric,
-                briefText: compactBrief.briefText,
-                briefHash: compactBrief.briefHash,
-                voice,
-              },
-              {
-                itemKey: `summary-${applicationId}`,
-                priority: 'visible',
-              },
+            const sumRes = await gateway.runWithActivity('writing', () =>
+              gateway.executeTask(
+                writeSummaryTask,
+                {
+                  headline: bank.profile.headline,
+                  targetRole: app.roleTitle || bank.profile.headline,
+                  targetCompany: app.company,
+                  verifiedSkills: topSkills,
+                  verifiedCompanies: companies,
+                  topMetricSnippet: firstMetricAch?.metric,
+                  briefText: compactBrief.briefText,
+                  briefHash: compactBrief.briefHash,
+                  voice,
+                },
+                {
+                  itemKey: `summary-${applicationId}`,
+                  priority: 'visible',
+                },
+              ),
             );
             nextSummary = sumRes.text;
           } catch {
@@ -2245,28 +2493,30 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             .map((sId) => skillById.get(sId)?.name)
             .filter((n): n is string => Boolean(n));
 
-          const res = await gateway.executeTask(
-            rewriteBulletTask,
-            {
-              bulletId: b.id,
-              action: primaryAch.action,
-              result: primaryAch.result,
-              metric: primaryAch.metric,
-              company: exp?.company ?? '',
-              roleTitle: exp?.title ?? '',
-              allowedTerms: [...linkedSkills, ...primaryAch.tags],
-              jdOnlyTerms,
-              briefText: compactBrief.briefText,
-              briefHash: compactBrief.briefHash,
-              voice,
-              variationSeed,
-            },
-            {
-              itemKey: `bullet-${applicationId}-${b.id}`,
-              priority: 'interactive',
-              bypassCache: variationSeed > 0,
-              seedOffset: variationSeed,
-            },
+          const res = await gateway.runWithActivity('rewriting', () =>
+            gateway.executeTask(
+              rewriteBulletTask,
+              {
+                bulletId: b.id,
+                action: primaryAch.action,
+                result: primaryAch.result,
+                metric: primaryAch.metric,
+                company: exp?.company ?? '',
+                roleTitle: exp?.title ?? '',
+                allowedTerms: [...linkedSkills, ...primaryAch.tags],
+                jdOnlyTerms,
+                briefText: compactBrief.briefText,
+                briefHash: compactBrief.briefHash,
+                voice,
+                variationSeed,
+              },
+              {
+                itemKey: `bullet-${applicationId}-${b.id}`,
+                priority: 'interactive',
+                bypassCache: variationSeed > 0,
+                seedOffset: variationSeed,
+              },
+            ),
           );
 
           const grounding = validateBulletGrounding(
@@ -2329,25 +2579,27 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             Boolean(a.metric),
         );
 
-        const sumRes = await gateway.executeTask(
-          writeSummaryTask,
-          {
-            headline: bank.profile.headline,
-            targetRole: app.roleTitle || bank.profile.headline,
-            targetCompany: app.company,
-            verifiedSkills: topSkills,
-            verifiedCompanies: companies,
-            topMetricSnippet: firstMetricAch?.metric,
-            briefText: compactBrief.briefText,
-            briefHash: compactBrief.briefHash,
-            voice,
-          },
-          {
-            itemKey: `summary-${applicationId}`,
-            priority: 'interactive',
-            bypassCache: true,
-            seedOffset: 1,
-          },
+        const sumRes = await gateway.runWithActivity('writing', () =>
+          gateway.executeTask(
+            writeSummaryTask,
+            {
+              headline: bank.profile.headline,
+              targetRole: app.roleTitle || bank.profile.headline,
+              targetCompany: app.company,
+              verifiedSkills: topSkills,
+              verifiedCompanies: companies,
+              topMetricSnippet: firstMetricAch?.metric,
+              briefText: compactBrief.briefText,
+              briefHash: compactBrief.briefHash,
+              voice,
+            },
+            {
+              itemKey: `summary-${applicationId}`,
+              priority: 'interactive',
+              bypassCache: true,
+              seedOffset: 1,
+            },
+          ),
         );
 
         const nextWorkingDraft = {
@@ -2607,56 +2859,68 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           // Only the 4 prose paragraphs (`opening`, `body1`, `body2`, `whyCompany`) call the LLM via LlmGateway
           const proseTypes: Array<'opening' | 'body1' | 'body2' | 'whyCompany'> =
             ['opening', 'body1', 'body2', 'whyCompany'];
+          let completedBlocks = 0;
 
-          await Promise.all(
-            proseTypes.map(async (bType) => {
-              const idx = blocks.findIndex((b) => b.type === bType);
-              if (idx === -1 || blocks[idx].locked) return;
-              const targetBlock = blocks[idx];
-              const proofSnippet =
-                bType === 'body2' && outline.secondaryProof
-                  ? `${outline.secondaryProof.achievement.action}, ${outline.secondaryProof.achievement.result} at ${outline.secondaryProof.company}`
-                  : outline.primaryProof
-                    ? `${outline.primaryProof.achievement.action}, ${outline.primaryProof.achievement.result} at ${outline.primaryProof.company}`
-                    : targetBlock.text;
+          await gateway.runWithActivity(
+            'writing',
+            async () => {
+              await Promise.all(
+                proseTypes.map(async (bType) => {
+                  const idx = blocks.findIndex((b) => b.type === bType);
+                  if (idx === -1 || blocks[idx].locked) return;
+                  const targetBlock = blocks[idx];
+                  const proofSnippet =
+                    bType === 'body2' && outline.secondaryProof
+                      ? `${outline.secondaryProof.achievement.action}, ${outline.secondaryProof.achievement.result} at ${outline.secondaryProof.company}`
+                      : outline.primaryProof
+                        ? `${outline.primaryProof.achievement.action}, ${outline.primaryProof.achievement.result} at ${outline.primaryProof.company}`
+                        : targetBlock.text;
 
-              try {
-                const res = await gateway.executeTask(
-                  writeLetterBlockTask,
-                  {
-                    blockType: bType,
-                    company: outline.company,
-                    roleTitle: outline.roleTitle,
-                    proofSnippet,
-                    topRequirements: outline.topRequirements,
-                    whyCompanyNotes: nextNotes,
-                    allowedCorpusText,
-                    fallbackText: targetBlock.text,
-                    briefText: compactBrief.briefText,
-                    briefHash: compactBrief.briefHash,
-                    voice: nextVoice,
-                  },
-                  {
-                    itemKey: `letter-${applicationId}-${bType}`,
-                    priority: 'visible',
-                  },
-                );
-                const grounding = validateCoverLetterGrounding(
-                  res.text,
-                  targetBlock.sourceIds,
-                  bank,
-                  app.jobDescription,
-                  nextNotes,
-                );
-                blocks[idx] = {
-                  ...targetBlock,
-                  text: res.text,
-                  unverifiedClaims: grounding.unverifiedClaims,
-                };
-              } catch {
-                // Keep deterministic block
-              }
-            }),
+                  try {
+                    const res = await gateway.executeTask(
+                      writeLetterBlockTask,
+                      {
+                        blockType: bType,
+                        company: outline.company,
+                        roleTitle: outline.roleTitle,
+                        proofSnippet,
+                        topRequirements: outline.topRequirements,
+                        whyCompanyNotes: nextNotes,
+                        allowedCorpusText,
+                        fallbackText: targetBlock.text,
+                        briefText: compactBrief.briefText,
+                        briefHash: compactBrief.briefHash,
+                        voice: nextVoice,
+                      },
+                      {
+                        itemKey: `letter-${applicationId}-${bType}`,
+                        priority: 'visible',
+                      },
+                    );
+                    const grounding = validateCoverLetterGrounding(
+                      res.text,
+                      targetBlock.sourceIds,
+                      bank,
+                      app.jobDescription,
+                      nextNotes,
+                    );
+                    blocks[idx] = {
+                      ...targetBlock,
+                      text: res.text,
+                      unverifiedClaims: grounding.unverifiedClaims,
+                    };
+                    completedBlocks += 1;
+                    gateway.updateBatchProgress(
+                      completedBlocks,
+                      proseTypes.length,
+                    );
+                  } catch {
+                    // Keep deterministic block
+                  }
+                }),
+              );
+            },
+            { batchCompleted: 0, batchTotal: proseTypes.length },
           );
         }
 
@@ -2751,29 +3015,31 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             block.type !== 'closing' &&
             block.type !== 'signoff'
           ) {
-            const res = await gateway.executeTask(
-              writeLetterBlockTask,
-              {
-                blockType: block.type,
-                company: app.company,
-                roleTitle: app.roleTitle,
-                proofSnippet: nextText,
-                topRequirements: (app.parsedJob?.requirements ?? [])
-                  .slice(0, 3)
-                  .map((r) => r.text),
-                whyCompanyNotes: currentDraft.whyCompanyNotes,
-                allowedCorpusText,
-                fallbackText: nextText,
-                briefText: compactBrief.briefText,
-                briefHash: compactBrief.briefHash,
-                voice: effectiveVoice,
-              },
-              {
-                itemKey: `letter-${applicationId}-${block.type}`,
-                priority: 'interactive',
-                bypassCache: true,
-                seedOffset: 1,
-              },
+            const res = await gateway.runWithActivity('writing', () =>
+              gateway.executeTask(
+                writeLetterBlockTask,
+                {
+                  blockType: block.type,
+                  company: app.company,
+                  roleTitle: app.roleTitle,
+                  proofSnippet: nextText,
+                  topRequirements: (app.parsedJob?.requirements ?? [])
+                    .slice(0, 3)
+                    .map((r) => r.text),
+                  whyCompanyNotes: currentDraft.whyCompanyNotes,
+                  allowedCorpusText,
+                  fallbackText: nextText,
+                  briefText: compactBrief.briefText,
+                  briefHash: compactBrief.briefHash,
+                  voice: effectiveVoice,
+                },
+                {
+                  itemKey: `letter-${applicationId}-${block.type}`,
+                  priority: 'interactive',
+                  bypassCache: true,
+                  seedOffset: 1,
+                },
+              ),
             );
             nextText = res.text;
           }
@@ -2988,14 +3254,16 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
 
     scoreResume: {
       async execute(applicationId: string, options) {
-        const app = await deps.appRepo.getApplication(applicationId);
-        if (!app) {
+        const rawApp = await deps.appRepo.getApplication(applicationId);
+        if (!rawApp) {
           return {
             ok: false,
             error: { code: 'NOT_FOUND', message: 'Application not found.' },
           };
         }
         const bank = await deps.bankRepo.getSnapshot();
+        const synced = syncApplicationWithBank(rawApp, bank);
+        const app = synced.app;
 
         let roundTripReport: RoundTripReport | undefined =
           app.latestScores.roundTrip;
@@ -3293,9 +3561,11 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       async confirmIHaveThisSkill({
         applicationId,
         skillName,
+        requirementTerm,
         aliases = [],
         category = 'Tools',
         attachExperienceId,
+        experienceId,
         newAchievement,
       }) {
         const app = await deps.appRepo.getApplication(applicationId);
@@ -3305,92 +3575,49 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             error: { code: 'NOT_FOUND', message: 'Application not found.' },
           };
         }
-        const bank = await deps.bankRepo.getSnapshot();
-        const cleanName = skillName.trim();
-        const norm = normalizeKeyword(cleanName);
-
-        let skill = bank.skills.find((s) => normalizeKeyword(s.name) === norm);
-        if (!skill) {
-          skill = {
-            id: deps.idGen.nextId('skill'),
-            name: cleanName,
-            category,
-            aliases: aliases.map((a) => a.trim()).filter(Boolean),
-          };
-          bank.skills.push(skill);
-        } else if (aliases.length > 0) {
-          skill.aliases = Array.from(
-            new Set([
-              ...skill.aliases,
-              ...aliases.map((a) => a.trim()).filter(Boolean),
-            ]),
-          );
-        }
-
-        const draft = { ...app.workingDraft };
-        if (!draft.selectedSkillIds.includes(skill.id)) {
-          draft.selectedSkillIds = [...draft.selectedSkillIds, skill.id];
-        }
-
-        if (
-          attachExperienceId &&
-          newAchievement &&
-          newAchievement.action.trim() &&
-          newAchievement.result.trim()
-        ) {
-          const ach: Achievement = {
-            id: deps.idGen.nextId('ach'),
-            experienceId: attachExperienceId,
-            action: newAchievement.action.trim(),
-            result: newAchievement.result.trim(),
-            metric: newAchievement.metric?.trim() || undefined,
-            skillIds: [skill.id],
-            tags: [cleanName.toLowerCase()],
-          };
-          bank.achievements.push(ach);
-          draft.selectedAchievementIds = [
-            ...draft.selectedAchievementIds,
-            ach.id,
-          ];
-          const bulletText = formatAchievementInVoice(ach, app.voice);
-          draft.bullets = [
-            ...draft.bullets,
-            {
-              id: `bullet-${ach.id}`,
-              experienceId: ach.experienceId,
-              text: bulletText,
-              originalText: formatAchievementInVoice(ach, 'professional'),
-              sourceIds: [ach.id],
-              locked: false,
-              unverifiedClaims: [],
-            },
-          ];
-        }
-
-        await deps.bankRepo.saveSnapshot(bank);
-
-        const updatedApp: Application = {
-          ...app,
-          workingDraft: draft,
-          documents: {
-            resume: draft,
-            coverLetter: ensureCoverLetterDraft(app, bank),
-          },
-          updatedAt: deps.clock.nowIso(),
-        };
+        const added = await this.manageBank_addSkillHelper({
+          skillName,
+          requirementTerm,
+          aliases,
+          category,
+          attachExperienceId: attachExperienceId ?? experienceId,
+          newAchievement,
+          applicationId,
+        });
+        const updatedApp =
+          added.application ??
+          (await deps.appRepo.getApplication(applicationId)) ??
+          app;
         const analysis = computeAtsAndJobMatchScores(
           updatedApp,
-          bank,
-          app.latestScores.roundTrip,
+          added.bank,
+          updatedApp.latestScores.roundTrip,
         );
-        updatedApp.latestScores = analysis.scores;
-        await deps.appRepo.saveApplication(updatedApp);
-
         return {
           ok: true,
-          value: { application: updatedApp, bank, analysis },
+          value: {
+            application: updatedApp,
+            bank: added.bank,
+            analysis,
+          },
         };
       },
+      // Internal helper shared with manageBank.addSkillAndOptionalAchievement
+      async manageBank_addSkillHelper(params: {
+        skillName: string;
+        requirementTerm?: string;
+        category?: Skill['category'];
+        aliases?: string[];
+        achievementId?: string;
+        experienceId?: string;
+        attachExperienceId?: string;
+        newAchievement?: { action: string; result: string; metric?: string };
+        applicationId?: string;
+      }) {
+        return addSkillAndAchievementInternal(params);
+      },
+    } as CevinUseCases['scoreResume'] & {
+      manageBank_addSkillHelper: typeof addSkillAndAchievementInternal;
     },
 
     renderPreview: renderPreviewUseCase,
@@ -3407,138 +3634,55 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       },
       async saveBank(snapshot: BankSnapshot) {
         await deps.bankRepo.saveSnapshot(snapshot);
+        const apps = await deps.appRepo.listApplications();
+        for (const app of apps) {
+          const synced = syncApplicationWithBank(app, snapshot);
+          if (synced.changed) {
+            await deps.appRepo.saveApplication(synced.app);
+          }
+        }
         return snapshot;
       },
       async addSkillFromGap(term: string) {
         const bank = await deps.bankRepo.getSnapshot();
-        const exists = bank.skills.some(
-          (s) => normalizeKeyword(s.name) === normalizeKeyword(term),
+        const cleanTerm = term.trim();
+        const norm = normalizeKeyword(cleanTerm);
+        let skill = bank.skills.find(
+          (s) =>
+            normalizeKeyword(s.name) === norm ||
+            s.aliases.some((a) => normalizeKeyword(a) === norm),
         );
-        if (!exists) {
-          bank.skills.push({
-            id: deps.idGen.nextId('skill'),
-            name: term.trim(),
-            category: 'Tools',
-            aliases: [],
-          });
-          await deps.bankRepo.saveSnapshot(bank);
-        }
-        return bank;
-      },
-      async addSkillAndOptionalAchievement({
-        skillName,
-        category = 'Tools',
-        aliases = [],
-        achievementId,
-        experienceId,
-        newAchievement,
-        applicationId,
-      }) {
-        const bank = await deps.bankRepo.getSnapshot();
-        const cleanName = skillName.trim();
-        const norm = normalizeKeyword(cleanName);
-        const cleanAliases = aliases.map((a) => a.trim()).filter(Boolean);
-
-        let skill = bank.skills.find((s) => normalizeKeyword(s.name) === norm);
         if (!skill) {
           skill = {
             id: deps.idGen.nextId('skill'),
-            name: cleanName,
-            category,
-            aliases: cleanAliases,
+            name: cleanTerm,
+            category: 'Tools',
+            aliases: [],
           };
           bank.skills.push(skill);
-        } else {
-          skill.aliases = Array.from(
-            new Set([...skill.aliases, ...cleanAliases]),
-          );
+          await deps.bankRepo.saveSnapshot(bank);
         }
-
-        if (achievementId) {
-          const targetAch = bank.achievements.find(
-            (a) => a.id === achievementId,
+        const apps = await deps.appRepo.listApplications();
+        for (const app of apps) {
+          const nextExcluded = (app.workingDraft.excludedSkillIds ?? []).filter(
+            (id) => id !== skill.id,
           );
-          if (targetAch) {
-            if (!targetAch.skillIds.includes(skill.id)) {
-              targetAch.skillIds = [...targetAch.skillIds, skill.id];
-            }
-            const tagLower = cleanName.toLowerCase();
-            if (!targetAch.tags.includes(tagLower)) {
-              targetAch.tags = [...targetAch.tags, tagLower];
-            }
-          }
-        }
-
-        let createdAch: Achievement | null = null;
-        if (
-          experienceId &&
-          newAchievement &&
-          newAchievement.action.trim() &&
-          newAchievement.result.trim()
-        ) {
-          createdAch = {
-            id: deps.idGen.nextId('ach'),
-            experienceId,
-            action: newAchievement.action.trim(),
-            result: newAchievement.result.trim(),
-            metric: newAchievement.metric?.trim() || undefined,
-            skillIds: [skill.id],
-            tags: [cleanName.toLowerCase(), ...cleanAliases.map((a) => a.toLowerCase())],
+          const patchedApp: Application = {
+            ...app,
+            workingDraft: {
+              ...app.workingDraft,
+              excludedSkillIds: nextExcluded,
+            },
           };
-          bank.achievements.push(createdAch);
-        }
-
-        await deps.bankRepo.saveSnapshot(bank);
-
-        let updatedApplication: Application | undefined;
-        if (applicationId) {
-          const app = await deps.appRepo.getApplication(applicationId);
-          if (app) {
-            const draft = { ...app.workingDraft };
-            if (!draft.selectedSkillIds.includes(skill.id)) {
-              draft.selectedSkillIds = [...draft.selectedSkillIds, skill.id];
-            }
-            if (createdAch) {
-              draft.selectedAchievementIds = [
-                ...draft.selectedAchievementIds,
-                createdAch.id,
-              ];
-              draft.bullets = [
-                ...draft.bullets,
-                {
-                  id: `bullet-${createdAch.id}`,
-                  experienceId: createdAch.experienceId,
-                  text: formatAchievementInVoice(createdAch, app.voice),
-                  originalText: formatAchievementInVoice(
-                    createdAch,
-                    'professional',
-                  ),
-                  sourceIds: [createdAch.id],
-                  locked: false,
-                  unverifiedClaims: [],
-                },
-              ];
-            }
-            const nextApp: Application = {
-              ...app,
-              workingDraft: draft,
-              documents: {
-                resume: draft,
-                coverLetter: ensureCoverLetterDraft(app, bank),
-              },
-              updatedAt: deps.clock.nowIso(),
-            };
-            nextApp.latestScores = computeAtsAndJobMatchScores(
-              nextApp,
-              bank,
-              app.latestScores.roundTrip,
-            ).scores;
-            await deps.appRepo.saveApplication(nextApp);
-            updatedApplication = nextApp;
+          const synced = syncApplicationWithBank(patchedApp, bank);
+          if (synced.changed) {
+            await deps.appRepo.saveApplication(synced.app);
           }
         }
-
-        return { bank, skill, application: updatedApplication };
+        return bank;
+      },
+      async addSkillAndOptionalAchievement(params) {
+        return addSkillAndAchievementInternal(params);
       },
       async mergeDuplicateSkills() {
         const bank = await deps.bankRepo.getSnapshot();
@@ -3567,6 +3711,13 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           skills: Array.from(byNorm.values()),
         };
         await deps.bankRepo.saveSnapshot(nextBank);
+        const apps = await deps.appRepo.listApplications();
+        for (const app of apps) {
+          const synced = syncApplicationWithBank(app, nextBank);
+          if (synced.changed) {
+            await deps.appRepo.saveApplication(synced.app);
+          }
+        }
         return { snapshot: nextBank, mergedCount };
       },
       async exportAllDataJson() {
@@ -3675,22 +3826,34 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       async listApplications() {
         const apps = await deps.appRepo.listApplications();
         const bank = await deps.bankRepo.getSnapshot();
-        return apps.map((app) => {
+        const results: Application[] = [];
+        for (const rawApp of apps) {
+          const synced = syncApplicationWithBank(rawApp, bank);
+          const app = synced.app;
+          if (synced.changed) {
+            await deps.appRepo.saveApplication(app);
+          }
           const cl = ensureCoverLetterDraft(app, bank);
-          return {
+          results.push({
             ...app,
             coverLetterDraft: cl,
             documents: {
               resume: app.workingDraft,
               coverLetter: cl,
             },
-          };
-        });
+          });
+        }
+        return results;
       },
       async getApplication(id: string) {
-        const app = await deps.appRepo.getApplication(id);
-        if (!app) return null;
+        const rawApp = await deps.appRepo.getApplication(id);
+        if (!rawApp) return null;
         const bank = await deps.bankRepo.getSnapshot();
+        const synced = syncApplicationWithBank(rawApp, bank);
+        const app = synced.app;
+        if (synced.changed) {
+          await deps.appRepo.saveApplication(app);
+        }
         const cl = ensureCoverLetterDraft(app, bank);
         const letterChecks =
           app.latestLetterChecks ??
@@ -4000,195 +4163,205 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       },
 
       async runCalibration(onProgress, signal): Promise<Result<PerformanceProfile>> {
-        try {
-          const { provider, modelId, profile } = await getActiveLlmProvider();
-          const totalSteps = 4;
+        return gateway.runWithActivity(
+          'checking',
+          async () => {
+            try {
+              const { provider, modelId, profile } = await getActiveLlmProvider();
+              const totalSteps = 4;
 
-          // Step 1: Cold load / prefix warm-up
-          onProgress?.('Warming model and static prompt prefix...', 1, totalSteps);
-          const t0 = Date.now();
-          let coldLoadMs = 80;
-          if (provider.warm) {
-            const warmMetrics = await provider.warm({
-              prefixMessages: rewriteBulletTask.buildPrompt({
-                bulletId: 'cal-warm',
-                action: 'Built service',
-                result: 'cut latency by 30%',
-                company: 'Acme',
-                roleTitle: 'Engineer',
-                allowedTerms: [],
-                jdOnlyTerms: [],
-                briefText: 'ROLE: Engineer',
-                briefHash: 'cal',
-                voice: 'balanced',
-              }).prefixMessages,
-              numCtx: profile.numCtx,
-              keepAlive: profile.keepAlive,
-              signal,
-            });
-            coldLoadMs = warmMetrics.loadMs ?? Math.max(10, Date.now() - t0);
-          }
+              // Step 1: Cold load / prefix warm-up
+              onProgress?.('Warming model and static prompt prefix...', 1, totalSteps);
+              gateway.updateBatchProgress(1, totalSteps);
+              const t0 = Date.now();
+              let coldLoadMs = 80;
+              if (provider.warm) {
+                const warmMetrics = await provider.warm({
+                  prefixMessages: rewriteBulletTask.buildPrompt({
+                    bulletId: 'cal-warm',
+                    action: 'Built service',
+                    result: 'cut latency by 30%',
+                    company: 'Acme',
+                    roleTitle: 'Engineer',
+                    allowedTerms: [],
+                    jdOnlyTerms: [],
+                    briefText: 'ROLE: Engineer',
+                    briefHash: 'cal',
+                    voice: 'balanced',
+                  }).prefixMessages,
+                  numCtx: profile.numCtx,
+                  keepAlive: profile.keepAlive,
+                  signal,
+                });
+                coldLoadMs = warmMetrics.loadMs ?? Math.max(10, Date.now() - t0);
+              }
 
-          if (signal?.aborted) {
-            throw new Error('Calibration cancelled');
-          }
+              if (signal?.aborted) {
+                throw new Error('Calibration cancelled');
+              }
 
-          // Step 2: Measure reading & writing speed on a single bullet rewrite
-          onProgress?.('Measuring reading and writing speed...', 2, totalSteps);
-          const singleStart = Date.now();
-          const singleRes = await gateway.executeTask(
-            rewriteBulletTask,
-            {
-              bulletId: 'cal-single',
-              action:
-                'Built multi-region Kafka metric ingestion pipeline in Go',
-              result:
-                'sustaining 1.4M events/sec while cutting egress spend by 38%',
-              metric: '1.4M events/sec, 38%',
-              company: 'Vanguard Telemetry',
-              roleTitle: 'Staff Platform Engineer',
-              allowedTerms: ['Kafka', 'Go', 'Kubernetes'],
-              jdOnlyTerms: [],
-              briefText: 'ROLE: Staff Platform Engineer | MUST-HAVES: Kafka, Go',
-              briefHash: 'cal-brief',
-              voice: 'balanced',
-            },
-            {
-              itemKey: 'cal-single',
-              priority: 'interactive',
-              bypassCache: true,
-              signal,
-            },
-          );
-          const singleDurationMs = Math.max(20, singleRes.durationMs || Date.now() - singleStart);
+              // Step 2: Measure reading & writing speed on a single bullet rewrite
+              onProgress?.('Measuring reading and writing speed...', 2, totalSteps);
+              gateway.updateBatchProgress(2, totalSteps);
+              const singleStart = Date.now();
+              const singleRes = await gateway.executeTask(
+                rewriteBulletTask,
+                {
+                  bulletId: 'cal-single',
+                  action:
+                    'Built multi-region Kafka metric ingestion pipeline in Go',
+                  result:
+                    'sustaining 1.4M events/sec while cutting egress spend by 38%',
+                  metric: '1.4M events/sec, 38%',
+                  company: 'Vanguard Telemetry',
+                  roleTitle: 'Staff Platform Engineer',
+                  allowedTerms: ['Kafka', 'Go', 'Kubernetes'],
+                  jdOnlyTerms: [],
+                  briefText: 'ROLE: Staff Platform Engineer | MUST-HAVES: Kafka, Go',
+                  briefHash: 'cal-brief',
+                  voice: 'balanced',
+                },
+                {
+                  itemKey: 'cal-single',
+                  priority: 'interactive',
+                  bypassCache: true,
+                  signal,
+                },
+              );
+              const singleDurationMs = Math.max(20, singleRes.durationMs || Date.now() - singleStart);
 
-          if (signal?.aborted) {
-            throw new Error('Calibration cancelled');
-          }
+              if (signal?.aborted) {
+                throw new Error('Calibration cancelled');
+              }
 
-          // Step 3: Measure parallel gain with 2 concurrent requests
-          onProgress?.('Testing 2-slot parallel throughput...', 3, totalSteps);
-          const pairStart = Date.now();
-          await Promise.all([
-            gateway.executeTask(
-              rewriteBulletTask,
-              {
-                bulletId: 'cal-p1',
-                action: 'Designed PostgreSQL connection pooling layer',
-                result: 'dropping p99 query latency from 420ms to 68ms',
-                metric: '420ms to 68ms',
-                company: 'Vanguard Telemetry',
-                roleTitle: 'Staff Platform Engineer',
-                allowedTerms: ['PostgreSQL'],
-                jdOnlyTerms: [],
-                briefText: 'ROLE: Staff Platform Engineer',
-                briefHash: 'cal-brief',
-                voice: 'professional',
-              },
-              {
-                itemKey: 'cal-p1',
-                priority: 'interactive',
-                bypassCache: true,
-                signal,
-              },
-            ),
-            gateway.executeTask(
-              rewriteBulletTask,
-              {
-                bulletId: 'cal-p2',
-                action: 'Automated Terraform state drift checks across 18 clusters',
-                result: 'reducing maintenance windows from 3 hours to 12 minutes',
-                metric: '18 clusters, 3 hours to 12 minutes',
-                company: 'Apex Cloud',
-                roleTitle: 'Senior Platform Engineer',
-                allowedTerms: ['Terraform'],
-                jdOnlyTerms: [],
-                briefText: 'ROLE: Staff Platform Engineer',
-                briefHash: 'cal-brief',
-                voice: 'professional',
-              },
-              {
-                itemKey: 'cal-p2',
-                priority: 'interactive',
-                bypassCache: true,
-                signal,
-              },
-            ),
-          ]);
-          const pairDurationMs = Math.max(25, Date.now() - pairStart);
+              // Step 3: Measure parallel gain with 2 concurrent requests
+              onProgress?.('Testing 2-slot parallel throughput...', 3, totalSteps);
+              gateway.updateBatchProgress(3, totalSteps);
+              const pairStart = Date.now();
+              await Promise.all([
+                gateway.executeTask(
+                  rewriteBulletTask,
+                  {
+                    bulletId: 'cal-p1',
+                    action: 'Designed PostgreSQL connection pooling layer',
+                    result: 'dropping p99 query latency from 420ms to 68ms',
+                    metric: '420ms to 68ms',
+                    company: 'Vanguard Telemetry',
+                    roleTitle: 'Staff Platform Engineer',
+                    allowedTerms: ['PostgreSQL'],
+                    jdOnlyTerms: [],
+                    briefText: 'ROLE: Staff Platform Engineer',
+                    briefHash: 'cal-brief',
+                    voice: 'professional',
+                  },
+                  {
+                    itemKey: 'cal-p1',
+                    priority: 'interactive',
+                    bypassCache: true,
+                    signal,
+                  },
+                ),
+                gateway.executeTask(
+                  rewriteBulletTask,
+                  {
+                    bulletId: 'cal-p2',
+                    action: 'Automated Terraform state drift checks across 18 clusters',
+                    result: 'reducing maintenance windows from 3 hours to 12 minutes',
+                    metric: '18 clusters, 3 hours to 12 minutes',
+                    company: 'Apex Cloud',
+                    roleTitle: 'Senior Platform Engineer',
+                    allowedTerms: ['Terraform'],
+                    jdOnlyTerms: [],
+                    briefText: 'ROLE: Staff Platform Engineer',
+                    briefHash: 'cal-brief',
+                    voice: 'professional',
+                  },
+                  {
+                    itemKey: 'cal-p2',
+                    priority: 'interactive',
+                    bypassCache: true,
+                    signal,
+                  },
+                ),
+              ]);
+              const pairDurationMs = Math.max(25, Date.now() - pairStart);
 
-          if (signal?.aborted) {
-            throw new Error('Calibration cancelled');
-          }
+              if (signal?.aborted) {
+                throw new Error('Calibration cancelled');
+              }
 
-          // Step 4: Verify flat JSON schema compliance
-          onProgress?.('Verifying structured JSON output...', 4, totalSteps);
-          const jsonRes = await gateway.executeTask(
-            refineJobBriefTask,
-            {
-              deterministicBriefText: 'ROLE: Staff Platform Engineer at Aether',
-              rawSnippet:
-                'Role: Staff Platform Engineer at Aether. Must have Kubernetes, Go, and PostgreSQL.',
-              defaultTitle: 'Staff Platform Engineer',
-              defaultCompany: 'Aether',
-              defaultSeniority: 'Staff',
-              defaultTopSkills: ['Kubernetes', 'Go', 'PostgreSQL'],
-            },
-            {
-              itemKey: 'cal-json',
-              priority: 'interactive',
-              bypassCache: true,
-              signal,
-            },
-          );
-          const jsonValid = !jsonRes.fellBackToBaseline;
+              // Step 4: Verify flat JSON schema compliance
+              onProgress?.('Verifying structured JSON output...', 4, totalSteps);
+              gateway.updateBatchProgress(4, totalSteps);
+              const jsonRes = await gateway.executeTask(
+                refineJobBriefTask,
+                {
+                  deterministicBriefText: 'ROLE: Staff Platform Engineer at Aether',
+                  rawSnippet:
+                    'Role: Staff Platform Engineer at Aether. Must have Kubernetes, Go, and PostgreSQL.',
+                  defaultTitle: 'Staff Platform Engineer',
+                  defaultCompany: 'Aether',
+                  defaultSeniority: 'Staff',
+                  defaultTopSkills: ['Kubernetes', 'Go', 'PostgreSQL'],
+                },
+                {
+                  itemKey: 'cal-json',
+                  priority: 'interactive',
+                  bypassCache: true,
+                  signal,
+                },
+              );
+              const jsonValid = !jsonRes.fellBackToBaseline;
 
-          const perfSummary = await performanceLog.getSummary(10);
-          const parallelGainRatio = Number(
-            Math.max(
-              1.0,
-              Math.min(2.0, (singleDurationMs * 2) / pairDurationMs),
-            ).toFixed(2),
-          );
-          const serverParallelWarning = parallelGainRatio < 1.18;
-          const recommendedParallelSlots =
-            parallelGainRatio >= 1.25 ? 2 : profile.parallelRecommended;
+              const perfSummary = await performanceLog.getSummary(10);
+              const parallelGainRatio = Number(
+                Math.max(
+                  1.0,
+                  Math.min(2.0, (singleDurationMs * 2) / pairDurationMs),
+                ).toFixed(2),
+              );
+              const serverParallelWarning = parallelGainRatio < 1.18;
+              const recommendedParallelSlots =
+                parallelGainRatio >= 1.25 ? 2 : profile.parallelRecommended;
 
-          const currentSettings = await deps.settingsRepo.getSettings();
-          const isMockProvider = currentSettings.activeProviderId === 'mock';
-          const calibratedProfile: PerformanceProfile = {
-            calibratedAt: deps.clock.nowIso(),
-            modelName: modelId,
-            coldLoadMs,
-            readingSpeedTokPerSec: isMockProvider
-              ? 0
-              : perfSummary.readingSpeedTokPerSec || 0,
-            writingSpeedTokPerSec: isMockProvider
-              ? 0
-              : perfSummary.writingSpeedTokPerSec || 0,
-            parallelGainRatio,
-            recommendedParallelSlots,
-            jsonValid,
-            serverParallelWarning,
-          };
+              const currentSettings = await deps.settingsRepo.getSettings();
+              const isMockProvider = currentSettings.activeProviderId === 'mock';
+              const calibratedProfile: PerformanceProfile = {
+                calibratedAt: deps.clock.nowIso(),
+                modelName: modelId,
+                coldLoadMs,
+                readingSpeedTokPerSec: isMockProvider
+                  ? 0
+                  : perfSummary.readingSpeedTokPerSec || 0,
+                writingSpeedTokPerSec: isMockProvider
+                  ? 0
+                  : perfSummary.writingSpeedTokPerSec || 0,
+                parallelGainRatio,
+                recommendedParallelSlots,
+                jsonValid,
+                serverParallelWarning,
+              };
 
-          await deps.settingsRepo.saveSettings({
-            ...currentSettings,
-            parallelSlots: recommendedParallelSlots,
-            performanceProfile: calibratedProfile,
-          });
+              await deps.settingsRepo.saveSettings({
+                ...currentSettings,
+                parallelSlots: recommendedParallelSlots,
+                performanceProfile: calibratedProfile,
+              });
 
-          return { ok: true, value: calibratedProfile };
-        } catch (err) {
-          return {
-            ok: false,
-            error: {
-              code: 'LLM_UNREACHABLE',
-              message:
-                err instanceof Error ? err.message : 'Calibration was interrupted.',
-            },
-          };
-        }
+              return { ok: true, value: calibratedProfile };
+            } catch (err) {
+              return {
+                ok: false,
+                error: {
+                  code: 'LLM_UNREACHABLE',
+                  message:
+                    err instanceof Error ? err.message : 'Calibration was interrupted.',
+                },
+              };
+            }
+          },
+          { batchCompleted: 0, batchTotal: 4 },
+        );
       },
     },
 
@@ -4610,6 +4783,15 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         ).scores;
         await deps.appRepo.saveApplication(updated);
         return { ok: true, value: updated };
+      },
+    },
+
+    activity: {
+      getSnapshot() {
+        return gateway.getActivitySnapshot();
+      },
+      subscribe(listener) {
+        return gateway.subscribeActivity(listener);
       },
     },
   };

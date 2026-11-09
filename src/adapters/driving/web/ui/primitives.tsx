@@ -1607,11 +1607,19 @@ export function FileDropzone({
         }}
       />
       <div className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center mx-auto text-accent shadow-xs">
-        <Upload className="w-4 h-4" />
+        {isBusy ? (
+          <CevinMark state="thinking" size={24} variant="tile" />
+        ) : (
+          <Upload className="w-4 h-4" />
+        )}
       </div>
-      <div className="text-sm font-semibold text-ink">
+      <div
+        role={isBusy ? 'status' : undefined}
+        aria-live={isBusy ? 'polite' : undefined}
+        className="text-sm font-semibold text-ink"
+      >
         {isBusy
-          ? 'Reading document...'
+          ? 'Cevin is reading your resume'
           : 'Drop your resume here or click to browse'}
       </div>
       <div className="text-xs text-ink-muted">
@@ -1870,4 +1878,376 @@ export function MultiSelectChips({
     </div>
   );
 }
+
+export type CevinMarkState = 'idle' | 'thinking' | 'writing' | 'done' | 'error';
+export type CevinMarkVariant = 'tile' | 'glyph';
+
+const CEVIN_OPTION_A_GEOMETRY = {
+  tilePath:
+    'M14 0H48L64 16V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z',
+  foldPath: 'M48 0V16H64Z',
+  ringPath: 'M45.11 41.18A16 16 0 1 1 45.11 22.82',
+  dot: { cx: 48.5, cy: 32, r: 4.2 },
+  iconOnlyDot: { cx: 48.8, cy: 32, r: 4.0 },
+} as const;
+
+const CEVIN_OPTION_B_GEOMETRY = {
+  framePath: 'M52 12H24A12 12 0 0 0 12 24V40A12 12 0 0 0 24 52H52',
+  bullet: { cx: 27, cy: 32, r: 3.5 },
+  linePath: 'M36 32H50',
+} as const;
+
+function buildWordmarkGeometry(x0: 88 | 80) {
+  if (x0 === 88) {
+    return {
+      cPath: 'M121.11 41.18A16 16 0 1 1 121.11 22.82',
+      ePath: 'M136 32H168A16 16 0 1 0 165.11 41.18',
+      vPath: 'M181 16L196 48L211 16',
+      iStemPath: 'M227 16V48',
+      iDot: { cx: 227, cy: 5, r: 3.8 },
+      nPath: 'M245 48V16M245 31A14 14 0 0 1 273 31V48',
+    };
+  }
+  return {
+    cPath: 'M113.11 41.18A16 16 0 1 1 113.11 22.82',
+    ePath: 'M128 32H160A16 16 0 1 0 157.11 41.18',
+    vPath: 'M173 16L188 48L203 16',
+    iStemPath: 'M219 16V48',
+    iDot: { cx: 219, cy: 5, r: 3.8 },
+    nPath: 'M237 48V16M237 31A14 14 0 0 1 265 31V48',
+  };
+}
+
+function computeProgressOrbitAngleDeg(progress: number): number {
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+  return Math.round(clamped * 360 * 100) / 100;
+}
+
+export interface CevinMarkProps {
+  state?: CevinMarkState;
+  size?: 16 | 24 | 40 | 64;
+  variant?: CevinMarkVariant;
+  progress?: number;
+  onThinkingLoopIteration?: () => void;
+  className?: string;
+}
+
+const CEVIN_STATE_CLASSES: Record<CevinMarkState, string> = {
+  idle: '',
+  thinking: 'is-thinking',
+  writing: 'is-writing',
+  done: 'is-done',
+  error: 'is-error',
+};
+
+/**
+ * Pure-geometry animated Cevin mark (`tile` or `glyph`).
+ * Uses CSS @theme keyframes from src/index.css and SVG transform attributes for determinate progress.
+ */
+export function CevinMark({
+  state = 'idle',
+  size = 24,
+  variant = 'tile',
+  progress,
+  onThinkingLoopIteration,
+  className,
+}: CevinMarkProps) {
+  const hasDeterminateProgress =
+    typeof progress === 'number' && Number.isFinite(progress);
+  const effectiveState: CevinMarkState =
+    hasDeterminateProgress && state === 'thinking' ? 'idle' : state;
+  const orbitDeg = hasDeterminateProgress
+    ? computeProgressOrbitAngleDeg(progress)
+    : 0;
+  const dotTransform =
+    hasDeterminateProgress && orbitDeg !== 0
+      ? `rotate(${orbitDeg} 32 32)`
+      : undefined;
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 64 64"
+      width={size}
+      height={size}
+      fill="none"
+      aria-hidden="true"
+      data-cevin-state={state}
+      data-cevin-variant={variant}
+      className={cn(
+        'cevin-mark shrink-0 select-none',
+        variant === 'glyph' && 'is-glyph',
+        CEVIN_STATE_CLASSES[effectiveState],
+        className,
+      )}
+    >
+      {variant === 'tile' && (
+        <>
+          <path
+            id="tile-body"
+            d={CEVIN_OPTION_A_GEOMETRY.tilePath}
+          />
+          <path
+            id="tile-fold"
+            d={CEVIN_OPTION_A_GEOMETRY.foldPath}
+          />
+        </>
+      )}
+      <path
+        id="ring"
+        d={CEVIN_OPTION_A_GEOMETRY.ringPath}
+      />
+      <circle
+        id="ping"
+        cx={CEVIN_OPTION_A_GEOMETRY.dot.cx}
+        cy={CEVIN_OPTION_A_GEOMETRY.dot.cy}
+        r={CEVIN_OPTION_A_GEOMETRY.dot.r}
+      />
+      <circle
+        id="dot"
+        cx={CEVIN_OPTION_A_GEOMETRY.dot.cx}
+        cy={CEVIN_OPTION_A_GEOMETRY.dot.cy}
+        r={CEVIN_OPTION_A_GEOMETRY.dot.r}
+        transform={dotTransform}
+        onAnimationIteration={
+          state === 'thinking' ? onThinkingLoopIteration : undefined
+        }
+      />
+    </svg>
+  );
+}
+
+/**
+ * Accessible status indicator pairing a decorative CevinMark (`aria-hidden="true"`)
+ * with a `role="status"` live region carrying sentence-case copy.
+ */
+export function CevinStatusIndicator({
+  state = 'thinking',
+  label,
+  size = 16,
+  variant = 'glyph',
+  progress,
+  onThinkingLoopIteration,
+  className,
+  labelClassName,
+}: {
+  state?: CevinMarkState;
+  label: string;
+  size?: 16 | 24 | 40 | 64;
+  variant?: CevinMarkVariant;
+  progress?: number;
+  onThinkingLoopIteration?: () => void;
+  className?: string;
+  labelClassName?: string;
+}) {
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className={cn('inline-flex items-center gap-2', className)}
+    >
+      <CevinMark
+        state={state}
+        size={size}
+        variant={variant}
+        progress={progress}
+        onThinkingLoopIteration={onThinkingLoopIteration}
+      />
+      <span className={cn('text-xs font-medium', labelClassName)}>{label}</span>
+    </span>
+  );
+}
+
+/**
+ * Pure-geometry Cevin wordmark & logo (Option A: folded sheet, Option B: bullet C, or icon-only).
+ * Built strictly from SVG primitives (`path`, `circle`, `rect`) with zero `<text>` or `<font>` elements.
+ */
+export function CevinLogo({
+  option = 'A',
+  scheme = 'color',
+  iconOnly = false,
+  height = 28,
+  className,
+}: {
+  option?: 'A' | 'B';
+  scheme?: 'color' | 'dark' | 'mono';
+  iconOnly?: boolean;
+  height?: number;
+  className?: string;
+}) {
+  const isDark = scheme === 'dark';
+  const isMono = scheme === 'mono';
+
+  if (iconOnly) {
+    const width = height;
+    if (option === 'B') {
+      const strokeColor = isDark ? '#F4F1EB' : '#151A22';
+      const accentColor = isMono
+        ? strokeColor
+        : isDark
+          ? '#5B8CFF'
+          : '#1D4ED8';
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 64 64"
+          width={width}
+          height={height}
+          fill="none"
+          aria-hidden="true"
+          className={cn('shrink-0 select-none', className)}
+        >
+          <path
+            d={CEVIN_OPTION_B_GEOMETRY.framePath}
+            stroke={strokeColor}
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle
+            cx={CEVIN_OPTION_B_GEOMETRY.bullet.cx}
+            cy={CEVIN_OPTION_B_GEOMETRY.bullet.cy}
+            r={CEVIN_OPTION_B_GEOMETRY.bullet.r}
+            fill={accentColor}
+          />
+          <path
+            d={CEVIN_OPTION_B_GEOMETRY.linePath}
+            stroke={accentColor}
+            strokeWidth="4"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    }
+
+    const tileFill = isDark ? '#F4F1EB' : '#151A22';
+    const ringStroke = isDark ? '#151A22' : '#FFFFFF';
+    const dotFill = isMono
+      ? ringStroke
+      : isDark
+        ? '#5B8CFF'
+        : '#1D4ED8';
+
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 64 64"
+        width={width}
+        height={height}
+        fill="none"
+        aria-hidden="true"
+        className={cn('shrink-0 select-none', className)}
+      >
+        <rect width="64" height="64" rx="14" fill={tileFill} />
+        <path
+          d={CEVIN_OPTION_A_GEOMETRY.ringPath}
+          stroke={ringStroke}
+          strokeWidth="9"
+          strokeLinecap="round"
+        />
+        <circle
+          cx={CEVIN_OPTION_A_GEOMETRY.iconOnlyDot.cx}
+          cy={CEVIN_OPTION_A_GEOMETRY.iconOnlyDot.cy}
+          r={CEVIN_OPTION_A_GEOMETRY.iconOnlyDot.r}
+          fill={dotFill}
+        />
+      </svg>
+    );
+  }
+
+  const isOptionA = option === 'A';
+  const viewBoxWidth = isOptionA ? 296 : 276;
+  const wordmarkX0 = isOptionA ? 88 : 80;
+  const wordmark = buildWordmarkGeometry(wordmarkX0);
+  const computedWidth = Math.round((height * viewBoxWidth) / 64);
+
+  const inkStroke = isDark ? '#F4F1EB' : '#151A22';
+  const cobaltFill = isMono
+    ? inkStroke
+    : isDark
+      ? '#5B8CFF'
+      : '#1D4ED8';
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={`0 0 ${viewBoxWidth} 64`}
+      width={computedWidth}
+      height={height}
+      fill="none"
+      aria-hidden="true"
+      className={cn('shrink-0 select-none', className)}
+    >
+      {isOptionA ? (
+        <g>
+          <path
+            d={CEVIN_OPTION_A_GEOMETRY.tilePath}
+            fill={isDark ? '#F4F1EB' : '#151A22'}
+          />
+          {!isMono && (
+            <path
+              d={CEVIN_OPTION_A_GEOMETRY.foldPath}
+              fill={isDark ? '#D9D4C8' : '#2A3342'}
+            />
+          )}
+          <path
+            d={CEVIN_OPTION_A_GEOMETRY.ringPath}
+            stroke={isDark ? '#151A22' : '#FFFFFF'}
+            strokeWidth="8"
+            strokeLinecap="round"
+          />
+          <circle
+            cx={CEVIN_OPTION_A_GEOMETRY.dot.cx}
+            cy={CEVIN_OPTION_A_GEOMETRY.dot.cy}
+            r={CEVIN_OPTION_A_GEOMETRY.dot.r}
+            fill={isMono ? (isDark ? '#151A22' : '#FFFFFF') : cobaltFill}
+          />
+        </g>
+      ) : (
+        <g>
+          <path
+            d={CEVIN_OPTION_B_GEOMETRY.framePath}
+            stroke={inkStroke}
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle
+            cx={CEVIN_OPTION_B_GEOMETRY.bullet.cx}
+            cy={CEVIN_OPTION_B_GEOMETRY.bullet.cy}
+            r={CEVIN_OPTION_B_GEOMETRY.bullet.r}
+            fill={cobaltFill}
+          />
+          <path
+            d={CEVIN_OPTION_B_GEOMETRY.linePath}
+            stroke={cobaltFill}
+            strokeWidth="4"
+            strokeLinecap="round"
+          />
+        </g>
+      )}
+      <g
+        stroke={inkStroke}
+        strokeWidth="6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      >
+        <path d={wordmark.cPath} />
+        <path d={wordmark.ePath} />
+        <path d={wordmark.vPath} />
+        <path d={wordmark.iStemPath} />
+        <circle
+          cx={wordmark.iDot.cx}
+          cy={wordmark.iDot.cy}
+          r={wordmark.iDot.r}
+          fill={cobaltFill}
+          stroke="none"
+        />
+        <path d={wordmark.nPath} />
+      </g>
+    </svg>
+  );
+}
+
 

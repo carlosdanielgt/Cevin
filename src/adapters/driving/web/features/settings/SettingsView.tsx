@@ -34,6 +34,7 @@ import {
   Badge,
   Banner,
   Button,
+  CevinStatusIndicator,
   ConfirmDialog,
   CopyCommandField,
   Disclosure,
@@ -90,6 +91,7 @@ export function SettingsView({
   const [isWarming, setIsWarming] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationStep, setCalibrationStep] = useState('');
+  const [calibrationStepIndex, setCalibrationStepIndex] = useState(0);
   const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
   const jsonInputRef = useRef<HTMLInputElement>(null);
 
@@ -155,12 +157,17 @@ export function SettingsView({
 
   const handleCalibrate = async () => {
     setIsCalibrating(true);
-    setCalibrationStep('Starting calibration…');
+    setCalibrationStep('Cevin is checking');
+    setCalibrationStepIndex(1);
+    let stepCounter = 1;
     const res = await useCases.performance.runCalibration((label) => {
+      stepCounter = Math.min(4, stepCounter + 1);
+      setCalibrationStepIndex(stepCounter);
       setCalibrationStep(label);
     });
     setIsCalibrating(false);
     setCalibrationStep('');
+    setCalibrationStepIndex(0);
     if (res.ok) {
       await loadAll();
       addToast(
@@ -386,8 +393,19 @@ export function SettingsView({
                       disabled={isTesting}
                       onClick={() => void handleTestConnection()}
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Test connection</span>
+                      {isTesting ? (
+                        <CevinStatusIndicator
+                          state="thinking"
+                          size={16}
+                          variant="glyph"
+                          label="Cevin is checking"
+                        />
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Test connection</span>
+                        </>
+                      )}
                     </Button>
                     <Button
                       size="sm"
@@ -395,8 +413,19 @@ export function SettingsView({
                       disabled={isWarming}
                       onClick={() => void handleWarmUp()}
                     >
-                      <Flame className="w-3.5 h-3.5 text-accent" />
-                      <span>{isWarming ? 'Warming…' : 'Warm up now'}</span>
+                      {isWarming ? (
+                        <CevinStatusIndicator
+                          state="thinking"
+                          size={16}
+                          variant="glyph"
+                          label="Cevin is warming up"
+                        />
+                      ) : (
+                        <>
+                          <Flame className="w-3.5 h-3.5 text-accent" />
+                          <span>Warm up now</span>
+                        </>
+                      )}
                     </Button>
                   </div>
                 }
@@ -414,8 +443,19 @@ export function SettingsView({
                     disabled={isTesting}
                     onClick={() => void handleTestConnection()}
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>{isTesting ? 'Checking…' : 'Test connection'}</span>
+                    {isTesting ? (
+                      <CevinStatusIndicator
+                        state="thinking"
+                        size={16}
+                        variant="glyph"
+                        label="Cevin is checking"
+                      />
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Test connection</span>
+                      </>
+                    )}
                   </Button>
                 }
               >
@@ -460,8 +500,19 @@ export function SettingsView({
                   variant="secondary"
                   disabled={isCalibrating}
                   onClick={() => void handleCalibrate()}
+                  title={calibrationStep || 'Tune for my Mac'}
                 >
-                  {isCalibrating ? calibrationStep : 'Calibrate speed (~15s)'}
+                  {isCalibrating ? (
+                    <CevinStatusIndicator
+                      state="thinking"
+                      size={16}
+                      variant="glyph"
+                      progress={calibrationStepIndex / 4}
+                      label="Cevin is checking"
+                    />
+                  ) : (
+                    'Calibrate speed (~15s)'
+                  )}
                 </Button>
                 <Button
                   size="sm"

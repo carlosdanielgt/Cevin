@@ -18,6 +18,8 @@ export * from './quickcheck';
 export * from './templateSpec';
 export * from './embeddedFonts';
 export * from './pdfEngine';
+export * from './cevinLogoGeometry';
+export * from './cevinMarkTiming';
 
 
 

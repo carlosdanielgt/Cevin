@@ -1,9 +1,14 @@
 import {
+  CevinActivityKind,
+  CevinActivityPhase,
   VoiceLevel,
   buildCacheKey,
   defaultTokenEstimator,
   deriveSeed,
+  formatCevinActivityLabel,
+  mapKindToDefaultPhase,
 } from '../domain';
+import { CevinActivitySnapshot } from './ports/inbound';
 import {
   Clock,
   IdGenerator,
@@ -48,6 +53,8 @@ export interface GatewayLiveActivity {
   warmingUp: boolean;
 }
 
+export type CevinActivityListener = (snapshot: CevinActivitySnapshot) => void;
+
 interface QueuedJob<TInput> {
   id: string;
   itemKey: string;
@@ -86,10 +93,47 @@ export interface LlmGateway {
   cancelByPrefix(itemKeyPrefix: string): void;
   cancelAll(): void;
   getLiveActivity(): GatewayLiveActivity;
+  getActivitySnapshot(): CevinActivitySnapshot;
+  subscribeActivity(listener: CevinActivityListener): () => void;
+  runWithActivity<T>(
+    kind: CevinActivityKind,
+    fn: () => Promise<T>,
+    options?: {
+      phase?: CevinActivityPhase;
+      batchCompleted?: number;
+      batchTotal?: number;
+    },
+  ): Promise<T>;
+  updateBatchProgress(completed: number, total: number): void;
   estimateEtaSeconds(params: {
     bulletCount: number;
     parallelSlots?: number;
   }): Promise<{ seconds: number; label: string }>;
+}
+
+interface ScopedActivityEntry {
+  id: number;
+  kind: CevinActivityKind;
+  phase: CevinActivityPhase;
+  batchCompleted?: number;
+  batchTotal?: number;
+}
+
+function mapTaskIdToActivityKind(taskId: string): CevinActivityKind {
+  switch (taskId) {
+    case 'rewrite-bullet':
+      return 'rewriting';
+    case 'write-summary':
+    case 'write-letter-block':
+      return 'writing';
+    case 'refine-job-brief':
+    case 'extract-job-fact':
+      return 'reading-posting';
+    case 'structure-resume':
+      return 'reading-resume';
+    default:
+      return 'writing';
+  }
 }
 
 /**
@@ -104,17 +148,82 @@ export interface LlmGateway {
 export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
   const queue: Array<QueuedJob<unknown>> = [];
   const inFlightByItemKey = new Map<string, AbortController>();
+  const inFlightTaskKinds = new Map<string, CevinActivityKind>();
+  const scopedStack: ScopedActivityEntry[] = [];
+  const listeners = new Set<CevinActivityListener>();
+  let nextScopeId = 1;
   let activeCount = 0;
   let configuredMaxSlots = 2;
   let warmingUp = false;
 
+  const buildActivitySnapshot = (): CevinActivitySnapshot => {
+    const topScope =
+      scopedStack.length > 0 ? scopedStack[scopedStack.length - 1] : undefined;
+    let kind: CevinActivityKind = 'idle';
+    let phase: CevinActivityPhase = 'idle';
+    let batchCompleted: number | undefined;
+    let batchTotal: number | undefined;
+
+    if (topScope) {
+      kind = topScope.kind;
+      phase = topScope.phase;
+      batchCompleted = topScope.batchCompleted;
+      batchTotal = topScope.batchTotal;
+    } else if (activeCount > 0 || queue.length > 0) {
+      const firstInFlight = inFlightTaskKinds.values().next().value;
+      const firstQueued = queue[0]
+        ? mapTaskIdToActivityKind(queue[0].task.id)
+        : undefined;
+      kind = firstInFlight ?? firstQueued ?? 'writing';
+      phase = mapKindToDefaultPhase(kind);
+    } else if (warmingUp) {
+      kind = 'warming';
+      phase = 'warming';
+    }
+
+    const progress =
+      batchTotal !== undefined &&
+      batchTotal > 0 &&
+      batchCompleted !== undefined
+        ? Math.max(0, Math.min(1, batchCompleted / batchTotal))
+        : undefined;
+
+    return {
+      phase,
+      kind,
+      label: formatCevinActivityLabel(kind, batchCompleted, batchTotal),
+      activeCount,
+      queuedCount: queue.length,
+      maxSlots: configuredMaxSlots,
+      warmingUp,
+      batchCompleted,
+      batchTotal,
+      progress,
+      updatedAtMs: Date.now(),
+    };
+  };
+
+  const notifyListeners = (): void => {
+    if (listeners.size === 0) return;
+    const snap = buildActivitySnapshot();
+    for (const listener of listeners) {
+      try {
+        listener(snap);
+      } catch {
+        // Ignore subscriber errors
+      }
+    }
+  };
+
   const cancelItem = (itemKey: string): void => {
+    let changed = false;
     // Remove any queued jobs for this itemKey
     for (let i = queue.length - 1; i >= 0; i--) {
       if (queue[i].itemKey === itemKey) {
         const [removed] = queue.splice(i, 1);
         removed.controller.abort();
         removed.reject(new Error('Superseded by newer request'));
+        changed = true;
       }
     }
     // Abort in-flight job if present
@@ -122,37 +231,50 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
     if (activeCtrl) {
       activeCtrl.abort();
       inFlightByItemKey.delete(itemKey);
+      inFlightTaskKinds.delete(itemKey);
+      changed = true;
     }
+    if (changed) notifyListeners();
   };
 
   const cancelByPrefix = (prefix: string): void => {
+    let changed = false;
     for (let i = queue.length - 1; i >= 0; i--) {
       if (queue[i].itemKey.startsWith(prefix)) {
         const [removed] = queue.splice(i, 1);
         removed.controller.abort();
         removed.reject(new Error('Cancelled by prefix'));
+        changed = true;
       }
     }
     for (const [key, ctrl] of inFlightByItemKey.entries()) {
       if (key.startsWith(prefix)) {
         ctrl.abort();
         inFlightByItemKey.delete(key);
+        inFlightTaskKinds.delete(key);
+        changed = true;
       }
     }
+    if (changed) notifyListeners();
   };
 
   const cancelAll = (): void => {
+    let changed = false;
     while (queue.length > 0) {
       const removed = queue.shift();
       if (removed) {
         removed.controller.abort();
         removed.reject(new Error('Cancelled all pending tasks'));
+        changed = true;
       }
     }
     for (const ctrl of inFlightByItemKey.values()) {
       ctrl.abort();
+      changed = true;
     }
     inFlightByItemKey.clear();
+    inFlightTaskKinds.clear();
+    if (changed) notifyListeners();
   };
 
   const pumpQueue = async (): Promise<void> => {
@@ -172,12 +294,19 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
       if (!nextJob) break;
       activeCount += 1;
       inFlightByItemKey.set(nextJob.itemKey, nextJob.controller);
+      inFlightTaskKinds.set(
+        nextJob.itemKey,
+        mapTaskIdToActivityKind(nextJob.task.id),
+      );
+      notifyListeners();
 
       void runSingleJob(nextJob).finally(() => {
         activeCount = Math.max(0, activeCount - 1);
         if (inFlightByItemKey.get(nextJob.itemKey) === nextJob.controller) {
           inFlightByItemKey.delete(nextJob.itemKey);
+          inFlightTaskKinds.delete(nextJob.itemKey);
         }
+        notifyListeners();
         void pumpQueue();
       });
     }
@@ -534,6 +663,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
           reject,
         };
         queue.push(job as QueuedJob<unknown>);
+        notifyListeners();
         void pumpQueue();
       });
     },
@@ -543,6 +673,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
       if (activeCount > 0 || queue.length > 0) return;
       try {
         warmingUp = true;
+        notifyListeners();
         const { provider, profile } = await deps.getProviderAndProfile();
         if (!provider.warm) return;
         const dummyPrompt = rewriteBulletTask.buildPrompt({
@@ -566,6 +697,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         // Ignore background warm-up errors
       } finally {
         warmingUp = false;
+        notifyListeners();
       }
     },
 
@@ -580,6 +712,55 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         maxSlots: configuredMaxSlots,
         warmingUp,
       };
+    },
+
+    getActivitySnapshot(): CevinActivitySnapshot {
+      return buildActivitySnapshot();
+    },
+
+    subscribeActivity(listener: CevinActivityListener): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+
+    async runWithActivity<T>(
+      kind: CevinActivityKind,
+      fn: () => Promise<T>,
+      options?: {
+        phase?: CevinActivityPhase;
+        batchCompleted?: number;
+        batchTotal?: number;
+      },
+    ): Promise<T> {
+      const scopeId = nextScopeId++;
+      const entry: ScopedActivityEntry = {
+        id: scopeId,
+        kind,
+        phase: options?.phase ?? mapKindToDefaultPhase(kind),
+        batchCompleted: options?.batchCompleted,
+        batchTotal: options?.batchTotal,
+      };
+      scopedStack.push(entry);
+      notifyListeners();
+      try {
+        return await fn();
+      } finally {
+        const idx = scopedStack.findIndex((s) => s.id === scopeId);
+        if (idx !== -1) {
+          scopedStack.splice(idx, 1);
+        }
+        notifyListeners();
+      }
+    },
+
+    updateBatchProgress(completed: number, total: number): void {
+      if (scopedStack.length === 0) return;
+      const top = scopedStack[scopedStack.length - 1];
+      top.batchCompleted = completed;
+      top.batchTotal = total;
+      notifyListeners();
     },
 
     async estimateEtaSeconds({

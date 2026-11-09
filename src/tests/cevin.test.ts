@@ -49,6 +49,8 @@ import {
 } from '../core/application';
 import {
   APPEAL_CALIBRATION_FIXTURES,
+  CEVIN_LOGO_REPORT,
+  CevinMarkTimingController,
   DEFAULT_USER_PREFERENCES,
   FACT_KIND_REGISTRY,
   LETTER_APPEAL_CALIBRATION_FIXTURES,
@@ -60,8 +62,10 @@ import {
   assembleBullet,
   buildGroundedCoverLetterBlocks,
   buildGroupedCoverageSummary,
+  buildWordmarkGeometry,
   composeFirstImpressionTakeaway,
   computeAtsAndJobMatchScores,
+  computeProgressOrbitAngleDeg,
   computeBulletImpactStrength,
   computeLetterAppealScore,
   computeRecruiterAppeal,
@@ -83,6 +87,7 @@ import {
   findBankEvidenceForTerm,
   findInlineCliches,
   formatAchievementInVoice,
+  formatCevinActivityLabel,
   formatContactBlock,
   formatCount,
   formatQuickEstimateBand,
@@ -2609,6 +2614,297 @@ test('Experience reordering (Move Up/Down & Sort Chronological), Top Fixes Trim 
     );
   }
 });
+
+test('Review step coverage bug fixes: existing Bank skills (e.g. Docker) are covered (never partial with redundant related label), I have this persists & rescores, and manual Bank skills sync to existing applications', async () => {
+  const container = buildCevinContainer({ inMemoryOnly: true });
+  const { bank, applications } =
+    await container.manageBank.loadDemoWorkspace();
+  const app = applications[0];
+
+  // 1. Add "Docker" to Bank skills and ensure a job requirement for "Docker" is marked covered (✓),
+  // even when "Docker" is not repeated inside a bullet sentence.
+  const bankWithDocker = await container.manageBank.addSkillFromGap('Docker');
+  const dockerSkill = bankWithDocker.skills.find(
+    (s) => s.name.toLowerCase() === 'docker',
+  );
+  assert.ok(dockerSkill, 'Expected Docker to be added to bank.skills');
+
+  const appWithDockerReq = await container.manageApplications.saveApplication({
+    ...app,
+    parsedJob: {
+      ...app.parsedJob!,
+      title: 'Senior Software Engineer',
+      company: 'Kestrel Pay',
+      seniority: 'Senior',
+      requirements: [
+        {
+          id: 'req-docker',
+          text: 'Docker',
+          normalizedKey: 'docker',
+          priority: 'must-have',
+          category: 'tool',
+        },
+        {
+          id: 'req-argocd',
+          text: 'ArgoCD',
+          normalizedKey: 'argocd',
+          priority: 'must-have',
+          category: 'tool',
+        },
+      ],
+      keywords: [
+        {
+          term: 'Docker',
+          normalized: 'docker',
+          kind: 'tool',
+        },
+        {
+          term: 'ArgoCD',
+          normalized: 'argocd',
+          kind: 'tool',
+        },
+      ],
+    },
+    workingDraft: {
+      ...app.workingDraft,
+      selectedSkillIds: [
+        ...app.workingDraft.selectedSkillIds,
+        dockerSkill!.id,
+      ],
+    },
+  });
+
+  const activeSkillsText = bankWithDocker.skills
+    .filter((s) => appWithDockerReq.workingDraft.selectedSkillIds.includes(s.id))
+    .flatMap((s) => [s.name, ...(s.aliases ?? [])])
+    .join(' ');
+  const resumeProse = [
+    appWithDockerReq.workingDraft.targetHeadline,
+    appWithDockerReq.workingDraft.summary,
+    ...appWithDockerReq.workingDraft.bullets.map((b) => b.text),
+    activeSkillsText,
+  ].join(' ');
+
+  const summary = buildGroupedCoverageSummary({
+    parsedJob: appWithDockerReq.parsedJob,
+    bank: bankWithDocker,
+    resumeText: resumeProse,
+    selectedSkillIds: appWithDockerReq.workingDraft.selectedSkillIds,
+  });
+
+  assert.equal(
+    summary.covered.mustHave.some((c) => c.term === 'Docker'),
+    true,
+    'Docker must be in covered.mustHave when present in Bank skills and selectedSkillIds',
+  );
+  assert.equal(
+    summary.needsAttention.mustHave.some((n) => n.term === 'Docker'),
+    false,
+    'Docker must not appear in needsAttention with ◐ Docker (related: Docker)',
+  );
+
+  // 2. "I have this" modal submission with attachExperienceId and newAchievement moves ArgoCD from gap to covered immediately
+  const iHaveThisRes =
+    await container.manageBank.addSkillAndOptionalAchievement({
+      skillName: 'ArgoCD',
+      requirementTerm: 'ArgoCD',
+      category: 'Infrastructure',
+      aliases: ['Argo CD'],
+      attachExperienceId: bankWithDocker.experiences[0].id,
+      newAchievement: {
+        action: 'Automated GitOps continuous delivery pipelines with ArgoCD',
+        result: 'cutting deployment rollback times across production clusters',
+        metric: 'by 60%',
+      },
+      applicationId: appWithDockerReq.id,
+    });
+
+  assert.ok(
+    iHaveThisRes.bank.skills.some((s) => s.name === 'ArgoCD'),
+    'Expected ArgoCD to be added to Bank skills',
+  );
+  assert.ok(
+    iHaveThisRes.bank.achievements.some((a) =>
+      a.action.includes('ArgoCD'),
+    ),
+    'Expected attached achievement from IHaveThisModal (attachExperienceId) to be saved in Bank',
+  );
+  assert.ok(
+    iHaveThisRes.application,
+    'Expected updated application to be returned',
+  );
+  assert.equal(
+    iHaveThisRes.application!.latestScores.gapKeywords.includes('ArgoCD'),
+    false,
+    'ArgoCD must no longer be in gapKeywords after IHaveThisModal submission',
+  );
+  assert.ok(
+    iHaveThisRes.application!.latestScores.jobMatch >= 95,
+    'Both Docker and ArgoCD must be covered (>= 95% jobMatch) after IHaveThisModal submission',
+  );
+
+  // 3. Adding a skill manually in Experience Bank (saveBank) automatically syncs into existing applications
+  // without needing to delete and recreate the application.
+  const appWithHelmGap = await container.manageApplications.saveApplication({
+    ...iHaveThisRes.application!,
+    parsedJob: {
+      ...iHaveThisRes.application!.parsedJob!,
+      requirements: [
+        ...iHaveThisRes.application!.parsedJob!.requirements,
+        {
+          id: 'req-helm',
+          text: 'Helm',
+          normalizedKey: 'helm',
+          priority: 'must-have',
+          category: 'tool',
+        },
+      ],
+      keywords: [
+        ...iHaveThisRes.application!.parsedJob!.keywords,
+        {
+          term: 'Helm',
+          normalized: 'helm',
+          kind: 'tool',
+        },
+      ],
+    },
+  });
+
+  // Manually add "Helm" via manageBank.saveBank (simulating Experience Bank -> Skills -> Add skill)
+  const manualHelmSkill = {
+    id: 'skill-manual-helm',
+    name: 'Helm',
+    category: 'Infrastructure' as const,
+    aliases: ['Helm Charts'],
+  };
+  await container.manageBank.saveBank({
+    ...iHaveThisRes.bank,
+    skills: [...iHaveThisRes.bank.skills, manualHelmSkill],
+  });
+
+  // Re-enter the existing application (getApplication + scoreResume) without deleting it
+  const reloadedApp = await container.manageApplications.getApplication(
+    appWithHelmGap.id,
+  );
+  assert.ok(reloadedApp);
+  assert.equal(
+    reloadedApp!.workingDraft.selectedSkillIds.includes('skill-manual-helm'),
+    true,
+    'Newly added Bank skill must automatically sync into existing application selectedSkillIds',
+  );
+  assert.equal(
+    reloadedApp!.latestScores.gapKeywords.includes('Helm'),
+    false,
+    'Newly added Bank skill must no longer be in gapKeywords on existing application',
+  );
+});
+
+test('Cevin pure-geometry SVG math & CevinMarkTimingController state machine', () => {
+  // 1. Verify Option A geometry & dot clearance >= 1.5px (and icon-only stroke 9 clearance >= 1.2px)
+  assert.deepEqual(CEVIN_LOGO_REPORT.optionA.pPlus35, {
+    x: 45.11,
+    y: 41.18,
+  });
+  assert.deepEqual(CEVIN_LOGO_REPORT.optionA.pMinus35, {
+    x: 45.11,
+    y: 22.82,
+  });
+  assert.ok(
+    CEVIN_LOGO_REPORT.optionA.dotClearanceStandardPx >= 1.5,
+    `Expected Option A standard clearance >= 1.5px, got ${CEVIN_LOGO_REPORT.optionA.dotClearanceStandardPx}`,
+  );
+  assert.ok(
+    CEVIN_LOGO_REPORT.optionA.dotClearanceIconOnlyPx >= 1.2,
+    `Expected Option A icon-only clearance >= 1.2px, got ${CEVIN_LOGO_REPORT.optionA.dotClearanceIconOnlyPx}`,
+  );
+
+  // 2. Verify Option B outer stroke extents (8..56) and line length (14)
+  assert.deepEqual(CEVIN_LOGO_REPORT.optionB.outerStrokeExtents, {
+    minX: 8,
+    maxX: 56,
+    minY: 8,
+    maxY: 56,
+  });
+  assert.equal(CEVIN_LOGO_REPORT.optionB.lineLength, 14);
+
+  // 3. Verify Wordmark geometry for x0=88 and x0=80
+  const wm88 = buildWordmarkGeometry(88);
+  assert.equal(wm88.letters.c.cx, 108);
+  assert.equal(wm88.letters.e.cx, 152);
+  assert.equal(wm88.letters.v.apexX, 196);
+  assert.equal(wm88.letters.i.x, 227);
+  assert.equal(wm88.letters.n.leftX, 245);
+  assert.equal(wm88.letters.n.rightX, 273);
+
+  // 4. Verify determinate progress orbit angle mapping
+  assert.equal(computeProgressOrbitAngleDeg(0), 0);
+  assert.equal(computeProgressOrbitAngleDeg(0.5), 145);
+  assert.equal(computeProgressOrbitAngleDeg(1), 290);
+
+  // 5. Verify CevinMarkTimingController:
+  // - Fast task (<300ms) never becomes visible and never plays 'done'
+  let now = 1000;
+  const ctrl = new CevinMarkTimingController(now);
+  ctrl.updateActivity(
+    { phase: 'thinking', kind: 'checking' },
+    now,
+  );
+  assert.equal(ctrl.getViewState(now + 150).visible, false);
+  ctrl.updateActivity({ phase: 'idle', kind: null }, now + 200);
+  assert.equal(ctrl.getViewState(now + 200).visible, false);
+  assert.equal(ctrl.getViewState(now + 200).visualState, 'idle');
+
+  // - Task > 300ms becomes visible, holds at least 600ms, transitions thinking -> writing on loop iteration, and plays done (420ms)
+  now = 2000;
+  ctrl.updateActivity(
+    { phase: 'thinking', kind: 'reading-posting' },
+    now,
+  );
+  assert.equal(ctrl.getViewState(now + 299).visible, false);
+  const at300 = ctrl.getViewState(now + 300);
+  assert.equal(at300.visible, true);
+  assert.equal(at300.visualState, 'thinking');
+  assert.equal(at300.label, 'Cevin is reading the posting');
+
+  // Switch to writing at +450ms -> waits for current thinking loop iteration before switching visualState to 'writing'
+  ctrl.updateActivity(
+    { phase: 'writing', kind: 'rewriting', completed: 2, total: 6 },
+    now + 450,
+  );
+  assert.equal(ctrl.getViewState(now + 500).visualState, 'thinking');
+  ctrl.notifyThinkingLoopIteration(now + 550);
+  const at550 = ctrl.getViewState(now + 550);
+  assert.equal(at550.visualState, 'writing');
+  assert.equal(at550.label, 'Cevin is rewriting (2 of 6)');
+
+  // Finish task at +700ms (only 400ms after becoming visible at 2300ms) -> holds visible until 2900ms, then plays done for 420ms
+  ctrl.updateActivity({ phase: 'idle', kind: null }, now + 700);
+  assert.equal(ctrl.getViewState(now + 800).visible, true);
+  const at900 = ctrl.getViewState(now + 900);
+  assert.equal(at900.visible, true);
+  assert.equal(at900.visualState, 'done');
+  assert.equal(ctrl.getViewState(now + 900 + 420).visible, false);
+  assert.equal(ctrl.getViewState(now + 900 + 420).visualState, 'idle');
+
+  // 6. Verify all 8 touchpoint labels
+  assert.equal(
+    formatCevinActivityLabel('reading-resume'),
+    'Cevin is reading your resume',
+  );
+  assert.equal(
+    formatCevinActivityLabel('reading-posting'),
+    'Cevin is reading the posting',
+  );
+  assert.equal(formatCevinActivityLabel('rewriting'), 'Cevin is rewriting');
+  assert.equal(
+    formatCevinActivityLabel('rewriting', 2, 6),
+    'Cevin is rewriting (2 of 6)',
+  );
+  assert.equal(formatCevinActivityLabel('writing'), 'Cevin is writing');
+  assert.equal(formatCevinActivityLabel('checking'), 'Cevin is checking');
+  assert.equal(formatCevinActivityLabel('warming-up'), 'Cevin is warming up');
+});
+
 
 
 

@@ -58,12 +58,17 @@ import {
   sortExperiencesChronologically,
   validateBulletGrounding,
 } from '../../../../../core/domain';
-import { useCevinUseCases, useUiStore } from '../../context';
+import {
+  useCevinActivity,
+  useCevinUseCases,
+  useUiStore,
+} from '../../context';
 import {
   AutoGrowTextarea,
   Badge,
   Banner,
   Button,
+  CevinStatusIndicator,
   Checkbox,
   Disclosure,
   IconButton,
@@ -153,6 +158,7 @@ export function StudioView({
   onBackToApplications: () => void;
 }) {
   const useCases = useCevinUseCases();
+  const activityState = useCevinActivity();
   const addToast = useUiStore((s) => s.addToast);
   const previewZoom = useUiStore((s) => s.previewZoom);
   const setPreviewZoom = useUiStore((s) => s.setPreviewZoom);
@@ -171,6 +177,7 @@ export function StudioView({
 
   const [isAnalyzingJob, setIsAnalyzingJob] = useState(false);
   const [isTailoringAll, setIsTailoringAll] = useState(false);
+  const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
   const [rewritingBulletId, setRewritingBulletId] = useState<string | null>(
     null,
   );
@@ -414,15 +421,35 @@ export function StudioView({
 
   const groupedCoverage = useMemo(() => {
     if (!app || !bank) return null;
+    const activeSkillsText = bank.skills
+      .filter((s) => app.workingDraft.selectedSkillIds.includes(s.id))
+      .flatMap((s) => [s.name, ...(s.aliases ?? [])])
+      .join(' ');
+    const activeCertsText = (bank.certifications ?? [])
+      .filter(
+        (c) =>
+          !app.workingDraft.selectedCertificationIds ||
+          app.workingDraft.selectedCertificationIds.includes(c.id),
+      )
+      .map((c) => `${c.name} ${c.issuer}`)
+      .join(' ');
+    const activeProjectsText = (bank.projects ?? [])
+      .filter((p) => app.workingDraft.selectedProjectIds.includes(p.id))
+      .map((p) => `${p.name} ${p.description} ${(p.highlights ?? []).join(' ')}`)
+      .join(' ');
     const resumeProse = [
       app.workingDraft.targetHeadline,
       app.workingDraft.summary,
       ...app.workingDraft.bullets.map((b) => b.text),
+      activeSkillsText,
+      activeCertsText,
+      activeProjectsText,
     ].join(' ');
     return buildGroupedCoverageSummary({
       parsedJob: app.parsedJob,
       bank,
       resumeText: resumeProse,
+      selectedSkillIds: app.workingDraft.selectedSkillIds,
       dismissedRequirementIds: app.dismissedRequirementIds ?? [],
     });
   }, [app, bank]);
@@ -675,13 +702,13 @@ export function StudioView({
 
   const handleRewriteSummary = async () => {
     recordHistorySnapshot(app, bank.experiences, appliedFixIds);
-    setIsTailoringAll(true);
+    setIsRegeneratingSummary(true);
     void refreshSidebarActivity();
     const res = await useCases.tailorResume.regenerateSummary(
       app.id,
       app.voice,
     );
-    setIsTailoringAll(false);
+    setIsRegeneratingSummary(false);
     void refreshSidebarActivity();
     if (res.ok) {
       setApp(res.value);
@@ -694,7 +721,9 @@ export function StudioView({
     const nextBank = await useCases.manageBank.addSkillFromGap(term);
     setBank(nextBank);
     const addedSkill = nextBank.skills.find(
-      (s) => s.name.toLowerCase() === term.toLowerCase(),
+      (s) =>
+        s.name.toLowerCase() === term.toLowerCase() ||
+        s.aliases.some((a) => a.toLowerCase() === term.toLowerCase()),
     );
     if (
       addedSkill &&
@@ -708,6 +737,9 @@ export function StudioView({
             ...app.workingDraft.selectedSkillIds,
             addedSkill.id,
           ],
+          excludedSkillIds: (app.workingDraft.excludedSkillIds ?? []).filter(
+            (id) => id !== addedSkill.id,
+          ),
         },
       });
     }
@@ -719,10 +751,13 @@ export function StudioView({
     skillName: string;
     category: SkillCategory;
     aliases: string[];
+    attachExperienceId?: string;
     achievementId?: string;
+    newAchievement?: { action: string; result: string; metric?: string };
   }) => {
     const res = await useCases.manageBank.addSkillAndOptionalAchievement({
       ...params,
+      requirementTerm: iHaveThisTerm ?? undefined,
       applicationId: app.id,
     });
     setBank(res.bank);
@@ -933,8 +968,10 @@ export function StudioView({
     .map((r) => r.text);
 
   const isLlmActive = Boolean(
-    rewritingBulletId ||
+    activityState.visible ||
+      rewritingBulletId ||
       isTailoringAll ||
+      isRegeneratingSummary ||
       isGeneratingLetter ||
       rewritingBlockId ||
       isAnalyzingJob ||
@@ -942,19 +979,33 @@ export function StudioView({
       connectionStatus.state === 'warming',
   );
 
-  const llmActiveLabel = rewritingBulletId
-    ? `Rewriting bullet in ${app.voice} voice…`
-    : isTailoringAll
-      ? 'Writing executive summary…'
-      : isGeneratingLetter
-        ? `Writing cover letter with ${connectionStatus.modelName || 'LLM'}…`
-        : rewritingBlockId
-          ? 'Rewriting paragraph…'
+  const llmActiveState: 'thinking' | 'writing' | 'done' =
+    activityState.visible &&
+    (activityState.visualState === 'thinking' ||
+      activityState.visualState === 'writing' ||
+      activityState.visualState === 'done')
+      ? activityState.visualState
+      : isAnalyzingJob || connectionStatus.state === 'warming'
+        ? 'thinking'
+        : 'writing';
+
+  const llmActiveLabel =
+    activityState.visible && activityState.label
+      ? activityState.label
+      : rewritingBulletId || isTailoringAll
+        ? 'Cevin is rewriting'
+        : isRegeneratingSummary || isGeneratingLetter || rewritingBlockId
+          ? 'Cevin is writing'
           : isAnalyzingJob
-            ? 'Extracting job requirements…'
+            ? 'Cevin is reading the posting'
             : connectionStatus.state === 'warming'
-              ? 'Warming model…'
-              : 'Working…';
+              ? 'Cevin is warming up'
+              : 'Cevin is writing';
+
+  const batchRewritingLabel =
+    activityState.kind === 'rewriting' && activityState.label
+      ? activityState.label
+      : 'Cevin is rewriting';
 
   return (
     <div className="space-y-4">
@@ -1035,9 +1086,18 @@ export function StudioView({
 
           <div className="flex items-center gap-3">
             {isLlmActive ? (
-              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-accent-50 text-accent-700 border border-accent/30 text-xs font-medium animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
-                <span>{llmActiveLabel}</span>
+              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-accent-50 text-accent-700 border border-accent/30 text-xs font-medium">
+                <CevinStatusIndicator
+                  state={llmActiveState}
+                  size={16}
+                  variant="glyph"
+                  label={llmActiveLabel}
+                  progress={activityState.progress}
+                  onThinkingLoopIteration={
+                    activityState.handleThinkingLoopIteration
+                  }
+                  className="text-accent-700"
+                />
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
@@ -1523,8 +1583,19 @@ export function StudioView({
                               disabled={isAnalyzingJob}
                               onClick={() => void handleAnalyzeJob()}
                             >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              <span>Re-extract requirements</span>
+                              {isAnalyzingJob ? (
+                                <CevinStatusIndicator
+                                  state="thinking"
+                                  size={16}
+                                  variant="glyph"
+                                  label="Cevin is reading the posting"
+                                />
+                              ) : (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  <span>Re-extract requirements</span>
+                                </>
+                              )}
                             </Button>
                           </div>
                         </div>
@@ -1545,12 +1616,20 @@ export function StudioView({
                       disabled={isAnalyzingJob || !app.jobDescription.trim()}
                       onClick={() => void handleAnalyzeJob()}
                     >
-                      <Sparkles className="w-4 h-4" />
-                      <span>
-                        {isAnalyzingJob
-                          ? 'Extracting requirements…'
-                          : 'Extract requirements & assemble draft'}
-                      </span>
+                      {isAnalyzingJob ? (
+                        <CevinStatusIndicator
+                          state="thinking"
+                          size={16}
+                          variant="glyph"
+                          label="Cevin is reading the posting"
+                          className="text-white"
+                        />
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>Extract requirements & assemble draft</span>
+                        </>
+                      )}
                     </Button>
                   ) : (
                     <Button
@@ -1585,6 +1664,7 @@ export function StudioView({
                     machineMadeScore={app.latestScores.machineMadeScore}
                     etaLabel={voiceEtaLabel}
                     isUpdating={isTailoringAll}
+                    batchProgressLabel={batchRewritingLabel}
                     defaultCompact={true}
                     onCancelUpdate={() => {
                       useCases.tailorResume.cancelPendingTailoring(app.id);
@@ -1649,16 +1729,26 @@ export function StudioView({
                         variant="ghost"
                         size="sm"
                         disabled={
-                          app.workingDraft.summaryLocked || isTailoringAll
+                          app.workingDraft.summaryLocked ||
+                          isRegeneratingSummary ||
+                          isTailoringAll
                         }
                         onClick={() => void handleRewriteSummary()}
                       >
-                        {isTailoringAll ? (
-                          <span className="w-3.5 h-3.5 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                        {isRegeneratingSummary ? (
+                          <CevinStatusIndicator
+                            state="writing"
+                            size={16}
+                            variant="glyph"
+                            label="Cevin is writing"
+                            className="text-accent"
+                          />
                         ) : (
-                          <Sparkles className="w-3.5 h-3.5 text-accent" />
+                          <>
+                            <Sparkles className="w-3.5 h-3.5 text-accent" />
+                            <span>Rewrite</span>
+                          </>
                         )}
-                        <span>{isTailoringAll ? 'Working…' : 'Rewrite'}</span>
                       </Button>
                       <IconButton
                         label={
@@ -2023,7 +2113,7 @@ export function StudioView({
                           key={skill.id}
                           type="button"
                           onClick={() => {
-                            const next = selected
+                            const nextSelected = selected
                               ? app.workingDraft.selectedSkillIds.filter(
                                   (id) => id !== skill.id,
                                 )
@@ -2031,11 +2121,17 @@ export function StudioView({
                                   ...app.workingDraft.selectedSkillIds,
                                   skill.id,
                                 ];
+                            const prevExcluded =
+                              app.workingDraft.excludedSkillIds ?? [];
+                            const nextExcluded = selected
+                              ? Array.from(new Set([...prevExcluded, skill.id]))
+                              : prevExcluded.filter((id) => id !== skill.id);
                             void persistApp({
                               ...app,
                               workingDraft: {
                                 ...app.workingDraft,
-                                selectedSkillIds: next,
+                                selectedSkillIds: nextSelected,
+                                excludedSkillIds: nextExcluded,
                               },
                             });
                           }}
@@ -2094,12 +2190,20 @@ export function StudioView({
                         disabled={isGeneratingLetter}
                         onClick={() => void handleRegenerateLetter()}
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-accent" />
-                        <span>
-                          {isGeneratingLetter
-                            ? 'Regenerating…'
-                            : 'Regenerate letter'}
-                        </span>
+                        {isGeneratingLetter ? (
+                          <CevinStatusIndicator
+                            state="writing"
+                            size={16}
+                            variant="glyph"
+                            label="Cevin is writing"
+                            className="text-accent"
+                          />
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5 text-accent" />
+                            <span>Regenerate letter</span>
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>
@@ -2221,6 +2325,7 @@ export function StudioView({
                     onChange={(v) => void handleRegenerateLetter({ voice: v })}
                     machineMadeScore={app.latestScores.machineMadeScore}
                     isUpdating={isGeneratingLetter}
+                    batchProgressLabel="Cevin is writing"
                     defaultCompact={true}
                   />
                 </PanelSection>

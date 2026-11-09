@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none" class="cevin-mark">
+  <style>
+    .cevin-mark {
+      --tile: #151A22;
+      --fold: #2A3342;
+      --ring: #FFFFFF;
+      --dot: #1D4ED8;
+    }
+    .cevin-mark.is-glyph {
+      --ring: currentColor;
+    }
+    .cevin-mark #tile-body {
+      fill: var(--tile);
+    }
+    .cevin-mark #tile-fold {
+      fill: var(--fold);
+    }
+    .cevin-mark.is-glyph #tile-body,
+    .cevin-mark.is-glyph #tile-fold {
+      display: none;
+    }
+    .cevin-mark #ring {
+      stroke: var(--ring);
+      stroke-width: 8;
+      stroke-linecap: round;
+      fill: none;
+      stroke-dasharray: 82.0 18.5;
+      stroke-dashoffset: 0;
+    }
+    .cevin-mark #dot {
+      fill: var(--dot);
+      transform-origin: 48.5px 32px;
+    }
+    .cevin-mark #ping {
+      stroke: var(--dot);
+      stroke-width: 2;
+      fill: none;
+      opacity: 0;
+      transform-origin: 48.5px 32px;
+    }
+    @keyframes cevin-ring-think {
+      0%, 100% { stroke-dashoffset: 0; }
+      50% { stroke-dashoffset: -18; }
+    }
+    @keyframes cevin-dot-orbit {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes cevin-ring-write {
+      0% { stroke-dashoffset: 82.0; opacity: 1; }
+      58% { stroke-dashoffset: 0; opacity: 1; }
+      82% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: 0; opacity: 0.18; }
+    }
+    @keyframes cevin-dot-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.22); }
+    }
+    @keyframes cevin-dot-done {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.32); }
+      100% { transform: scale(1); }
+    }
+    @keyframes cevin-ping-expand {
+      0% { transform: scale(1); opacity: 0.55; }
+      100% { transform: scale(2.86); opacity: 0; }
+    }
+    @keyframes cevin-dot-error {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-2.5px); }
+      40% { transform: translateX(2.5px); }
+      60% { transform: translateX(-2.5px); }
+      80% { transform: translateX(2.5px); }
+    }
+    .cevin-mark.is-thinking #ring {
+      animation: cevin-ring-think 1.6s ease-in-out infinite;
+    }
+    .cevin-mark.is-thinking #dot {
+      transform-origin: 32px 32px;
+      animation: cevin-dot-orbit 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+    }
+    .cevin-mark.is-writing #ring {
+      animation: cevin-ring-write 1.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    }
+    .cevin-mark.is-writing #dot {
+      transform-origin: 48.5px 32px;
+      animation: cevin-dot-pulse 0.7s ease-in-out infinite;
+    }
+    .cevin-mark.is-done #ring {
+      stroke-dashoffset: 0;
+    }
+    .cevin-mark.is-done #dot {
+      transform-origin: 48.5px 32px;
+      animation: cevin-dot-done 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    .cevin-mark.is-done #ping {
+      animation: cevin-ping-expand 500ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+    .cevin-mark.is-error #dot {
+      --dot: #DC2626;
+      fill: #DC2626;
+      animation: cevin-dot-error 360ms ease-in-out 1;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cevin-mark #ring,
+      .cevin-mark #dot,
+      .cevin-mark #ping {
+        animation: none !important;
+      }
+      .cevin-mark.is-thinking #dot,
+      .cevin-mark.is-writing #dot {
+        opacity: 0.72;
+      }
+    }
+  </style>
+  <path id="tile-body" d="M14 0H48L64 16V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z" />
+  <path id="tile-fold" d="M48 0V16H64Z" />
+  <path id="ring" d="M45.11 41.18A16 16 0 1 1 45.11 22.82" />
+  <circle id="ping" cx="48.5" cy="32" r="4.2" />
+  <circle id="dot" cx="48.5" cy="32" r="4.2" />
+</svg>

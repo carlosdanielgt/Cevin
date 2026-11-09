@@ -12,6 +12,7 @@ import { CevinUseCases } from '../../../core/application';
 import { DocumentKind, StudioStep } from '../../../core/domain';
 import {
   CevinContainerContext,
+  useCevinActivity,
   useCevinUseCases,
   useUiStore,
 } from './context';
@@ -92,6 +93,7 @@ function ApplicationsRouteWrapper() {
 
 function InnerWorkspace() {
   const useCases = useCevinUseCases();
+  const activityState = useCevinActivity();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -263,6 +265,7 @@ function InnerWorkspace() {
           onNewApplication={() => setNewAppModalOpen(true)}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           connectionStatus={connectionStatus}
+          activityState={activityState}
         />
 
         <div className="flex-1 min-w-0 flex flex-col">

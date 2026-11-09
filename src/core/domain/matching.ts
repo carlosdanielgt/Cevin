@@ -175,26 +175,28 @@ export function rankBankItemsForJob(
 
   rankedAchievements.sort((a, b) => b.score - a.score);
 
-  // Recommend skills that match JD or are linked to top achievements
+  // Recommend skills that match JD first, followed by remaining Bank skills
   const recommendedSkillIds: string[] = [];
   const jdCorpus = `${parsedJob.title} ${parsedJob.requirements.map((r) => r.text).join(' ')} ${parsedJob.keywords.map((k) => k.term).join(' ')} ${parsedJob.responsibilities.join(' ')}`;
 
   for (const skill of bank.skills) {
+    const skillCorpus = `${skill.name} ${skill.aliases.join(' ')}`;
     const presence = evaluateKeywordPresence(
       skill.name,
       jdCorpus,
       customAliases,
     );
-    if (presence !== 'gap') {
+    const reversePresence = parsedJob.requirements.some(
+      (r) =>
+        evaluateKeywordPresence(r.text, skillCorpus, customAliases) !== 'gap',
+    );
+    if (presence !== 'gap' || reversePresence) {
       recommendedSkillIds.push(skill.id);
     }
   }
-  if (recommendedSkillIds.length < 6) {
-    for (const skill of bank.skills) {
-      if (!recommendedSkillIds.includes(skill.id)) {
-        recommendedSkillIds.push(skill.id);
-      }
-      if (recommendedSkillIds.length >= 10) break;
+  for (const skill of bank.skills) {
+    if (!recommendedSkillIds.includes(skill.id)) {
+      recommendedSkillIds.push(skill.id);
     }
   }
 

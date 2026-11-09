@@ -232,6 +232,7 @@ export const ResumeDraftContentSchema = z.object({
   summarySourceIds: z.array(z.string()),
   selectedAchievementIds: z.array(z.string()),
   selectedSkillIds: z.array(z.string()),
+  excludedSkillIds: z.array(z.string()).optional(),
   selectedProjectIds: z.array(z.string()),
   selectedEducationIds: z.array(z.string()),
   selectedCertificationIds: z.array(z.string()),

@@ -84,6 +84,9 @@ import {
   Avatar,
   Badge,
   Button,
+  CevinLogo,
+  CevinMark,
+  CevinStatusIndicator,
   Checkbox,
   DeltaChip,
   Dialog,
@@ -105,6 +108,9 @@ import {
 } from './primitives';
 
 export {
+  CevinLogo,
+  CevinMark,
+  CevinStatusIndicator,
   PageThumbnail,
   PdfPreview,
   PdfThumbnail,
@@ -126,24 +132,13 @@ export function CevinAvatar({
   pulsing?: boolean;
   className?: string;
 }) {
-  const dimClass =
-    size === 'xs'
-      ? 'w-5 h-5 text-xs'
-      : size === 'md'
-        ? 'w-8 h-8 text-sm'
-        : 'w-6 h-6 text-xs';
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'inline-flex items-center justify-center rounded-full bg-ink-950 text-ink-100 font-display font-bold shrink-0 select-none border border-ink-700 shadow-xs',
-        pulsing && 'animate-pulse ring-2 ring-accent/40',
-        dimClass,
-        className,
-      )}
-    >
-      C
-    </span>
+    <CevinMark
+      state={pulsing ? 'writing' : 'idle'}
+      size={size === 'xs' ? 16 : 24}
+      variant="tile"
+      className={className}
+    />
   );
 }
 
@@ -1071,6 +1066,7 @@ export function SidebarNav({
   onNewApplication,
   onOpenCommandPalette,
   connectionStatus,
+  activityState,
 }: {
   activeSection: 'applications' | 'bank' | 'settings' | 'design-system';
   collapsed: boolean;
@@ -1081,6 +1077,14 @@ export function SidebarNav({
   onNewApplication: () => void;
   onOpenCommandPalette: () => void;
   connectionStatus: SidebarConnectionStatus;
+  activityState?: {
+    visible: boolean;
+    visualState: 'idle' | 'thinking' | 'writing' | 'done' | 'error';
+    label: string;
+    announcement: string;
+    progress?: number;
+    handleThinkingLoopIteration?: () => void;
+  };
 }) {
   const navItems = [
     {
@@ -1103,21 +1107,40 @@ export function SidebarNav({
     },
   ];
 
-  const isWriting =
-    connectionStatus.state === 'busy' || connectionStatus.state === 'warming';
+  const hasLiveActivity = Boolean(activityState?.visible);
+  const isWarmingOrBusy =
+    hasLiveActivity ||
+    connectionStatus.state === 'busy' ||
+    connectionStatus.state === 'warming';
+
+  const effectiveMarkState: 'idle' | 'thinking' | 'writing' | 'done' | 'error' =
+    hasLiveActivity && activityState
+      ? activityState.visualState
+      : connectionStatus.state === 'warming'
+        ? 'thinking'
+        : connectionStatus.state === 'busy'
+          ? 'writing'
+          : connectionStatus.state === 'offline'
+            ? 'error'
+            : 'idle';
 
   const statusDotClass =
     connectionStatus.state === 'connected'
       ? 'bg-emerald-400'
-      : isWriting
-        ? 'bg-sky-400 animate-pulse'
+      : isWarmingOrBusy
+        ? 'bg-sky-400'
         : connectionStatus.state === 'demo'
           ? 'bg-sky-400'
           : 'bg-amber-400';
 
-  const displayStatusLabel = isWriting
-    ? 'Cevin is writing…'
-    : connectionStatus.label;
+  const displayStatusLabel =
+    hasLiveActivity && activityState?.label
+      ? activityState.label
+      : connectionStatus.state === 'warming'
+        ? 'Cevin is warming up'
+        : connectionStatus.state === 'busy'
+          ? 'Cevin is writing'
+          : connectionStatus.label;
 
   const isExpandedView = !collapsed || overlayExpanded;
 
@@ -1150,13 +1173,13 @@ export function SidebarNav({
             aria-label="Cevin home"
             className="inline-flex items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-md cursor-pointer"
           >
-            <div className="w-8 h-8 rounded-md bg-ink-100 text-ink-950 flex items-center justify-center font-display font-bold text-base shrink-0 shadow-xs">
-              C
-            </div>
-            {expanded && (
-              <span className="font-display font-semibold text-lg text-white tracking-tight">
-                Cevin
-              </span>
+            {expanded ? (
+              <>
+                <CevinLogo option="A" scheme="dark" height={28} />
+                <span className="sr-only">Cevin</span>
+              </>
+            ) : (
+              <CevinMark state="idle" size={24} variant="tile" />
             )}
           </button>
           {expanded && (
@@ -1290,9 +1313,22 @@ export function SidebarNav({
                 onClick={() => onNavigate('/settings')}
                 className="w-9 h-9 rounded-md flex items-center justify-center bg-ink-900 border border-ink-800 hover:bg-ink-800 transition-colors cursor-pointer"
               >
-                <span
-                  className={cn('w-2.5 h-2.5 rounded-full', statusDotClass)}
-                />
+                {isWarmingOrBusy ? (
+                  <CevinMark
+                    state={effectiveMarkState}
+                    size={16}
+                    variant="glyph"
+                    progress={activityState?.progress}
+                    onThinkingLoopIteration={
+                      activityState?.handleThinkingLoopIteration
+                    }
+                    className="text-ink-100"
+                  />
+                ) : (
+                  <span
+                    className={cn('w-2.5 h-2.5 rounded-full', statusDotClass)}
+                  />
+                )}
               </button>
             </Tooltip>
             <Tooltip content="Expand sidebar">
@@ -1316,15 +1352,28 @@ export function SidebarNav({
               }}
               className="flex items-center gap-2 min-w-0 text-left cursor-pointer focus-visible:outline-none"
             >
-              {isWriting ? (
-                <CevinAvatar size="xs" pulsing />
+              {isWarmingOrBusy ? (
+                <CevinMark
+                  state={effectiveMarkState}
+                  size={16}
+                  variant="glyph"
+                  progress={activityState?.progress}
+                  onThinkingLoopIteration={
+                    activityState?.handleThinkingLoopIteration
+                  }
+                  className="text-ink-100"
+                />
               ) : (
                 <span
                   aria-hidden="true"
                   className={cn('w-2 h-2 rounded-full shrink-0', statusDotClass)}
                 />
               )}
-              <span className="text-xs font-medium text-ink-100 truncate">
+              <span
+                role="status"
+                aria-live="polite"
+                className="text-xs font-medium text-ink-100 truncate"
+              >
                 {displayStatusLabel}
               </span>
             </button>
@@ -1926,6 +1975,7 @@ export function VoiceControl({
   machineMadeScore,
   etaLabel,
   isUpdating = false,
+  batchProgressLabel,
   onCancelUpdate,
   defaultCompact = false,
 }: {
@@ -1934,6 +1984,7 @@ export function VoiceControl({
   machineMadeScore: number;
   etaLabel?: string;
   isUpdating?: boolean;
+  batchProgressLabel?: string;
   onCancelUpdate?: () => void;
   defaultCompact?: boolean;
 }) {
@@ -1959,6 +2010,8 @@ export function VoiceControl({
       : feelLevel === 'Medium'
         ? 'text-warning-700'
         : 'text-danger-700';
+
+  const rewritingLabel = batchProgressLabel || 'Cevin is rewriting';
 
   if (!expanded) {
     return (
@@ -2001,10 +2054,13 @@ export function VoiceControl({
           </div>
 
           {isUpdating && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-accent">
-              <CevinAvatar size="xs" pulsing />
-              <span>Cevin is rewriting…</span>
-            </span>
+            <CevinStatusIndicator
+              state="writing"
+              size={16}
+              variant="glyph"
+              label={rewritingLabel}
+              className="text-accent"
+            />
           )}
         </div>
 
@@ -2057,10 +2113,13 @@ export function VoiceControl({
               </span>
             )}
             {isUpdating && (
-              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-accent">
-                <CevinAvatar size="xs" pulsing />
-                <span>Cevin is rewriting…</span>
-              </span>
+              <CevinStatusIndicator
+                state="writing"
+                size={16}
+                variant="glyph"
+                label={rewritingLabel}
+                className="text-accent"
+              />
             )}
             {defaultCompact && (
               <button
@@ -2484,10 +2543,13 @@ export function BulletRow({
       <div className="w-full">
         {isRewriting ? (
           <div className="space-y-2 py-2 px-3 rounded-md bg-surface-sunken border border-hairline">
-            <div className="flex items-center gap-2 text-xs font-medium text-accent">
-              <CevinAvatar size="xs" pulsing />
-              <span>Cevin is refining this bullet…</span>
-            </div>
+            <CevinStatusIndicator
+              state="writing"
+              size={16}
+              variant="glyph"
+              label="Cevin is rewriting"
+              className="text-accent"
+            />
             <div className="h-3 w-11/12 bg-border animate-pulse rounded-xs" />
             <div className="h-3 w-3/4 bg-border animate-pulse rounded-xs" />
           </div>
@@ -2676,10 +2738,13 @@ export function LetterBlock({
 
       {isRewriting ? (
         <div className="space-y-2 py-2 px-3 rounded-md bg-surface-sunken border border-hairline">
-          <div className="flex items-center gap-2 text-xs font-medium text-accent">
-            <CevinAvatar size="xs" pulsing />
-            <span>Cevin is writing this paragraph…</span>
-          </div>
+          <CevinStatusIndicator
+            state="writing"
+            size={16}
+            variant="glyph"
+            label="Cevin is writing"
+            className="text-accent"
+          />
           <div className="h-3 w-11/12 bg-border animate-pulse rounded-xs" />
           <div className="h-3 w-4/5 bg-border animate-pulse rounded-xs" />
         </div>
@@ -5819,9 +5884,11 @@ export function QuickCheckDialog({
   const [roleOverride, setRoleOverride] = useState('');
   const [verdict, setVerdict] = useState<QuickCheckVerdict | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     const timer = setTimeout(() => {
       const overrides = {
         company: companyOverride.trim() || undefined,
@@ -5836,12 +5903,26 @@ export function QuickCheckDialog({
             })
           : null;
       if (evalPromise) {
-        void evalPromise.then((res) => {
-          setVerdict(res);
-        });
+        if (rawPosting.trim()) {
+          setIsEvaluating(true);
+        }
+        void evalPromise
+          .then((res) => {
+            if (!cancelled) {
+              setVerdict(res);
+            }
+          })
+          .finally(() => {
+            if (!cancelled) {
+              setIsEvaluating(false);
+            }
+          });
       }
     }, rawPosting.trim() ? 350 : 0);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [rawPosting, companyOverride, roleOverride, open, onEvaluatePosting, onEvaluate]);
 
   const effectiveCompany =
@@ -5957,6 +6038,17 @@ export function QuickCheckDialog({
 
             {/* Right pane: live debounced verdict, practical fit table, and coverage */}
             <div className="lg:col-span-7 space-y-4 bg-surface-sunken/50 border border-border rounded-xl p-4">
+              {(isEvaluating || isBusy) && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-accent-50 border border-accent/20">
+                  <CevinStatusIndicator
+                    state="thinking"
+                    size={16}
+                    variant="glyph"
+                    label="Cevin is reading the posting"
+                    className="text-accent-700"
+                  />
+                </div>
+              )}
               {verdict && (
                 <>
                   {/* Verdict & Quick match estimate band header */}
@@ -6026,10 +6118,13 @@ export function QuickCheckDialog({
                 onClick={() => void handleStartTailoring()}
               >
                 {isBusy ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Preparing workspace…</span>
-                  </span>
+                  <CevinStatusIndicator
+                    state="thinking"
+                    size={16}
+                    variant="glyph"
+                    label="Cevin is reading the posting"
+                    className="text-white"
+                  />
                 ) : (
                   'Start tailoring'
                 )}
