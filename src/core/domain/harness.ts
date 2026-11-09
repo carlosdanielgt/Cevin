@@ -753,6 +753,9 @@ export function validateBulletOutput(params: {
   // 1. Numbers multiset equality
   const sourceCombined = `${params.sourceAction} ${params.sourceResult}`;
   const sourceNums = extractNormalizedNumbers(sourceCombined);
+  if (sourceNums.length === 0 && params.sourceMetric) {
+    sourceNums.push(...extractNormalizedNumbers(params.sourceMetric));
+  }
   const candidateNums = extractNormalizedNumbers(sanitizedText);
 
   const missingNums: string[] = [];

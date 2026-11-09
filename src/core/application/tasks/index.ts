@@ -81,7 +81,7 @@ const REWRITE_BULLET_SYSTEM_PREFIX = (voice: VoiceLevel): string => {
     `Length: ${band.minWords} to ${band.maxWords} words in ONE single sentence.`,
     'STRICT RULES:',
     '1. Start directly with a past-tense action verb. No bullet symbols (-, •, *), no quotes, no preamble.',
-    '2. Keep EVERY number and metric from FACTS unchanged. Never invent or drop numbers.',
+    '2. Keep EVERY number, percentage, and metric from FACTS unchanged. You MUST preserve the concrete measurable evidence and quantitative outcome (scale, latency, volume, percentages, dollars). Never drop, omit, or generalize measurable outcomes into vague qualitative claims.',
     '3. Only name tools or skills listed in FACTS or ALLOWED_TERMS. Never add unverified JD skills.',
     '4. Never use first-person pronouns (I, me, my, we, our).',
     `5. Never use banned clichés: ${spec.bannedCliches.join(', ')}.`,
@@ -111,9 +111,10 @@ export const rewriteBulletTask: LlmTaskDefinition<RewriteBulletTaskInput> = {
       `ROLE_CONTEXT: ${input.roleTitle} at ${input.company}`,
       `ACTION: ${input.action}`,
       `RESULT: ${input.result}`,
-      ...(input.metric ? [`METRIC: ${input.metric}`] : []),
+      ...(input.metric ? [`METRIC_TO_PRESERVE: ${input.metric}`] : []),
       `ALLOWED_TERMS: ${input.allowedTerms.join(', ') || 'none'}`,
       `VOICE: ${VOICE_STYLE_SPECS[input.voice].label}`,
+      'INSTRUCTION: Preserve the exact measurable outcome, numbers, and scale. Output ONE complete sentence starting with a strong past verb.',
     ].join('\n');
 
     return {

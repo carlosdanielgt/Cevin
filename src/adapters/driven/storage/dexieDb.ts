@@ -726,16 +726,31 @@ export function createDexieRepositories(): {
         db.certifications.toArray(),
       ]);
 
+      const rawProfile = profiles[0] ?? {
+        id: 'profile-main',
+        name: '',
+        headline: '',
+        email: '',
+        phone: '',
+        location: '',
+        links: [],
+      };
+
+      const profile = {
+        ...rawProfile,
+        links:
+          rawProfile.name && !rawProfile.name.toLowerCase().includes('elena')
+            ? (rawProfile.links ?? []).filter(
+                (l) =>
+                  !l.url.includes('rostova.systems') &&
+                  !l.url.includes('elena-rostova') &&
+                  !l.url.includes('erostova'),
+              )
+            : rawProfile.links ?? [],
+      };
+
       return {
-        profile: profiles[0] ?? {
-          id: 'profile-main',
-          name: '',
-          headline: '',
-          email: '',
-          phone: '',
-          location: '',
-          links: [],
-        },
+        profile,
         experiences,
         achievements,
         skills,

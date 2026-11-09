@@ -2134,12 +2134,20 @@ export function GroupHeader({
   dateRange,
   includedCount,
   totalCount,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
 }: {
   company: string;
   title: string;
   dateRange: string;
   includedCount: number;
   totalCount: number;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }) {
   return (
     <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-xs py-2.5 px-3 border-b border-hairline flex flex-wrap items-center justify-between gap-2">
@@ -2150,11 +2158,31 @@ export function GroupHeader({
           <span className="text-sm text-ink-muted"> · {company}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2.5 text-xs text-ink-muted tabular-nums">
+      <div className="flex items-center gap-2 text-xs text-ink-muted tabular-nums">
         <span>{dateRange}</span>
         <Badge tone="neutral">
           {includedCount} of {totalCount} included
         </Badge>
+        {(onMoveUp || onMoveDown) && (
+          <div className="flex items-center gap-0.5 ml-1 border-l border-hairline pl-1.5">
+            <IconButton
+              size="sm"
+              label="Move experience up"
+              disabled={!canMoveUp}
+              onClick={onMoveUp}
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+            </IconButton>
+            <IconButton
+              size="sm"
+              label="Move experience down"
+              disabled={!canMoveDown}
+              onClick={onMoveDown}
+            >
+              <ArrowDown className="w-3.5 h-3.5" />
+            </IconButton>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2422,9 +2450,33 @@ export function BulletRow({
                   <ArrowDown className="w-3.5 h-3.5" />
                   <span>Move bullet down</span>
                 </button>
+
+                <div className="my-1 border-t border-hairline" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onRemove();
+                    setMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-warning-700 rounded-sm hover:bg-warning-50 text-left cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-warning-600" />
+                  <span>Remove from resume</span>
+                </button>
               </div>
             </PopoverContent>
           </Popover>
+
+          <IconButton
+            size="sm"
+            label="Remove from resume"
+            onClick={onRemove}
+            className="text-ink-muted hover:text-warning-700"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </IconButton>
         </div>
       </div>
 
@@ -5847,8 +5899,44 @@ export function QuickCheckDialog({
       >
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left pane: paste posting + editable company & role */}
+            {/* Left pane: paste posting + editable company & role (Company and Role first per user preference) */}
             <div className="lg:col-span-5 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="quickcheck-company-input"
+                    className="block text-xs font-semibold text-ink mb-1"
+                  >
+                    Target company
+                  </label>
+                  <Input
+                    id="quickcheck-company-input"
+                    value={companyOverride}
+                    onChange={(e) => setCompanyOverride(e.target.value)}
+                    placeholder={
+                      verdict?.detectedCompany || 'e.g. Kestrel Pay'
+                    }
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="quickcheck-role-input"
+                    className="block text-xs font-semibold text-ink mb-1"
+                  >
+                    Target role title
+                  </label>
+                  <Input
+                    id="quickcheck-role-input"
+                    value={roleOverride}
+                    onChange={(e) => setRoleOverride(e.target.value)}
+                    placeholder={
+                      verdict?.detectedRoleTitle ||
+                      'e.g. Senior Software Engineer'
+                    }
+                  />
+                </div>
+              </div>
+
               <div>
                 <label
                   htmlFor="quickcheck-posting-textarea"
@@ -5864,42 +5952,6 @@ export function QuickCheckDialog({
                   onChange={(e) => setRawPosting(e.target.value)}
                   placeholder="Paste the full job description here (Role:, Company:, location, work mode, requirements, salary)…"
                 />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="quickcheck-company-input"
-                    className="block text-xs font-medium text-ink mb-1"
-                  >
-                    Company
-                  </label>
-                  <Input
-                    id="quickcheck-company-input"
-                    value={companyOverride}
-                    onChange={(e) => setCompanyOverride(e.target.value)}
-                    placeholder={
-                      verdict?.detectedCompany || 'e.g. Kestrel Pay'
-                    }
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="quickcheck-role-input"
-                    className="block text-xs font-medium text-ink mb-1"
-                  >
-                    Role title
-                  </label>
-                  <Input
-                    id="quickcheck-role-input"
-                    value={roleOverride}
-                    onChange={(e) => setRoleOverride(e.target.value)}
-                    placeholder={
-                      verdict?.detectedRoleTitle ||
-                      'e.g. Staff Platform Engineer'
-                    }
-                  />
-                </div>
               </div>
             </div>
 

@@ -1,4 +1,5 @@
 import {
+  Award,
   Briefcase,
   Check,
   ChevronDown,
@@ -21,6 +22,7 @@ import { ParsedResumeCandidate } from '../../../../../core/application';
 import {
   Achievement,
   BankSnapshot,
+  Certification,
   Education,
   Experience,
   Project,
@@ -55,6 +57,7 @@ type BankSection =
   | 'skills'
   | 'projects'
   | 'education'
+  | 'certifications'
   | 'profile';
 
 const SKILL_CATEGORIES: SkillCategory[] = [
@@ -430,6 +433,11 @@ export function BankView() {
               value: 'education',
               label: 'Education',
               count: bank.educations.length,
+            },
+            {
+              value: 'certifications',
+              label: 'Certifications',
+              count: bank.certifications.length,
             },
             {
               value: 'profile',
@@ -1113,6 +1121,18 @@ export function BankView() {
                     placeholder="Role"
                   />
                 </div>
+                <Input
+                  value={proj.link ?? ''}
+                  onChange={(e) => {
+                    const next = bank.projects.map((p) =>
+                      p.id === proj.id
+                        ? { ...p, link: e.target.value.trim() || undefined }
+                        : p,
+                    );
+                    void persistBank({ ...bank, projects: next });
+                  }}
+                  placeholder="Project Link (e.g. https://github.com/user/repo) — rendered in PROJECTS section"
+                />
                 <Textarea
                   rows={2}
                   value={proj.description}
@@ -1312,7 +1332,150 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 5: PROFILE & CONTACT */}
+      {/* SECTION 5: CERTIFICATIONS */}
+      {activeSection === 'certifications' && (
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-display font-semibold text-ink">
+                Certifications ({bank.certifications.length})
+              </h2>
+              <p className="text-xs text-ink-muted mt-0.5">
+                Industry credentials and certifications displayed in your resume certifications section.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                const newCert: Certification = {
+                  id: `cert-${Date.now()}`,
+                  name: 'New Certification',
+                  issuer: 'Issuing Organization',
+                  date: new Date().getFullYear().toString(),
+                };
+                await persistBank({
+                  ...bank,
+                  certifications: [...bank.certifications, newCert],
+                });
+              }}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add certification</span>
+            </Button>
+          </div>
+
+          {bank.certifications.length === 0 ? (
+            <div className="p-8 text-center border border-dashed border-hairline rounded-lg text-ink-muted text-sm">
+              No certifications added yet. Click &quot;Add certification&quot; to include credentials like AWS, CKA, PMP, or Scrum certificates.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {bank.certifications.map((cert) => (
+                <div
+                  key={cert.id}
+                  className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium text-sm text-ink flex items-center gap-2">
+                      <Award className="w-4 h-4 text-accent" />
+                      <span>{cert.name || 'Untitled Certification'}</span>
+                    </div>
+                    <IconButton
+                      size="sm"
+                      label="Delete certification"
+                      onClick={() => {
+                        const next = bank.certifications.filter(
+                          (c) => c.id !== cert.id,
+                        );
+                        void persistBank({ ...bank, certifications: next });
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-warning-700" />
+                    </IconButton>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-ink-muted mb-1">
+                        Certification Name
+                      </label>
+                      <Input
+                        value={cert.name}
+                        onChange={(e) => {
+                          const next = bank.certifications.map((c) =>
+                            c.id === cert.id
+                              ? { ...c, name: e.target.value }
+                              : c,
+                          );
+                          void persistBank({ ...bank, certifications: next });
+                        }}
+                        placeholder="e.g. Certified Kubernetes Administrator (CKA)"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-ink-muted mb-1">
+                        Date / Year
+                      </label>
+                      <Input
+                        value={cert.date}
+                        onChange={(e) => {
+                          const next = bank.certifications.map((c) =>
+                            c.id === cert.id
+                              ? { ...c, date: e.target.value }
+                              : c,
+                          );
+                          void persistBank({ ...bank, certifications: next });
+                        }}
+                        placeholder="e.g. 2024"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-ink-muted mb-1">
+                        Issuing Organization
+                      </label>
+                      <Input
+                        value={cert.issuer}
+                        onChange={(e) => {
+                          const next = bank.certifications.map((c) =>
+                            c.id === cert.id
+                              ? { ...c, issuer: e.target.value }
+                              : c,
+                          );
+                          void persistBank({ ...bank, certifications: next });
+                        }}
+                        placeholder="e.g. Cloud Native Computing Foundation"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-ink-muted mb-1">
+                        Credential reference or URL (optional)
+                      </label>
+                      <Input
+                        value={cert.credentialId ?? ''}
+                        onChange={(e) => {
+                          const next = bank.certifications.map((c) =>
+                            c.id === cert.id
+                              ? {
+                                  ...c,
+                                  credentialId:
+                                    e.target.value.trim() || undefined,
+                                }
+                              : c,
+                          );
+                          void persistBank({ ...bank, certifications: next });
+                        }}
+                        placeholder="e.g. CNCF-12345"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 6: PROFILE & CONTACT */}
       {activeSection === 'profile' && (
         <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6 max-w-3xl">
           <div>
@@ -1409,97 +1572,98 @@ export function BankView() {
                 Online Links & Profiles
               </h3>
               <p className="text-xs text-ink-muted mt-0.5">
-                Leave empty to remove from your resume header.
+                These links appear in your resume header. Leave any field empty to exclude it.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-ink-muted mb-1">
-                  GitHub Profile URL
-                </label>
-                <Input
-                  value={
-                    bank.profile.links.find(
-                      (l) => l.label.toLowerCase() === 'github',
-                    )?.url ?? ''
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    const filtered = bank.profile.links.filter(
-                      (l) => l.label.toLowerCase() !== 'github',
-                    );
-                    const nextLinks = val
-                      ? [{ label: 'github', url: val }, ...filtered]
-                      : filtered;
-                    void persistBank({
-                      ...bank,
-                      profile: { ...bank.profile, links: nextLinks },
-                    });
-                  }}
-                  placeholder="e.g. github.com/CarlosDan"
-                />
-              </div>
+            {(() => {
+              // Purge legacy demo links like rostova.systems
+              const cleanLinks = bank.profile.links.filter(
+                (l) =>
+                  !l.url.includes('rostova.systems') &&
+                  !l.url.includes('elena-rostova') &&
+                  !l.url.includes('erostova'),
+              );
+              const ghVal =
+                cleanLinks.find((l) => l.label.toLowerCase() === 'github')
+                  ?.url ?? '';
+              const liVal =
+                cleanLinks.find((l) => l.label.toLowerCase() === 'linkedin')
+                  ?.url ?? '';
+              const portVal =
+                cleanLinks.find((l) =>
+                  [
+                    'portfolio',
+                    'website',
+                    'site',
+                    'personal website',
+                  ].includes(l.label.toLowerCase()),
+                )?.url ?? '';
 
-              <div>
-                <label className="block text-xs font-medium text-ink-muted mb-1">
-                  LinkedIn Profile URL
-                </label>
-                <Input
-                  value={
-                    bank.profile.links.find(
-                      (l) => l.label.toLowerCase() === 'linkedin',
-                    )?.url ?? ''
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    const filtered = bank.profile.links.filter(
-                      (l) => l.label.toLowerCase() !== 'linkedin',
-                    );
-                    const nextLinks = val
-                      ? [...filtered, { label: 'linkedin', url: val }]
-                      : filtered;
-                    void persistBank({
-                      ...bank,
-                      profile: { ...bank.profile, links: nextLinks },
-                    });
-                  }}
-                  placeholder="e.g. linkedin.com/in/carlos-garcia"
-                />
-              </div>
+              const handleUpdateOnlineLinks = (
+                newGh: string,
+                newLi: string,
+                newPort: string,
+              ) => {
+                const next: Array<{ label: string; url: string }> = [];
+                if (newGh.trim())
+                  next.push({ label: 'GitHub', url: newGh.trim() });
+                if (newLi.trim())
+                  next.push({ label: 'LinkedIn', url: newLi.trim() });
+                if (newPort.trim())
+                  next.push({ label: 'Portfolio', url: newPort.trim() });
+                void persistBank({
+                  ...bank,
+                  profile: {
+                    ...bank.profile,
+                    links: next,
+                  },
+                });
+              };
 
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-ink-muted mb-1">
-                  Personal Website / Portfolio
-                </label>
-                <Input
-                  value={
-                    bank.profile.links.find((l) =>
-                      ['portfolio', 'website', 'site'].includes(
-                        l.label.toLowerCase(),
-                      ),
-                    )?.url ?? ''
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    const filtered = bank.profile.links.filter(
-                      (l) =>
-                        !['portfolio', 'website', 'site'].includes(
-                          l.label.toLowerCase(),
-                        ),
-                    );
-                    const nextLinks = val
-                      ? [...filtered, { label: 'website', url: val }]
-                      : filtered;
-                    void persistBank({
-                      ...bank,
-                      profile: { ...bank.profile, links: nextLinks },
-                    });
-                  }}
-                  placeholder="e.g. carlosgarcia.dev"
-                />
-              </div>
-            </div>
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-ink-muted mb-1">
+                      GitHub Profile URL
+                    </label>
+                    <Input
+                      value={ghVal}
+                      onChange={(e) =>
+                        handleUpdateOnlineLinks(e.target.value, liVal, portVal)
+                      }
+                      placeholder="e.g. github.com/CarlosDan"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-ink-muted mb-1">
+                      LinkedIn Profile URL
+                    </label>
+                    <Input
+                      value={liVal}
+                      onChange={(e) =>
+                        handleUpdateOnlineLinks(ghVal, e.target.value, portVal)
+                      }
+                      placeholder="e.g. linkedin.com/in/carlos-garcia"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-ink-muted mb-1">
+                      Personal Website / Portfolio URL
+                    </label>
+                    <Input
+                      value={portVal}
+                      onChange={(e) =>
+                        handleUpdateOnlineLinks(ghVal, liVal, e.target.value)
+                      }
+                      placeholder="e.g. carlosgarcia.dev"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

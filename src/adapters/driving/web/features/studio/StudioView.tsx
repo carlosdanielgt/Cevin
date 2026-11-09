@@ -1,10 +1,12 @@
 import {
   AlertTriangle,
+  ArrowUpDown,
   BookmarkCheck,
   Check,
   ChevronLeft,
   ChevronRight,
   Download,
+  Loader2,
   Lock,
   Pencil,
   Plus,
@@ -427,7 +429,42 @@ export function StudioView({
       await reloadWorkspace();
     }
   };
+  const [applyingFixId, setApplyingFixId] = useState<string | null>(null);
+  const [appliedFixIds, setAppliedFixIds] = useState<string[]>([]);
 
+  const handleSortExperiencesChronologically = async () => {
+    const parseKey = (exp: { start: string; end: string; current?: boolean }) => {
+      if (exp.current || /present/i.test(exp.end)) return 99999999;
+      const mEnd = exp.end.match(/(\d{4})(?:[-/](\d{1,2}))?/);
+      if (mEnd) {
+        return parseInt(mEnd[1], 10) * 100 + (mEnd[2] ? parseInt(mEnd[2], 10) : 12);
+      }
+      const mStart = exp.start.match(/(\d{4})(?:[-/](\d{1,2}))?/);
+      if (mStart) {
+        return parseInt(mStart[1], 10) * 100 + (mStart[2] ? parseInt(mStart[2], 10) : 1);
+      }
+      return 0;
+    };
+    const sorted = [...bank.experiences].sort((a, b) => parseKey(b) - parseKey(a));
+    const nextBank = await useCases.manageBank.saveBank({ ...bank, experiences: sorted });
+    setBank(nextBank);
+    await reloadWorkspace();
+    addToast('Experiences sorted chronologically (newest first).', 'success');
+  };
+
+  const handleMoveExperience = async (expId: string, direction: 'up' | 'down') => {
+    const idx = bank.experiences.findIndex((e) => e.id === expId);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= bank.experiences.length) return;
+    const next = [...bank.experiences];
+    const [moved] = next.splice(idx, 1);
+    next.splice(targetIdx, 0, moved);
+    const nextBank = await useCases.manageBank.saveBank({ ...bank, experiences: next });
+    setBank(nextBank);
+    await reloadWorkspace();
+    addToast(`Moved experience ${direction}.`, 'neutral');
+  };
   const handleRewriteBullet = async (bulletId: string) => {
     setRewritingBulletId(bulletId);
     void refreshSidebarActivity();
@@ -1464,16 +1501,27 @@ export function StudioView({
 
                 {/* Experience Role Groups */}
                 <PanelSection className="space-y-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-ink">
-                      Experience achievements
-                    </h3>
-                    <p className="text-xs text-ink-muted mt-0.5">
-                      Each bullet traces to your Experience Bank. Hover a bullet to highlight it on the paper preview.
-                    </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-ink">
+                        Experience achievements
+                      </h3>
+                      <p className="text-xs text-ink-muted mt-0.5">
+                        Each bullet traces to your Experience Bank. Reorder experiences or hover a bullet to highlight it on the paper preview.
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleSortExperiencesChronologically}
+                      title="Sort experiences by newest first (reverse chronological)"
+                    >
+                      <ArrowUpDown className="w-3.5 h-3.5" />
+                      <span>Sort chronological</span>
+                    </Button>
                   </div>
 
-                  {bank.experiences.map((exp) => {
+                  {bank.experiences.map((exp, expIdx) => {
                     const expAchievements = bank.achievements.filter(
                       (a) => a.experienceId === exp.id,
                     );
@@ -1502,6 +1550,10 @@ export function StudioView({
                           dateRange={`${exp.start} – ${exp.end}`}
                           includedCount={includedBullets.length}
                           totalCount={expAchievements.length}
+                          canMoveUp={expIdx > 0}
+                          canMoveDown={expIdx < bank.experiences.length - 1}
+                          onMoveUp={() => void handleMoveExperience(exp.id, 'up')}
+                          onMoveDown={() => void handleMoveExperience(exp.id, 'down')}
                         />
 
                         <div className="space-y-2">
@@ -2132,27 +2184,63 @@ export function StudioView({
                                   {fix.description}
                                 </p>
                               </div>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={async () => {
-                                  const r =
-                                    await useCases.scoreCoverLetter.applyOneClickFix(
-                                      app.id,
-                                      fix,
-                                    );
-                                  if (r.ok) {
-                                    setApp(r.value.application);
-                                    setLetterAnalysis(r.value.analysis);
-                                    addToast(
-                                      `Applied fix: ${fix.title}`,
-                                      'success',
-                                    );
+                              <div className="flex items-center gap-2">
+                                {appliedFixIds.includes(fix.id) && (
+                                  <Badge tone="success" className="gap-1">
+                                    <Check className="w-3 h-3" />
+                                    Applied
+                                  </Badge>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant={
+                                    appliedFixIds.includes(fix.id)
+                                      ? 'tonal'
+                                      : 'secondary'
                                   }
-                                }}
-                              >
-                                Apply fix
-                              </Button>
+                                  disabled={applyingFixId === fix.id}
+                                  onClick={async () => {
+                                    setApplyingFixId(fix.id);
+                                    void refreshSidebarActivity();
+                                    try {
+                                      const r =
+                                        await useCases.scoreCoverLetter.applyOneClickFix(
+                                          app.id,
+                                          fix,
+                                        );
+                                      if (r.ok) {
+                                        setApp(r.value.application);
+                                        setLetterAnalysis(r.value.analysis);
+                                        setAppliedFixIds((prev) => [
+                                          ...new Set([...prev, fix.id]),
+                                        ]);
+                                        addToast(
+                                          `Applied fix: ${fix.title}`,
+                                          'success',
+                                        );
+                                        await reloadWorkspace();
+                                      }
+                                    } finally {
+                                      setApplyingFixId(null);
+                                      void refreshSidebarActivity();
+                                    }
+                                  }}
+                                >
+                                  {applyingFixId === fix.id ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                                      <span>Applying…</span>
+                                    </>
+                                  ) : appliedFixIds.includes(fix.id) ? (
+                                    <>
+                                      <RefreshCw className="w-3 h-3" />
+                                      <span>Apply again</span>
+                                    </>
+                                  ) : (
+                                    <span>Apply fix</span>
+                                  )}
+                                </Button>
+                              </div>
                             </div>
                           ))}
                       </div>
@@ -2185,27 +2273,63 @@ export function StudioView({
                               {fix.description}
                             </p>
                           </div>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={async () => {
-                              const r =
-                                await useCases.scoreResume.applyOneClickFix(
-                                  app.id,
-                                  fix,
-                                );
-                              if (r.ok) {
-                                setApp(r.value.application);
-                                setFixes(r.value.analysis.fixes);
-                                addToast(
-                                  `Applied fix: ${fix.title}`,
-                                  'success',
-                                );
+                          <div className="flex items-center gap-2">
+                            {appliedFixIds.includes(fix.id) && (
+                              <Badge tone="success" className="gap-1">
+                                <Check className="w-3 h-3" />
+                                Applied
+                              </Badge>
+                            )}
+                            <Button
+                              size="sm"
+                              variant={
+                                appliedFixIds.includes(fix.id)
+                                  ? 'tonal'
+                                  : 'secondary'
                               }
-                            }}
-                          >
-                            Apply fix
-                          </Button>
+                              disabled={applyingFixId === fix.id}
+                              onClick={async () => {
+                                setApplyingFixId(fix.id);
+                                void refreshSidebarActivity();
+                                try {
+                                  const r =
+                                    await useCases.scoreResume.applyOneClickFix(
+                                      app.id,
+                                      fix,
+                                    );
+                                  if (r.ok) {
+                                    setApp(r.value.application);
+                                    setFixes(r.value.analysis.fixes);
+                                    setAppliedFixIds((prev) => [
+                                      ...new Set([...prev, fix.id]),
+                                    ]);
+                                    addToast(
+                                      `Applied fix: ${fix.title}`,
+                                      'success',
+                                    );
+                                    await reloadWorkspace();
+                                  }
+                                } finally {
+                                  setApplyingFixId(null);
+                                  void refreshSidebarActivity();
+                                }
+                              }}
+                            >
+                              {applyingFixId === fix.id ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                                  <span>Applying…</span>
+                                </>
+                              ) : appliedFixIds.includes(fix.id) ? (
+                                <>
+                                  <RefreshCw className="w-3 h-3" />
+                                  <span>Apply again</span>
+                                </>
+                              ) : (
+                                <span>Apply fix</span>
+                              )}
+                            </Button>
+                          </div>
                         </div>
                       ))}
                     </div>
