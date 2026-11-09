@@ -5,6 +5,7 @@ import {
   GitCompare,
   Link2,
   MoreHorizontal,
+  Pencil,
   Plus,
   Search,
   Sparkles,
@@ -655,9 +656,82 @@ export function ApplicationsView({
                     <Avatar name={activeApp.company} size="lg" />
                     <div className="space-y-1.5 min-w-0">
                       <div className="flex flex-wrap items-center gap-2.5">
-                        <h2 className="text-[30px] font-display font-semibold text-ink tracking-tight leading-none">
-                          {activeApp.company}
-                        </h2>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              title="Click to edit company or role title"
+                              className="group inline-flex items-center gap-2 text-left cursor-pointer rounded-md hover:bg-surface-sunken px-1 -mx-1 transition-colors"
+                            >
+                              <h2 className="text-[30px] font-display font-semibold text-ink tracking-tight leading-none">
+                                {activeApp.company}
+                              </h2>
+                              <Pencil className="w-4 h-4 text-ink-muted opacity-40 group-hover:opacity-100 transition-opacity" />
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent align="start" className="w-80 p-4 space-y-3">
+                            <div className="text-xs font-semibold text-ink">
+                              Edit Target Company & Role
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                                Company name
+                              </label>
+                              <Input
+                                value={activeApp.company}
+                                onChange={(e) => {
+                                  const updated = {
+                                    ...activeApp,
+                                    company: e.target.value,
+                                    parsedJob: activeApp.parsedJob
+                                      ? {
+                                          ...activeApp.parsedJob,
+                                          company: e.target.value,
+                                        }
+                                      : null,
+                                  };
+                                  setApplications((prev) =>
+                                    prev.map((a) =>
+                                      a.id === activeApp.id ? updated : a,
+                                    ),
+                                  );
+                                  void useCases.manageApplications.saveApplication(
+                                    updated,
+                                  );
+                                }}
+                                placeholder="e.g. Kestrel Pay"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                                Role title
+                              </label>
+                              <Input
+                                value={activeApp.roleTitle}
+                                onChange={(e) => {
+                                  const updated = {
+                                    ...activeApp,
+                                    roleTitle: e.target.value,
+                                    parsedJob: activeApp.parsedJob
+                                      ? {
+                                          ...activeApp.parsedJob,
+                                          title: e.target.value,
+                                        }
+                                      : null,
+                                  };
+                                  setApplications((prev) =>
+                                    prev.map((a) =>
+                                      a.id === activeApp.id ? updated : a,
+                                    ),
+                                  );
+                                  void useCases.manageApplications.saveApplication(
+                                    updated,
+                                  );
+                                }}
+                              />
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                         <StatusPill
                           status={activeApp.status}
                           onChange={(nextStatus) =>

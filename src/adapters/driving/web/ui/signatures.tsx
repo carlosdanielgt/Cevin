@@ -1125,7 +1125,7 @@ export function SidebarNav({
     <aside
       aria-label="Primary navigation"
       className={cn(
-        'shrink-0 bg-sidebar text-ink-100 border-r border-ink-800 flex flex-col py-4 transition-all duration-180 select-none min-h-[560px] overflow-y-auto overflow-x-hidden',
+        'shrink-0 bg-sidebar text-ink-100 border-r border-ink-800 flex flex-col py-4 transition-all duration-180 select-none min-h-[680px] overflow-y-auto overflow-x-hidden',
         overlayExpanded && expanded
           ? 'fixed left-0 top-0 h-screen w-sidebar px-3.5 z-40 shadow-lg'
           : expanded

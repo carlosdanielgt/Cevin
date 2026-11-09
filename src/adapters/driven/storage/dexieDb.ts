@@ -692,6 +692,42 @@ export function createDexieRepositories(): {
             email: p.email.replace(/@fastmail\.[a-z]+/gi, '@example.com'),
           });
         }
+        if (p && p.name && !p.name.toLowerCase().includes('elena')) {
+          if (
+            p.links &&
+            p.links.some(
+              (l) =>
+                l.url.includes('rostova') ||
+                l.url.includes('elena'),
+            )
+          ) {
+            const cleanLinks = p.links.filter(
+              (l) =>
+                !l.url.includes('rostova.systems') &&
+                !l.url.includes('elena-rostova') &&
+                !l.url.includes('erostova'),
+            );
+            await db.profiles.update(p.id, { links: cleanLinks });
+          }
+          await db.educations
+            .filter(
+              (e) =>
+                e.institution !== 'Pacific Crest Institute of Technology' &&
+                e.location === 'Seattle, WA',
+            )
+            .modify({ location: '' });
+          await db.educations
+            .filter(
+              (e) =>
+                e.institution !== 'Pacific Crest Institute of Technology' &&
+                (e.highlights?.includes('Teaching Assistant for CSE 452') ??
+                  false),
+            )
+            .modify({ highlights: '' });
+          await db.projects
+            .filter((proj) => proj.link?.includes('erostova') ?? false)
+            .modify({ link: '' });
+        }
         await db.educations
           .filter(
             (e) =>
@@ -736,26 +772,54 @@ export function createDexieRepositories(): {
         links: [],
       };
 
+      const isCustomizedCandidate = Boolean(
+        rawProfile.name && !rawProfile.name.toLowerCase().includes('elena'),
+      );
+
       const profile = {
         ...rawProfile,
-        links:
-          rawProfile.name && !rawProfile.name.toLowerCase().includes('elena')
-            ? (rawProfile.links ?? []).filter(
-                (l) =>
-                  !l.url.includes('rostova.systems') &&
-                  !l.url.includes('elena-rostova') &&
-                  !l.url.includes('erostova'),
-              )
-            : rawProfile.links ?? [],
+        links: isCustomizedCandidate
+          ? (rawProfile.links ?? []).filter(
+              (l) =>
+                !l.url.includes('rostova.systems') &&
+                !l.url.includes('elena-rostova') &&
+                !l.url.includes('erostova'),
+            )
+          : rawProfile.links ?? [],
       };
+
+      const cleanedEducations = educations.map((e) => {
+        if (
+          isCustomizedCandidate &&
+          e.institution !== 'Pacific Crest Institute of Technology'
+        ) {
+          return {
+            ...e,
+            location: e.location === 'Seattle, WA' ? '' : e.location,
+            highlights:
+              e.highlights &&
+              e.highlights.includes('Teaching Assistant for CSE 452')
+                ? ''
+                : e.highlights,
+          };
+        }
+        return e;
+      });
+
+      const cleanedProjects = projects.map((proj) => {
+        if (isCustomizedCandidate && proj.link?.includes('erostova')) {
+          return { ...proj, link: '' };
+        }
+        return proj;
+      });
 
       return {
         profile,
         experiences,
         achievements,
         skills,
-        educations,
-        projects,
+        educations: cleanedEducations,
+        projects: cleanedProjects,
         certifications,
       };
     },

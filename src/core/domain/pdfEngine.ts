@@ -293,7 +293,7 @@ function buildLayoutLines(
         ],
         heightPt: spec.sizes.namePt * spec.lineHeights.name,
         spaceBeforePt: 0,
-        spaceAfterPt: 2,
+        spaceAfterPt: 5.5,
         keepWithNext: true,
       });
     } else {

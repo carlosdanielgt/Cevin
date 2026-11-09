@@ -281,9 +281,9 @@ const BASE_TEMPLATE_SPECS: Record<
     },
     ruleStyle: {
       kind: 'subtle',
-      thicknessPt: 0.5,
+      thicknessPt: 0.65,
       gapBelowHeadingPt: 3,
-      colorRgb: [0.8, 0.8, 0.82],
+      colorRgb: [0.72, 0.72, 0.75],
     },
     bullet: {
       glyph: '•',

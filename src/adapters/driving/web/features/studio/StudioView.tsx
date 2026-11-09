@@ -183,6 +183,8 @@ export function StudioView({
     string | null
   >(null);
   const [customExportName, setCustomExportName] = useState<string>('');
+  const [applyingFixId, setApplyingFixId] = useState<string | null>(null);
+  const [appliedFixIds, setAppliedFixIds] = useState<string[]>([]);
 
   const refreshSidebarActivity = useCallback(async () => {
     const status = await useCases.testLlmConnection.getSidebarStatus();
@@ -429,8 +431,6 @@ export function StudioView({
       await reloadWorkspace();
     }
   };
-  const [applyingFixId, setApplyingFixId] = useState<string | null>(null);
-  const [appliedFixIds, setAppliedFixIds] = useState<string[]>([]);
 
   const handleSortExperiencesChronologically = async () => {
     const parseKey = (exp: { start: string; end: string; current?: boolean }) => {
@@ -1019,9 +1019,18 @@ export function StudioView({
                           <Input
                             id="job-company-input"
                             value={app.company}
-                            onChange={(e) =>
-                              setApp({ ...app, company: e.target.value })
-                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const updated = {
+                                ...app,
+                                company: val,
+                                parsedJob: app.parsedJob
+                                  ? { ...app.parsedJob, company: val }
+                                  : null,
+                              };
+                              setApp(updated);
+                              void persistApp(updated);
+                            }}
                             placeholder="e.g. Kestrel Pay"
                           />
                         </div>
@@ -1452,26 +1461,53 @@ export function StudioView({
                     </div>
                   </div>
 
-                  <div>
-                    <label
-                      htmlFor="studio-target-headline"
-                      className="block text-xs text-ink-muted mb-1"
-                    >
-                      Target headline
-                    </label>
-                    <Input
-                      id="studio-target-headline"
-                      value={app.workingDraft.targetHeadline}
-                      onChange={(e) =>
-                        void persistApp({
-                          ...app,
-                          workingDraft: {
-                            ...app.workingDraft,
-                            targetHeadline: e.target.value,
-                          },
-                        })
-                      }
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        htmlFor="studio-target-company"
+                        className="block text-xs text-ink-muted mb-1"
+                      >
+                        Target company
+                      </label>
+                      <Input
+                        id="studio-target-company"
+                        value={app.company}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = {
+                            ...app,
+                            company: val,
+                            parsedJob: app.parsedJob
+                              ? { ...app.parsedJob, company: val }
+                              : null,
+                          };
+                          setApp(updated);
+                          void persistApp(updated);
+                        }}
+                        placeholder="e.g. Kestrel Pay"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="studio-target-headline"
+                        className="block text-xs text-ink-muted mb-1"
+                      >
+                        Target headline
+                      </label>
+                      <Input
+                        id="studio-target-headline"
+                        value={app.workingDraft.targetHeadline}
+                        onChange={(e) =>
+                          void persistApp({
+                            ...app,
+                            workingDraft: {
+                              ...app.workingDraft,
+                              targetHeadline: e.target.value,
+                            },
+                          })
+                        }
+                      />
+                    </div>
                   </div>
 
                   <div>
