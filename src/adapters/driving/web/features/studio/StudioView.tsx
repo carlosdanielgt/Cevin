@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Lock,
+  Pencil,
   Plus,
   RefreshCw,
   Sparkles,
@@ -744,9 +745,65 @@ export function StudioView({
               <span>Applications</span>
             </button>
             <span className="text-ink-subtle">/</span>
-            <span className="text-sm font-semibold text-ink truncate">
-              {app.company} · {app.roleTitle}
-            </span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  title="Click to edit target company or role title"
+                  className="inline-flex items-center gap-1.5 px-2 py-1 -mx-2 rounded-md hover:bg-surface-sunken text-sm font-semibold text-ink group cursor-pointer transition-colors"
+                >
+                  <span className="truncate">
+                    {app.company} · {app.roleTitle}
+                  </span>
+                  <Pencil className="w-3 h-3 text-ink-muted opacity-50 group-hover:opacity-100 transition-opacity" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80 p-4 space-y-3">
+                <div className="text-xs font-semibold text-ink">
+                  Edit Application Target
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                    Target company
+                  </label>
+                  <Input
+                    value={app.company}
+                    onChange={(e) => {
+                      const updated = {
+                        ...app,
+                        company: e.target.value,
+                        parsedJob: app.parsedJob
+                          ? { ...app.parsedJob, company: e.target.value }
+                          : null,
+                      };
+                      setApp(updated);
+                      void persistApp(updated);
+                    }}
+                    placeholder="e.g. Kestrel Pay"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                    Target role title
+                  </label>
+                  <Input
+                    value={app.roleTitle}
+                    onChange={(e) => {
+                      const updated = {
+                        ...app,
+                        roleTitle: e.target.value,
+                        parsedJob: app.parsedJob
+                          ? { ...app.parsedJob, title: e.target.value }
+                          : null,
+                      };
+                      setApp(updated);
+                      void persistApp(updated);
+                    }}
+                    placeholder="e.g. Senior Software Developer"
+                  />
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           <div className="flex items-center gap-3">
@@ -982,13 +1039,15 @@ export function StudioView({
                             value={app.roleTitle}
                             onChange={(e) => {
                               const val = e.target.value;
-                              void persistApp({
+                              const updated = {
                                 ...app,
                                 roleTitle: val,
                                 parsedJob: app.parsedJob
                                   ? { ...app.parsedJob, title: val }
                                   : null,
-                              });
+                              };
+                              setApp(updated);
+                              void persistApp(updated);
                             }}
                           />
                         </div>
@@ -1005,13 +1064,15 @@ export function StudioView({
                               value={app.company}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                void persistApp({
+                                const updated = {
                                   ...app,
                                   company: val,
                                   parsedJob: app.parsedJob
                                     ? { ...app.parsedJob, company: val }
                                     : null,
-                                });
+                                };
+                                setApp(updated);
+                                void persistApp(updated);
                               }}
                             />
                           </div>

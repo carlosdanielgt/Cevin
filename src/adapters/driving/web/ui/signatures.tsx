@@ -1125,7 +1125,7 @@ export function SidebarNav({
     <aside
       aria-label="Primary navigation"
       className={cn(
-        'shrink-0 bg-sidebar text-ink-100 border-r border-ink-800 flex flex-col justify-between py-4 transition-all duration-180 select-none',
+        'shrink-0 bg-sidebar text-ink-100 border-r border-ink-800 flex flex-col py-4 transition-all duration-180 select-none min-h-[560px] overflow-y-auto overflow-x-hidden',
         overlayExpanded && expanded
           ? 'fixed left-0 top-0 h-screen w-sidebar px-3.5 z-40 shadow-lg'
           : expanded
@@ -1250,7 +1250,7 @@ export function SidebarNav({
       </div>
 
       {/* Pinned bottom footer: Quick actions (⌘K), StatusPill, and Collapse/Expand chevron */}
-      <div className="space-y-2 pt-4 border-t border-ink-800">
+      <div className="mt-auto shrink-0 pt-4 border-t border-ink-800 space-y-2">
         {expanded ? (
           <button
             type="button"

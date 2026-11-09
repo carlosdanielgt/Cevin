@@ -561,10 +561,57 @@ function SinglePagePdfCanvas({
           visibleCtx.fillStyle = '#FFFFFF';
           visibleCtx.fillRect(0, 0, canvas.width, canvas.height);
 
-          // Fallback vector rendering from positionedText
+          // Fallback vector rendering from positionedText with hairline rules
           const pageTexts = positionedText.filter(
             (pt) => pt.page === pageNumber,
           );
+
+          // Draw hairline rules for section headers
+          visibleCtx.strokeStyle = '#E2E8F0';
+          visibleCtx.lineWidth = 0.5;
+          const marginPt = 36;
+          const leftX = marginPt * scale;
+          const rightX = (spec.widthPt - marginPt) * scale;
+
+          const sectionHeaders = pageTexts.filter(
+            (pt) =>
+              pt.bold &&
+              /^(EXPERIENCE|PROJECTS|SKILLS|EDUCATION|CERTIFICATIONS|SUMMARY)$/i.test(
+                pt.text.trim(),
+              ),
+          );
+          for (const sh of sectionHeaders) {
+            const ruleY = Math.round((sh.y + 3) * scale) + 0.5;
+            visibleCtx.beginPath();
+            visibleCtx.moveTo(leftX, ruleY);
+            visibleCtx.lineTo(rightX, ruleY);
+            visibleCtx.stroke();
+          }
+
+          // In Compact and Classic templates, draw header divider rule on page 1
+          if (pageNumber === 1 && doc.kind === 'resume') {
+            const summaryHeading = pageTexts.find((pt) =>
+              /^(SUMMARY|EXPERIENCE|PROJECTS|SKILLS)$/i.test(pt.text.trim()),
+            );
+            const cutoffY = summaryHeading ? summaryHeading.y : 130;
+            const contactItems = pageTexts.filter(
+              (pt) => pt.y < cutoffY && (pt.fontSize ?? 10) <= 9.75 && pt.y > 35,
+            );
+            const lastContact = contactItems.reduce(
+              (max, pt) => (pt.y > (max?.y ?? 0) ? pt : max),
+              undefined as PositionedText | undefined,
+            );
+            if (lastContact) {
+              const headerRuleY = Math.round((lastContact.y + 4) * scale) + 0.5;
+              visibleCtx.strokeStyle = '#D1D5DB';
+              visibleCtx.lineWidth = 0.6;
+              visibleCtx.beginPath();
+              visibleCtx.moveTo(leftX, headerRuleY);
+              visibleCtx.lineTo(rightX, headerRuleY);
+              visibleCtx.stroke();
+            }
+          }
+
           for (const item of pageTexts) {
             const fontFamilies =
               doc.meta.templateId === 'modern'
@@ -576,7 +623,9 @@ function SinglePagePdfCanvas({
             const pxSize = Math.max(7, (item.fontSize ?? 10) * scale);
             visibleCtx.font = `${weight}${pxSize}px ${fontFamilies}`;
             visibleCtx.fillStyle = '#111827';
-            visibleCtx.textBaseline = 'top';
+            // PositionedText y coordinate is the alphabetic baseline from the top of the page.
+            // Using 'alphabetic' aligns inline elements (like Name and Title) on their shared baseline.
+            visibleCtx.textBaseline = 'alphabetic';
             visibleCtx.fillText(item.text, item.x * scale, item.y * scale);
           }
         }

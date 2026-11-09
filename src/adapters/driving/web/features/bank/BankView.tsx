@@ -1165,44 +1165,147 @@ export function BankView() {
             {bank.educations.map((edu) => (
               <div
                 key={edu.id}
-                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline grid grid-cols-1 sm:grid-cols-3 gap-3"
+                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
               >
-                <Input
-                  value={edu.institution}
-                  onChange={(e) => {
-                    const next = bank.educations.map((item) =>
-                      item.id === edu.id
-                        ? { ...item, institution: e.target.value }
-                        : item,
-                    );
-                    void persistBank({ ...bank, educations: next });
-                  }}
-                  placeholder="Institution"
-                />
-                <Input
-                  value={edu.degree}
-                  onChange={(e) => {
-                    const next = bank.educations.map((item) =>
-                      item.id === edu.id
-                        ? { ...item, degree: e.target.value }
-                        : item,
-                    );
-                    void persistBank({ ...bank, educations: next });
-                  }}
-                  placeholder="Degree"
-                />
-                <Input
-                  value={edu.field}
-                  onChange={(e) => {
-                    const next = bank.educations.map((item) =>
-                      item.id === edu.id
-                        ? { ...item, field: e.target.value }
-                        : item,
-                    );
-                    void persistBank({ ...bank, educations: next });
-                  }}
-                  placeholder="Field of study"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Institution
+                    </label>
+                    <Input
+                      value={edu.institution}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, institution: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. Concordia University"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Degree
+                    </label>
+                    <Input
+                      value={edu.degree}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, degree: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. Master"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Field of study
+                    </label>
+                    <Input
+                      value={edu.field}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, field: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. Applied Computer Science"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                  <div className="sm:col-span-5">
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Location (optional)
+                    </label>
+                    <Input
+                      value={edu.location}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, location: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. Montreal, QC (or leave blank)"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Start year
+                    </label>
+                    <Input
+                      value={edu.start}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, start: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. 2014"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      End year / Present
+                    </label>
+                    <Input
+                      value={edu.end}
+                      onChange={(e) => {
+                        const next = bank.educations.map((item) =>
+                          item.id === edu.id
+                            ? { ...item, end: e.target.value }
+                            : item,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                      placeholder="e.g. 2018"
+                    />
+                  </div>
+                  <div className="sm:col-span-1 flex justify-end">
+                    <IconButton
+                      label="Delete education"
+                      size="sm"
+                      onClick={() => {
+                        const next = bank.educations.filter(
+                          (item) => item.id !== edu.id,
+                        );
+                        void persistBank({ ...bank, educations: next });
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4 text-warning-700" />
+                    </IconButton>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                    Honors, GPA, or highlights (optional)
+                  </label>
+                  <Input
+                    value={edu.highlights ?? ''}
+                    onChange={(e) => {
+                      const next = bank.educations.map((item) =>
+                        item.id === edu.id
+                          ? { ...item, highlights: e.target.value }
+                          : item,
+                      );
+                      void persistBank({ ...bank, educations: next });
+                    }}
+                    placeholder="e.g. Cum Laude, Teaching Assistant (or leave blank)"
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -1211,10 +1314,16 @@ export function BankView() {
 
       {/* SECTION 5: PROFILE & CONTACT */}
       {activeSection === 'profile' && (
-        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4 max-w-3xl">
-          <h2 className="text-base font-display font-semibold text-ink">
-            Candidate Contact & Default Header
-          </h2>
+        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6 max-w-3xl">
+          <div>
+            <h2 className="text-base font-display font-semibold text-ink">
+              Candidate Contact & Default Header
+            </h2>
+            <p className="text-xs text-ink-muted mt-1">
+              Your contact details and social links appear directly in your resume and cover letter headers.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-ink-muted mb-1">
@@ -1228,6 +1337,7 @@ export function BankView() {
                     profile: { ...bank.profile, name: e.target.value },
                   })
                 }
+                placeholder="e.g. Carlos Garcia"
               />
             </div>
             <div>
@@ -1242,6 +1352,7 @@ export function BankView() {
                     profile: { ...bank.profile, headline: e.target.value },
                   })
                 }
+                placeholder="e.g. Senior Software Developer"
               />
             </div>
             <div>
@@ -1256,6 +1367,7 @@ export function BankView() {
                     profile: { ...bank.profile, email: e.target.value },
                   })
                 }
+                placeholder="e.g. carlosdan3@gmail.com"
               />
             </div>
             <div>
@@ -1270,9 +1382,10 @@ export function BankView() {
                     profile: { ...bank.profile, phone: e.target.value },
                   })
                 }
+                placeholder="e.g. +1 (438) 30-40025"
               />
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-ink-muted mb-1">
                 Location
               </label>
@@ -1284,7 +1397,108 @@ export function BankView() {
                     profile: { ...bank.profile, location: e.target.value },
                   })
                 }
+                placeholder="e.g. Montreal, Quebec, Canada"
               />
+            </div>
+          </div>
+
+          {/* Online Links: GitHub, LinkedIn, Portfolio */}
+          <div className="pt-4 border-t border-hairline space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">
+                Online Links & Profiles
+              </h3>
+              <p className="text-xs text-ink-muted mt-0.5">
+                Leave empty to remove from your resume header.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  GitHub Profile URL
+                </label>
+                <Input
+                  value={
+                    bank.profile.links.find(
+                      (l) => l.label.toLowerCase() === 'github',
+                    )?.url ?? ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const filtered = bank.profile.links.filter(
+                      (l) => l.label.toLowerCase() !== 'github',
+                    );
+                    const nextLinks = val
+                      ? [{ label: 'github', url: val }, ...filtered]
+                      : filtered;
+                    void persistBank({
+                      ...bank,
+                      profile: { ...bank.profile, links: nextLinks },
+                    });
+                  }}
+                  placeholder="e.g. github.com/CarlosDan"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  LinkedIn Profile URL
+                </label>
+                <Input
+                  value={
+                    bank.profile.links.find(
+                      (l) => l.label.toLowerCase() === 'linkedin',
+                    )?.url ?? ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const filtered = bank.profile.links.filter(
+                      (l) => l.label.toLowerCase() !== 'linkedin',
+                    );
+                    const nextLinks = val
+                      ? [...filtered, { label: 'linkedin', url: val }]
+                      : filtered;
+                    void persistBank({
+                      ...bank,
+                      profile: { ...bank.profile, links: nextLinks },
+                    });
+                  }}
+                  placeholder="e.g. linkedin.com/in/carlos-garcia"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Personal Website / Portfolio
+                </label>
+                <Input
+                  value={
+                    bank.profile.links.find((l) =>
+                      ['portfolio', 'website', 'site'].includes(
+                        l.label.toLowerCase(),
+                      ),
+                    )?.url ?? ''
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const filtered = bank.profile.links.filter(
+                      (l) =>
+                        !['portfolio', 'website', 'site'].includes(
+                          l.label.toLowerCase(),
+                        ),
+                    );
+                    const nextLinks = val
+                      ? [...filtered, { label: 'website', url: val }]
+                      : filtered;
+                    void persistBank({
+                      ...bank,
+                      profile: { ...bank.profile, links: nextLinks },
+                    });
+                  }}
+                  placeholder="e.g. carlosgarcia.dev"
+                />
+              </div>
             </div>
           </div>
         </div>

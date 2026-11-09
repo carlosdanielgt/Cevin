@@ -20,6 +20,11 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    include /etc/nginx/mime.types;
+    types {
+        application/javascript js mjs;
+    }
+
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
     gzip_min_length 256;
