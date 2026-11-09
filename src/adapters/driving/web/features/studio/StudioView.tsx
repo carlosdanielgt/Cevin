@@ -10,8 +10,11 @@ import {
   Lock,
   Pencil,
   Plus,
+  Redo2,
   RefreshCw,
+  RotateCcw,
   Sparkles,
+  Undo2,
   Unlock,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -28,6 +31,7 @@ import {
   CoverLetterPrioritizedFix,
   DocumentKind,
   DocumentVersion,
+  Experience,
   JobFactKey,
   PageSize,
   PrioritizedFix,
@@ -49,7 +53,9 @@ import {
   formatCount,
   mapApplicationToResumeDocument,
   mapToCoverLetterDocument,
+  orderExperiencesForDraft,
   sanitizeExportFilenameInput,
+  sortExperiencesChronologically,
   validateBulletGrounding,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
@@ -123,6 +129,16 @@ function triggerBlobDownload(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+interface StudioHistoryEntry {
+  app: Application;
+  experiences: Experience[];
+  appliedFixIds: string[];
+}
+
+function cloneHistoryEntry(entry: StudioHistoryEntry): StudioHistoryEntry {
+  return JSON.parse(JSON.stringify(entry)) as StudioHistoryEntry;
+}
+
 export function StudioView({
   applicationId,
   activeDoc,
@@ -185,6 +201,32 @@ export function StudioView({
   const [customExportName, setCustomExportName] = useState<string>('');
   const [applyingFixId, setApplyingFixId] = useState<string | null>(null);
   const [appliedFixIds, setAppliedFixIds] = useState<string[]>([]);
+  const [undoStack, setUndoStack] = useState<StudioHistoryEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<StudioHistoryEntry[]>([]);
+  const [isResettingDraft, setIsResettingDraft] = useState(false);
+
+  useEffect(() => {
+    setUndoStack([]);
+    setRedoStack([]);
+    setAppliedFixIds([]);
+  }, [applicationId]);
+
+  const recordHistorySnapshot = useCallback(
+    (
+      currentApp: Application,
+      currentExperiences: Experience[],
+      currentAppliedFixes: string[],
+    ) => {
+      const snapshot = cloneHistoryEntry({
+        app: currentApp,
+        experiences: currentExperiences,
+        appliedFixIds: currentAppliedFixes,
+      });
+      setUndoStack((prev) => [...prev.slice(-29), snapshot]);
+      setRedoStack([]);
+    },
+    [],
+  );
 
   const refreshSidebarActivity = useCallback(async () => {
     const status = await useCases.testLlmConnection.getSidebarStatus();
@@ -242,22 +284,133 @@ export function StudioView({
     );
   }, [app?.company, bank?.profile.name, activeDoc]);
 
-  const persistApp = async (updated: Application) => {
-    setApp(updated);
-    const saved = await useCases.manageApplications.saveApplication(updated);
-    setApp(saved);
-    const scoreRes = await useCases.scoreResume.execute(saved.id);
-    if (scoreRes.ok) {
-      setApp((prev) =>
-        prev ? { ...prev, latestScores: scoreRes.value.scores } : prev,
-      );
-      setFixes(scoreRes.value.fixes);
+  const persistApp = useCallback(
+    async (
+      updated: Application,
+      options?: { skipHistory?: boolean; bankOverride?: BankSnapshot },
+    ) => {
+      if (!options?.skipHistory && app && bank) {
+        recordHistorySnapshot(app, bank.experiences, appliedFixIds);
+      }
+      setApp(updated);
+      const saved = await useCases.manageApplications.saveApplication(updated);
+      setApp(saved);
+      const scoreRes = await useCases.scoreResume.execute(saved.id);
+      if (scoreRes.ok) {
+        setApp((prev) =>
+          prev ? { ...prev, latestScores: scoreRes.value.scores } : prev,
+        );
+        setFixes(scoreRes.value.fixes);
+      }
+      const clRes = await useCases.scoreCoverLetter.execute(saved.id);
+      if (clRes.ok) {
+        setLetterAnalysis(clRes.value);
+      }
+    },
+    [app, bank, appliedFixIds, recordHistorySnapshot, useCases],
+  );
+
+  const handleUndo = useCallback(async () => {
+    if (!app || !bank || undoStack.length === 0) return;
+    const prevEntry = undoStack[undoStack.length - 1];
+    const currentSnapshot = cloneHistoryEntry({
+      app,
+      experiences: bank.experiences,
+      appliedFixIds,
+    });
+    setUndoStack((prev) => prev.slice(0, -1));
+    setRedoStack((prev) => [...prev, currentSnapshot]);
+
+    const restoredBank = await useCases.manageBank.saveBank({
+      ...bank,
+      experiences: prevEntry.experiences,
+    });
+    setBank(restoredBank);
+    setAppliedFixIds(prevEntry.appliedFixIds);
+    await persistApp(prevEntry.app, { skipHistory: true });
+    addToast('Undid last change.', 'neutral');
+  }, [app, bank, undoStack, appliedFixIds, useCases, persistApp, addToast]);
+
+  const handleRedo = useCallback(async () => {
+    if (!app || !bank || redoStack.length === 0) return;
+    const nextEntry = redoStack[redoStack.length - 1];
+    const currentSnapshot = cloneHistoryEntry({
+      app,
+      experiences: bank.experiences,
+      appliedFixIds,
+    });
+    setRedoStack((prev) => prev.slice(0, -1));
+    setUndoStack((prev) => [...prev, currentSnapshot]);
+
+    const restoredBank = await useCases.manageBank.saveBank({
+      ...bank,
+      experiences: nextEntry.experiences,
+    });
+    setBank(restoredBank);
+    setAppliedFixIds(nextEntry.appliedFixIds);
+    await persistApp(nextEntry.app, { skipHistory: true });
+    addToast('Redid change.', 'neutral');
+  }, [app, bank, redoStack, appliedFixIds, useCases, persistApp, addToast]);
+
+  const handleResetToDefault = useCallback(async () => {
+    if (!app || !bank || isResettingDraft) return;
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
+    setIsResettingDraft(true);
+    try {
+      const res = await useCases.tailorResume.resetToDefault(app.id);
+      if (res.ok) {
+        setAppliedFixIds([]);
+        setApp(res.value);
+        await reloadWorkspace();
+        addToast('Reset resume to default generated draft.', 'success');
+      } else {
+        addToast(res.error.message, 'danger');
+      }
+    } finally {
+      setIsResettingDraft(false);
     }
-    const clRes = await useCases.scoreCoverLetter.execute(saved.id);
-    if (clRes.ok) {
-      setLetterAnalysis(clRes.value);
-    }
-  };
+  }, [
+    app,
+    bank,
+    isResettingDraft,
+    appliedFixIds,
+    recordHistorySnapshot,
+    useCases,
+    reloadWorkspace,
+    addToast,
+  ]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable);
+      if (isEditable) return;
+
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (undoStack.length > 0) {
+          e.preventDefault();
+          void handleUndo();
+        }
+      } else if (
+        (e.key.toLowerCase() === 'z' && e.shiftKey) ||
+        e.key.toLowerCase() === 'y'
+      ) {
+        if (redoStack.length > 0) {
+          e.preventDefault();
+          void handleRedo();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undoStack.length, redoStack.length, handleUndo, handleRedo]);
 
   const groupedCoverage = useMemo(() => {
     if (!app || !bank) return null;
@@ -371,12 +524,18 @@ export function StudioView({
   if (app.workingDraft.bullets.length > 0) completedSteps.push('build');
   if (clDraft.blocks.length > 0) completedSteps.push('write');
 
+  const orderedExperiences = orderExperiencesForDraft(
+    bank.experiences,
+    app.workingDraft.experienceOrder,
+  );
+
   // Handlers
   const handleAnalyzeJob = async () => {
     if (!app.jobDescription.trim()) {
       addToast('Paste a job description first.', 'warning');
       return;
     }
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
     setIsAnalyzingJob(true);
     void refreshSidebarActivity();
     const res = await useCases.analyzeJobDescription.execute(
@@ -400,6 +559,7 @@ export function StudioView({
   };
 
   const handleVoiceChange = async (nextVoice: VoiceLevel) => {
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
     const quickRes = await useCases.tailorResume.applyQuickVoicePass(
       app.id,
       nextVoice,
@@ -433,39 +593,68 @@ export function StudioView({
   };
 
   const handleSortExperiencesChronologically = async () => {
-    const parseKey = (exp: { start: string; end: string; current?: boolean }) => {
-      if (exp.current || /present/i.test(exp.end)) return 99999999;
-      const mEnd = exp.end.match(/(\d{4})(?:[-/](\d{1,2}))?/);
-      if (mEnd) {
-        return parseInt(mEnd[1], 10) * 100 + (mEnd[2] ? parseInt(mEnd[2], 10) : 12);
-      }
-      const mStart = exp.start.match(/(\d{4})(?:[-/](\d{1,2}))?/);
-      if (mStart) {
-        return parseInt(mStart[1], 10) * 100 + (mStart[2] ? parseInt(mStart[2], 10) : 1);
-      }
-      return 0;
-    };
-    const sorted = [...bank.experiences].sort((a, b) => parseKey(b) - parseKey(a));
-    const nextBank = await useCases.manageBank.saveBank({ ...bank, experiences: sorted });
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
+    const sorted = sortExperiencesChronologically(bank.experiences);
+    const nextBank = await useCases.manageBank.saveBank({
+      ...bank,
+      experiences: sorted,
+    });
     setBank(nextBank);
-    await reloadWorkspace();
+
+    const nextExperienceOrder = sorted.map((e) => e.id);
+    const updatedApp: Application = {
+      ...app,
+      workingDraft: {
+        ...app.workingDraft,
+        experienceOrder: nextExperienceOrder,
+      },
+    };
+    await persistApp(updatedApp, { skipHistory: true });
     addToast('Experiences sorted chronologically (newest first).', 'success');
   };
 
-  const handleMoveExperience = async (expId: string, direction: 'up' | 'down') => {
-    const idx = bank.experiences.findIndex((e) => e.id === expId);
+  const handleMoveExperience = async (
+    expId: string,
+    direction: 'up' | 'down',
+  ) => {
+    const currentOrdered = orderExperiencesForDraft(
+      bank.experiences,
+      app.workingDraft.experienceOrder,
+    );
+    const idx = currentOrdered.findIndex((e) => e.id === expId);
     if (idx === -1) return;
     const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= bank.experiences.length) return;
-    const next = [...bank.experiences];
-    const [moved] = next.splice(idx, 1);
-    next.splice(targetIdx, 0, moved);
-    const nextBank = await useCases.manageBank.saveBank({ ...bank, experiences: next });
+    if (targetIdx < 0 || targetIdx >= currentOrdered.length) return;
+
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
+
+    const nextOrdered = [...currentOrdered];
+    const [moved] = nextOrdered.splice(idx, 1);
+    nextOrdered.splice(targetIdx, 0, moved);
+    const stamped = nextOrdered.map((exp, orderIdx) => ({
+      ...exp,
+      sortOrder: orderIdx,
+    }));
+
+    const nextBank = await useCases.manageBank.saveBank({
+      ...bank,
+      experiences: stamped,
+    });
     setBank(nextBank);
-    await reloadWorkspace();
+
+    const updatedApp: Application = {
+      ...app,
+      workingDraft: {
+        ...app.workingDraft,
+        experienceOrder: stamped.map((e) => e.id),
+      },
+    };
+    await persistApp(updatedApp, { skipHistory: true });
     addToast(`Moved experience ${direction}.`, 'neutral');
   };
+
   const handleRewriteBullet = async (bulletId: string) => {
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
     setRewritingBulletId(bulletId);
     void refreshSidebarActivity();
     const res = await useCases.tailorResume.regenerateBullet(
@@ -485,6 +674,7 @@ export function StudioView({
   };
 
   const handleRewriteSummary = async () => {
+    recordHistorySnapshot(app, bank.experiences, appliedFixIds);
     setIsTailoringAll(true);
     void refreshSidebarActivity();
     const res = await useCases.tailorResume.regenerateSummary(
@@ -891,7 +1081,11 @@ export function StudioView({
                   />
                   <ScoreChip
                     label="Appeal"
-                    score={app.latestScores.recruiterAppeal ?? 82}
+                    score={
+                      appealDetails?.total ??
+                      app.latestScores.recruiterAppeal ??
+                      82
+                    }
                     isEstimate={true}
                     tooltipText="An estimate based on common recruiter screening patterns (10-second skim). It does not predict hiring outcomes."
                     onClick={() => onNavigateStudio('resume', 'review')}
@@ -907,20 +1101,51 @@ export function StudioView({
           </div>
         </div>
 
-        {/* Row 2 (40px): DocumentSwitch on left; circular Stepper on right */}
+        {/* Row 2 (40px): DocumentSwitch + Undo/Redo/Reset on left; circular Stepper on right */}
         <div className="flex flex-wrap items-center justify-between gap-3 min-h-[40px]">
-          <DocumentSwitch
-            value={activeDoc}
-            onChange={(nextDoc) => {
-              const targetStep: StudioStep =
-                activeStep === 'build' && nextDoc === 'coverLetter'
-                  ? 'write'
-                  : activeStep === 'write' && nextDoc === 'resume'
-                    ? 'build'
-                    : activeStep;
-              onNavigateStudio(nextDoc, targetStep);
-            }}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <DocumentSwitch
+              value={activeDoc}
+              onChange={(nextDoc) => {
+                const targetStep: StudioStep =
+                  activeStep === 'build' && nextDoc === 'coverLetter'
+                    ? 'write'
+                    : activeStep === 'write' && nextDoc === 'resume'
+                      ? 'build'
+                      : activeStep;
+                onNavigateStudio(nextDoc, targetStep);
+              }}
+            />
+
+            <div className="flex items-center gap-1 pl-1 border-l border-hairline">
+              <IconButton
+                label="Undo last action"
+                size="sm"
+                disabled={undoStack.length === 0}
+                onClick={() => void handleUndo()}
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </IconButton>
+              <IconButton
+                label="Redo action"
+                size="sm"
+                disabled={redoStack.length === 0}
+                onClick={() => void handleRedo()}
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </IconButton>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isResettingDraft}
+                onClick={() => void handleResetToDefault()}
+                title="Reset resume to the default generated draft"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{isResettingDraft ? 'Resetting…' : 'Reset to default'}</span>
+              </Button>
+            </div>
+          </div>
 
           <CompactStepper
             documentKind={activeDoc}
@@ -1557,7 +1782,7 @@ export function StudioView({
                     </Button>
                   </div>
 
-                  {bank.experiences.map((exp, expIdx) => {
+                  {orderedExperiences.map((exp, expIdx) => {
                     const expAchievements = bank.achievements.filter(
                       (a) => a.experienceId === exp.id,
                     );
@@ -1587,7 +1812,7 @@ export function StudioView({
                           includedCount={includedBullets.length}
                           totalCount={expAchievements.length}
                           canMoveUp={expIdx > 0}
-                          canMoveDown={expIdx < bank.experiences.length - 1}
+                          canMoveDown={expIdx < orderedExperiences.length - 1}
                           onMoveUp={() => void handleMoveExperience(exp.id, 'up')}
                           onMoveDown={() => void handleMoveExperience(exp.id, 'down')}
                         />
@@ -2164,7 +2389,11 @@ export function StudioView({
                         ? letterAnalysis.jobMatch
                         : app.latestScores.jobMatch
                     }
-                    recruiterAppeal={app.latestScores.recruiterAppeal ?? 82}
+                    recruiterAppeal={
+                      appealDetails?.total ??
+                      app.latestScores.recruiterAppeal ??
+                      82
+                    }
                     letterAppeal={letterAnalysis?.report.letterAppeal ?? 84}
                     atsReadiness={app.latestScores.atsReadiness}
                     checksPassedCount={letterAnalysis?.report.passedCount}
@@ -2236,6 +2465,11 @@ export function StudioView({
                                   }
                                   disabled={applyingFixId === fix.id}
                                   onClick={async () => {
+                                    recordHistorySnapshot(
+                                      app,
+                                      bank.experiences,
+                                      appliedFixIds,
+                                    );
                                     setApplyingFixId(fix.id);
                                     void refreshSidebarActivity();
                                     try {
@@ -2325,6 +2559,11 @@ export function StudioView({
                               }
                               disabled={applyingFixId === fix.id}
                               onClick={async () => {
+                                recordHistorySnapshot(
+                                  app,
+                                  bank.experiences,
+                                  appliedFixIds,
+                                );
                                 setApplyingFixId(fix.id);
                                 void refreshSidebarActivity();
                                 try {

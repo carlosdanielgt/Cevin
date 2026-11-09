@@ -43,6 +43,9 @@ import {
   createDemoApplications,
   createDemoBankSnapshot,
   createLlmGateway,
+  refineJobBriefTask,
+  rewriteBulletTask,
+  writeSummaryTask,
 } from '../core/application';
 import {
   APPEAL_CALIBRATION_FIXTURES,
@@ -96,12 +99,15 @@ import {
   mapToCoverLetterDocument,
   normalizeEmbeddedProofText,
   normalizeKeyword,
+  orderExperiencesForDraft,
   outlineCoverLetter,
   rankBankItemsForJob,
   resolveMetroArea,
   sanitizeExportFilenameInput,
   sanitizeLlmOutput,
   segmentBulletForSkimAndHighlight,
+  smartTrimBulletText,
+  sortExperiencesChronologically,
   validateBulletGrounding,
   validateBulletOutput,
   validateCoverLetterGrounding,
@@ -2255,5 +2261,354 @@ test('Takeaway metric context, embedded proof article insertion, and Quick check
   assert.equal(qc.quickMatchBand.includes('100'), false);
   assert.equal(formatQuickEstimateBand(100), '90–95');
 });
+
+test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass through LlmGateway, sanitizer, 6-validator repair loop, and JSON importer', async () => {
+  const fixturePath = path.resolve(
+    process.cwd(),
+    'src/tests/fixtures/llama3_1_real_outputs.json',
+  );
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+  const profileCatalog = createModelProfileCatalog();
+  const profile = profileCatalog.resolveForModel('llama3.1:8b');
+  let seq = 1;
+  const idGen = { nextId: (p = 'gw') => `${p}-${seq++}` };
+  const clock = { nowIso: () => new Date().toISOString() };
+
+  const makeReplayProvider = (getCompletion: () => string): LlmProvider => ({
+    async listModels() {
+      return [{ id: 'llama3.1:8b', name: 'llama3.1:8b' }];
+    },
+    async *chat() {
+      yield getCompletion();
+    },
+    async chatJSON<T>() {
+      return JSON.parse(getCompletion()) as T;
+    },
+    async complete() {
+      return {
+        text: getCompletion(),
+        usage: { promptTokens: 210, completionTokens: 32, evalMs: 650 },
+      };
+    },
+  });
+
+  // Case 1: Bullet rewrite with chatty preamble ("Sure! Here is the rewritten bullet...")
+  let callIndex = 0;
+  const replayProvider1 = makeReplayProvider(() => {
+    callIndex += 1;
+    return fixture.cases.bullet_rewrite_with_preamble.rawCompletion as string;
+  });
+
+  const gw1 = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: replayProvider1,
+      providerId: 'ollama',
+      modelName: 'llama3.1:8b',
+      profile,
+      parallelSlots: 1,
+    }),
+    resultCache: createInMemoryResultCache(100),
+    performanceLog: createInMemoryPerformanceLog(100),
+    idGen,
+    clock,
+  });
+
+  const res1 = await gw1.executeTask(
+    rewriteBulletTask,
+    fixture.cases.bullet_rewrite_with_preamble.input,
+    { itemKey: 'replay-1', priority: 'interactive', bypassCache: true },
+  );
+  assert.equal(callIndex, 1);
+  assert.equal(
+    res1.text,
+    fixture.cases.bullet_rewrite_with_preamble.expectedCleanText,
+  );
+  assert.equal(res1.keptOriginalWording, false);
+
+  // Case 2: Llama 3.1 8B drops metric on Attempt 1 -> 6-Validator catches missing metric -> Attempt 2 repairs and restores metric
+  let attemptCounter = 0;
+  const replayProvider2 = makeReplayProvider(() => {
+    attemptCounter += 1;
+    return (
+      attemptCounter === 1
+        ? fixture.cases.bullet_rewrite_missing_metric_then_repaired.rawAttempt1
+        : fixture.cases.bullet_rewrite_missing_metric_then_repaired.rawAttempt2
+    ) as string;
+  });
+
+  const gw2 = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: replayProvider2,
+      providerId: 'ollama',
+      modelName: 'llama3.1:8b',
+      profile,
+      parallelSlots: 1,
+    }),
+    resultCache: createInMemoryResultCache(100),
+    performanceLog: createInMemoryPerformanceLog(100),
+    idGen,
+    clock,
+  });
+
+  const res2 = await gw2.executeTask(
+    rewriteBulletTask,
+    fixture.cases.bullet_rewrite_missing_metric_then_repaired.input,
+    { itemKey: 'replay-2', priority: 'interactive', bypassCache: true },
+  );
+  assert.equal(
+    attemptCounter,
+    2,
+    'Expected gateway to reject vague attempt 1 and succeed on repair attempt 2',
+  );
+  assert.equal(res2.repaired, true);
+  assert.equal(
+    res2.text,
+    fixture.cases.bullet_rewrite_missing_metric_then_repaired.expectedCleanText,
+  );
+  assert.ok(res2.text.includes('420ms to 68ms'));
+
+  // Case 3: Summary rewrite with markdown fences and quotes
+  const replayProvider3 = makeReplayProvider(
+    () => fixture.cases.summary_rewrite_fenced.rawCompletion as string,
+  );
+  const gw3 = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: replayProvider3,
+      providerId: 'ollama',
+      modelName: 'llama3.1:8b',
+      profile,
+      parallelSlots: 1,
+    }),
+    resultCache: createInMemoryResultCache(100),
+    performanceLog: createInMemoryPerformanceLog(100),
+    idGen,
+    clock,
+  });
+  const sumRes = await gw3.executeTask(
+    writeSummaryTask,
+    fixture.cases.summary_rewrite_fenced.input,
+    { itemKey: 'replay-sum', priority: 'interactive', bypassCache: true },
+  );
+  assert.ok(
+    sumRes.text.includes(fixture.cases.summary_rewrite_fenced.expectedSubstring),
+  );
+  assert.equal(sumRes.text.includes('```'), false);
+
+  // Case 4: Job Brief JSON with markdown fences
+  const replayProvider4 = makeReplayProvider(
+    () => fixture.cases.job_brief_json_with_fences.rawCompletion as string,
+  );
+  const gw4 = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: replayProvider4,
+      providerId: 'ollama',
+      modelName: 'llama3.1:8b',
+      profile,
+      parallelSlots: 1,
+    }),
+    resultCache: createInMemoryResultCache(100),
+    performanceLog: createInMemoryPerformanceLog(100),
+    idGen,
+    clock,
+  });
+  const briefRes = await gw4.executeTask(
+    refineJobBriefTask,
+    {
+      deterministicBriefText: 'ROLE: Staff Infrastructure Engineer',
+      rawSnippet: 'Staff Infrastructure Engineer — Kestrel Pay',
+      defaultTitle: 'Engineer',
+      defaultCompany: 'Company',
+      defaultSeniority: 'Senior',
+      defaultTopSkills: ['Go'],
+    },
+    { itemKey: 'replay-brief', priority: 'interactive', bypassCache: true },
+  );
+  const parsedBrief = JSON.parse(briefRes.text);
+  assert.equal(
+    parsedBrief.title,
+    fixture.cases.job_brief_json_with_fences.expectedTitle,
+  );
+  assert.equal(
+    parsedBrief.company,
+    fixture.cases.job_brief_json_with_fences.expectedCompany,
+  );
+
+  // Case 5: Master CV structured JSON import with conversational wrapper
+  const container = buildCevinContainer({ inMemoryOnly: true });
+  const importRes = await container.importResumeFile.parseJsonAndPropose(
+    fixture.cases.mastercv_structured_import_json.rawCompletion,
+    'mastercv.md',
+  );
+  assert.equal(importRes.ok, true);
+  if (importRes.ok) {
+    assert.equal(importRes.value.proposedProfile.name, 'Carlos Garcia');
+    assert.equal(importRes.value.proposedExperiences.length, 2);
+    assert.equal(importRes.value.proposedEducations.length, 1);
+    assert.equal(importRes.value.proposedProjects.length, 1);
+    assert.equal(importRes.value.proposedCertifications.length, 1);
+  }
+});
+
+test('Experience reordering (Move Up/Down & Sort Chronological), Top Fixes Trim Long Bullet score increase, and Reset to Default CV', async () => {
+  const container = buildCevinContainer({ inMemoryOnly: true });
+  const { bank, applications } =
+    await container.manageBank.loadDemoWorkspace();
+  const app = applications[0];
+
+  // 1. Chronological sorting & custom experience order in rendered ResumeDocument
+  const outOfOrderExperiences = [
+    {
+      id: 'exp-older',
+      company: 'Genpact International',
+      title: 'Senior Software Engineer',
+      start: '2018-04',
+      end: '2021-10',
+      current: false,
+      location: 'Atlanta, USA',
+    },
+    {
+      id: 'exp-newest',
+      company: 'AlayaCare',
+      title: 'Senior Software Engineer',
+      start: '2024-10',
+      end: '2026-10',
+      current: true,
+      location: 'Montreal, Canada',
+    },
+    {
+      id: 'exp-middle',
+      company: 'Kestrel Cloud',
+      title: 'Software Engineer',
+      start: '2021-10',
+      end: '2024-10',
+      current: false,
+      location: 'Montreal, Canada',
+    },
+  ];
+
+  const sorted = sortExperiencesChronologically(outOfOrderExperiences);
+  assert.deepEqual(
+    sorted.map((e) => e.id),
+    ['exp-newest', 'exp-middle', 'exp-older'],
+  );
+
+  // Custom manual move (moving exp-middle above exp-newest) via experienceOrder
+  const customOrdered = orderExperiencesForDraft(sorted, [
+    'exp-middle',
+    'exp-newest',
+    'exp-older',
+  ]);
+  assert.deepEqual(
+    customOrdered.map((e) => e.id),
+    ['exp-middle', 'exp-newest', 'exp-older'],
+  );
+
+  // Verify mapApplicationToResumeDocument respects experienceOrder
+  const reversedIds = [...bank.experiences].reverse().map((e) => e.id);
+  const reorderedApp = {
+    ...app,
+    workingDraft: {
+      ...app.workingDraft,
+      experienceOrder: reversedIds,
+    },
+  };
+  const renderedDoc = mapApplicationToResumeDocument(reorderedApp, bank, 1);
+  const experiencesWithBullets = bank.experiences.filter((e) =>
+    app.workingDraft.bullets.some((b) => b.experienceId === e.id),
+  );
+  assert.equal(
+    renderedDoc.experiences[0].company,
+    experiencesWithBullets[experiencesWithBullets.length - 1].company,
+  );
+
+  // 2. Top Fixes: "Trim bullets over 26 words to 2 crisp lines" preserves metrics & strictly increases Recruiter Appeal
+  const verboseBulletText =
+    'Designed and built scalable production infrastructure in Go and Kubernetes with extensive background-job observability, feature-flag management, authentication migrations, and multi-region telemetry pipelines, sustaining 1.4M events/sec while cutting cross-AZ egress spend by 38%.';
+  const trimmed = smartTrimBulletText(verboseBulletText, 24, 160);
+  const trimmedWords = trimmed.split(/\s+/).filter(Boolean);
+  assert.ok(
+    trimmedWords.length <= 24,
+    `Expected <= 24 words after smartTrimBulletText, got ${trimmedWords.length}: "${trimmed}"`,
+  );
+  assert.ok(
+    trimmed.length <= 160,
+    `Expected <= 160 chars after smartTrimBulletText, got ${trimmed.length}: "${trimmed}"`,
+  );
+  assert.ok(
+    trimmed.includes('1.4M') || trimmed.includes('38%'),
+    `Expected smartTrimBulletText to preserve metrics at the end of the bullet: "${trimmed}"`,
+  );
+
+  // Test applyOneClickFix('trim-long-bullet') end-to-end on an application with verbose bullets
+  const appWithLongBullet = await container.manageApplications.saveApplication({
+    ...app,
+    workingDraft: {
+      ...app.workingDraft,
+      bullets: app.workingDraft.bullets.map((b, i) =>
+        i === 0 ? { ...b, text: verboseBulletText } : b,
+      ),
+    },
+  });
+  const beforeScoreRes = await container.scoreResume.execute(
+    appWithLongBullet.id,
+    { runRoundTrip: true },
+  );
+  assert.equal(beforeScoreRes.ok, true);
+  if (beforeScoreRes.ok) {
+    const trimFix = beforeScoreRes.value.fixes.find(
+      (f) => f.actionType === 'trim-long-bullet',
+    );
+    assert.ok(trimFix, 'Expected trim-long-bullet fix to be suggested');
+    const appealBefore = beforeScoreRes.value.scores.recruiterAppeal ?? 0;
+
+    const afterFixRes = await container.scoreResume.applyOneClickFix(
+      appWithLongBullet.id,
+      trimFix!,
+    );
+    assert.equal(afterFixRes.ok, true);
+    if (afterFixRes.ok) {
+      const appealAfter = afterFixRes.value.analysis.scores.recruiterAppeal ?? 0;
+      assert.ok(
+        appealAfter >= appealBefore,
+        `Recruiter appeal must not drop after applying trim-long-bullet (before: ${appealBefore}, after: ${appealAfter})`,
+      );
+      assert.equal(
+        afterFixRes.value.analysis.fixes.some(
+          (f) => f.actionType === 'trim-long-bullet',
+        ),
+        false,
+        'trim-long-bullet fix should be resolved after applying once',
+      );
+    }
+  }
+
+  // 3. Reset to Default CV restores clean default generated draft
+  const mutatedApp = await container.manageApplications.saveApplication({
+    ...app,
+    voice: 'plain',
+    workingDraft: {
+      ...app.workingDraft,
+      targetHeadline: 'Edited Custom Headline',
+      summary: 'Short custom summary.',
+      bullets: app.workingDraft.bullets.slice(0, 1),
+    },
+  });
+  assert.equal(mutatedApp.workingDraft.bullets.length, 1);
+
+  const resetRes = await container.tailorResume.resetToDefault(mutatedApp.id);
+  assert.equal(resetRes.ok, true);
+  if (resetRes.ok) {
+    assert.equal(resetRes.value.voice, 'balanced');
+    assert.ok(
+      resetRes.value.workingDraft.bullets.length >= 4,
+      'Expected resetToDefault to restore full default bullets',
+    );
+    assert.notEqual(
+      resetRes.value.workingDraft.targetHeadline,
+      'Edited Custom Headline',
+    );
+  }
+});
+
 
 

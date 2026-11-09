@@ -183,9 +183,163 @@ export function computeBulletImpactStrength(
   return score;
 }
 
+const DANGLING_END_WORDS = new Set([
+  'and',
+  'or',
+  'with',
+  'for',
+  'to',
+  'in',
+  'by',
+  'through',
+  'across',
+  'via',
+  'of',
+  'the',
+  'a',
+  'an',
+  'from',
+  'into',
+  'on',
+  'at',
+  'as',
+  'including',
+  'using',
+  'while',
+  'during',
+  'between',
+]);
+
+function stripDanglingTailWords(text: string): string {
+  const words = text
+    .replace(/[.!?;:,—–-]+$/, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  while (
+    words.length > 4 &&
+    DANGLING_END_WORDS.has(
+      words[words.length - 1].toLowerCase().replace(/[^a-z]/g, ''),
+    )
+  ) {
+    words.pop();
+  }
+  return words.join(' ').replace(/[,;:\s]+$/, '');
+}
+
+/**
+ * Smartly trims a resume bullet to <= maxWords (default 24) and <= maxChars (default 160, <= 2 lines)
+ * while strictly preserving quantitative metrics/numbers and opening action verbs.
+ */
+export function smartTrimBulletText(
+  rawText: string,
+  maxWords = 24,
+  maxChars = 160,
+): string {
+  let cleaned = rawText
+    .replace(/\s+/g, ' ')
+    .replace(/\bin order to\b/gi, 'to')
+    .replace(/\bby (?:utilizing|leveraging)\b/gi, 'using')
+    .replace(/\b(?:utilizing|leveraging)\b/gi, 'using')
+    .replace(/\bwhile simultaneously\b/gi, 'while')
+    .replace(/\bacross multiple\b/gi, 'across')
+    .trim();
+
+  const initialWords = cleaned.split(/\s+/).filter(Boolean);
+  if (initialWords.length <= maxWords && cleaned.length <= maxChars) {
+    return cleaned.endsWith('.') ? cleaned : `${cleaned.replace(/[.!?;:,]+$/, '')}.`;
+  }
+
+  const body = cleaned.replace(/[.!?]+$/, '').trim();
+  const clauses = body
+    .split(/\s*(?:,\s+|\s+[—–-]\s+|;\s*)\s*/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  if (clauses.length >= 2) {
+    const firstClause = clauses[0];
+    const metricClauses = clauses.slice(1).filter((c) => /\d/.test(c));
+    const nonMetricClauses = clauses.slice(1).filter((c) => !/\d/.test(c));
+
+    // Start with opening clause + all metric-bearing clauses
+    const essential = [firstClause, ...metricClauses];
+    let assembled = essential.join(', ');
+
+    // Try adding non-metric clauses in original order if they still fit within budget
+    if (
+      assembled.split(/\s+/).length <= maxWords &&
+      assembled.length + 1 <= maxChars
+    ) {
+      const selectedSet = new Set<string>(essential);
+      for (const nm of nonMetricClauses) {
+        const trialList = clauses.filter(
+          (c) => selectedSet.has(c) || c === nm,
+        );
+        const trial = trialList.join(', ');
+        if (
+          trial.split(/\s+/).length <= maxWords &&
+          trial.length + 1 <= maxChars
+        ) {
+          selectedSet.add(nm);
+          assembled = trial;
+        }
+      }
+      const cleanClauseResult = stripDanglingTailWords(assembled);
+      if (
+        cleanClauseResult.split(/\s+/).length <= maxWords &&
+        cleanClauseResult.length + 1 <= maxChars
+      ) {
+        return `${cleanClauseResult}.`;
+      }
+    }
+
+    // If opening clause + metric clauses exceed budget, trim non-numeric tail of opening clause
+    if (metricClauses.length > 0) {
+      const metricTail = metricClauses.join(', ');
+      const remainingChars = Math.max(45, maxChars - metricTail.length - 3);
+      const remainingWords = Math.max(
+        6,
+        maxWords - metricTail.split(/\s+/).length,
+      );
+      const firstWords = firstClause.split(/\s+/);
+      const keptFirst: string[] = [];
+      for (const w of firstWords) {
+        const nextStr = [...keptFirst, w].join(' ');
+        if (
+          keptFirst.length >= remainingWords ||
+          nextStr.length > remainingChars
+        ) {
+          break;
+        }
+        keptFirst.push(w);
+      }
+      const trimmedFirst = stripDanglingTailWords(keptFirst.join(' '));
+      const combined = `${trimmedFirst}, ${metricTail}`;
+      if (
+        combined.split(/\s+/).length <= maxWords + 2 &&
+        combined.length + 1 <= maxChars + 12
+      ) {
+        return `${stripDanglingTailWords(combined)}.`;
+      }
+    }
+  }
+
+  // Fallback: word-by-word budget preserving any trailing metric tokens if present
+  const allWords = body.split(/\s+/).filter(Boolean);
+  const kept: string[] = [];
+  for (const w of allWords) {
+    const candidateStr = [...kept, w].join(' ');
+    if (kept.length >= maxWords || candidateStr.length + 1 > maxChars) {
+      break;
+    }
+    kept.push(w);
+  }
+  return `${stripDanglingTailWords(kept.join(' '))}.`;
+}
+
 /**
  * Extracts the corpus of text that falls within the top third of Page 1.
- * Uses `PositionedText[]` from the PDF round-trip when available (y >= 528 on 792pt page),
+ * Uses `PositionedText[]` from the PDF round-trip when available (auto-detecting top-down vs bottom-up y),
  * otherwise estimates from the template's line metrics (~18 lines on page 1 top third).
  */
 export function extractFirstThirdPageText(
@@ -193,16 +347,22 @@ export function extractFirstThirdPageText(
   positionedText?: PositionedText[],
 ): { text: string; layoutEstimated: boolean } {
   if (positionedText && positionedText.length > 0) {
-    // PDF MediaBox height is 792pt; top margin starts at y=750, bottom at y=48.
-    // Top third of page 1 spans y in [516..792].
-    const topItems = positionedText.filter(
-      (item) => item.page === 1 && item.y >= 516,
-    );
-    if (topItems.length > 0) {
-      return {
-        text: topItems.map((i) => i.text).join(' \n '),
-        layoutEstimated: false,
-      };
+    const page1Items = positionedText.filter((item) => item.page === 1);
+    if (page1Items.length > 0) {
+      const firstY = page1Items[0].y;
+      const lastY = page1Items[page1Items.length - 1].y;
+      // Bottom-up PDF coordinates have larger Y at the top of Page 1 (e.g. 740 -> 90).
+      // Top-down coordinates emitted by pdfEngine have smaller Y at the top of Page 1 (e.g. 50 -> 680).
+      const isBottomUp = firstY > lastY && firstY > 400;
+      const topItems = isBottomUp
+        ? page1Items.filter((item) => item.y >= 516)
+        : page1Items.filter((item) => item.y <= 320);
+      if (topItems.length > 0) {
+        return {
+          text: topItems.map((i) => i.text).join(' \n '),
+          layoutEstimated: false,
+        };
+      }
     }
   }
 

@@ -360,6 +360,20 @@ export const RefinedJobBriefSchema = z.object({
   topSkills: z.array(z.string()),
 });
 
+function extractJsonObjectString(raw: string): string {
+  const trimmed = raw.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    return fenceMatch[1].trim();
+  }
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1).trim();
+  }
+  return sanitizeLlmOutput(trimmed).replace(/\.$/, '').trim();
+}
+
 export const refineJobBriefTask: LlmTaskDefinition<RefineJobBriefTaskInput> = {
   id: 'refineJobBrief',
   promptVersion: 'v2.1',
@@ -389,9 +403,7 @@ export const refineJobBriefTask: LlmTaskDefinition<RefineJobBriefTaskInput> = {
   },
   validate(rawOutput) {
     try {
-      const cleaned = sanitizeLlmOutput(rawOutput)
-        .replace(/\.$/, '')
-        .trim();
+      const cleaned = extractJsonObjectString(rawOutput);
       const parsed = JSON.parse(cleaned);
       RefinedJobBriefSchema.parse(parsed);
       return {

@@ -46,9 +46,12 @@ import {
   mapApplicationToResumeDocument,
   mapToCoverLetterDocument,
   normalizeKeyword,
+  orderExperiencesForDraft,
   outlineCoverLetter,
   rankBankItemsForJob,
   sanitizeExportFilenameInput,
+  smartTrimBulletText,
+  sortExperiencesChronologically,
   validateBulletGrounding,
   validateCoverLetterGrounding,
 } from '../../domain';
@@ -2385,6 +2388,135 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           machineMadeLabel: lint.label,
         };
       },
+
+      async resetToDefault(applicationId: string) {
+        const app = await deps.appRepo.getApplication(applicationId);
+        if (!app) {
+          return {
+            ok: false,
+            error: { code: 'NOT_FOUND', message: 'Application not found.' },
+          };
+        }
+        gateway.cancelByPrefix(`bullet-${applicationId}-`);
+        gateway.cancelByPrefix(`summary-${applicationId}`);
+
+        const rawBank = await deps.bankRepo.getSnapshot();
+        const sortedExperiences = sortExperiencesChronologically(
+          rawBank.experiences,
+        );
+        const bank: BankSnapshot = {
+          ...rawBank,
+          experiences: sortedExperiences,
+        };
+        await deps.bankRepo.saveSnapshot(bank);
+
+        const parsedJob =
+          app.parsedJob ??
+          deterministicParseJobDescription(app.jobDescription, deps.idGen);
+        const ranking = rankBankItemsForJob(bank, parsedJob);
+
+        // Select top achievements (up to 6, or all if fewer than 6)
+        const rankedAchIds = ranking.rankedAchievements
+          .slice(0, 6)
+          .map((r) => r.achievement.id);
+        const topAchIds =
+          rankedAchIds.length > 0
+            ? rankedAchIds
+            : bank.achievements.slice(0, 5).map((a) => a.id);
+
+        const defaultVoice: VoiceLevel = 'balanced';
+        const bullets: TailoredBullet[] = topAchIds
+          .map((id) => bank.achievements.find((a) => a.id === id))
+          .filter((a): a is Achievement => Boolean(a))
+          .map((ach, idx) => {
+            const text = formatAchievementInVoice(ach, defaultVoice, idx);
+            const grounding = validateBulletGrounding(text, [ach.id], bank);
+            return {
+              id: `bullet-${ach.id}`,
+              experienceId: ach.experienceId,
+              text,
+              originalText: formatAchievementInVoice(ach, 'professional', idx),
+              sourceIds: [ach.id],
+              locked: false,
+              unverifiedClaims: grounding.unverifiedClaims,
+              keptOriginalWording: false,
+              attemptCount: 0,
+            };
+          });
+
+        const selectedSkillIds =
+          ranking.recommendedSkillIds.length > 0
+            ? ranking.recommendedSkillIds
+            : bank.skills.map((s) => s.id);
+        const topSkills = bank.skills
+          .filter((s) => selectedSkillIds.includes(s.id))
+          .slice(0, 5)
+          .map((s) => s.name);
+        const companies = sortedExperiences.slice(0, 2).map((e) => e.company);
+        const firstMetricAch = bank.achievements.find(
+          (a) => topAchIds.includes(a.id) && Boolean(a.metric),
+        );
+
+        const defaultHeadline =
+          parsedJob.title || app.roleTitle || bank.profile.headline;
+        const defaultSummary = buildDeterministicSummary({
+          roleTitle: defaultHeadline,
+          skills: topSkills,
+          companies,
+          metricSnippet: firstMetricAch?.metric,
+          voice: defaultVoice,
+        });
+
+        const nextWorkingDraft = {
+          targetHeadline: defaultHeadline,
+          summary: defaultSummary,
+          summaryLocked: false,
+          summarySourceIds: topAchIds.slice(0, 2),
+          selectedAchievementIds: topAchIds,
+          selectedSkillIds,
+          selectedProjectIds: bank.projects.map((p) => p.id),
+          selectedEducationIds: bank.educations.map((e) => e.id),
+          selectedCertificationIds: bank.certifications.map((c) => c.id),
+          experienceOrder: sortedExperiences.map((e) => e.id),
+          bullets,
+        };
+
+        const tempApp: Application = {
+          ...app,
+          voice: defaultVoice,
+          parsedJob,
+          dismissedRequirements: [],
+          dismissedRequirementIds: [],
+          workingDraft: nextWorkingDraft,
+          updatedAt: deps.clock.nowIso(),
+        };
+
+        const defaultClDraft = createDefaultCoverLetterDraft(tempApp, bank);
+        const letterEval = evaluateCoverLetterChecks({
+          draft: defaultClDraft,
+          parsedJob,
+          bank,
+          company: tempApp.company,
+          roleTitle: tempApp.roleTitle,
+        });
+
+        const updatedApp: Application = {
+          ...tempApp,
+          coverLetterDraft: defaultClDraft,
+          documents: {
+            resume: nextWorkingDraft,
+            coverLetter: defaultClDraft,
+          },
+          latestLetterChecks: letterEval.report,
+        };
+        updatedApp.latestScores = computeAtsAndJobMatchScores(
+          updatedApp,
+          bank,
+        ).scores;
+
+        await deps.appRepo.saveApplication(updatedApp);
+        return { ok: true, value: updatedApp };
+      },
     },
 
     generateCoverLetter: {
@@ -2968,8 +3100,8 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           }
           case 'shorten-summary': {
             const words = draft.summary.trim().split(/\s+/);
-            if (words.length > 52) {
-              draft.summary = `${words.slice(0, 48).join(' ').replace(/[.,;:]+$/, '')}.`;
+            if (words.length > 52 || draft.summary.trim().length > 230) {
+              draft.summary = smartTrimBulletText(draft.summary, 48, 220);
             }
             break;
           }
@@ -2991,8 +3123,12 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
               );
               byRole.set(expId, list);
             }
+            const orderedExperiences = orderExperiencesForDraft(
+              bank.experiences,
+              draft.experienceOrder,
+            );
             const reordered: TailoredBullet[] = [];
-            for (const exp of bank.experiences) {
+            for (const exp of orderedExperiences) {
               const list = byRole.get(exp.id);
               if (list) reordered.push(...list);
             }
@@ -3002,13 +3138,29 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             break;
           }
           case 'trim-long-bullet': {
+            const maxCharsPerLine = app.templateId === 'compact' ? 92 : 82;
+            const targetMaxChars = app.templateId === 'compact' ? 180 : 160;
             draft.bullets = draft.bullets.map((b) => {
               if (b.locked) return b;
-              const words = b.text.trim().split(/\s+/);
-              if (words.length <= 26) return b;
+              const words = b.text.trim().split(/\s+/).filter(Boolean);
+              const approxLines = Math.ceil(
+                b.text.trim().length / maxCharsPerLine,
+              );
+              if (words.length <= 26 && approxLines <= 2) return b;
+              const trimmedText = smartTrimBulletText(
+                b.text,
+                24,
+                targetMaxChars,
+              );
+              const grounding = validateBulletGrounding(
+                trimmedText,
+                b.sourceIds,
+                bank,
+              );
               return {
                 ...b,
-                text: `${words.slice(0, 24).join(' ').replace(/[.,;:]+$/, '')}.`,
+                text: trimmedText,
+                unverifiedClaims: grounding.unverifiedClaims,
               };
             });
             break;

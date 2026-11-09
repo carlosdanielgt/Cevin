@@ -15,7 +15,8 @@
     "test:golden": "tsx scripts/test-golden.ts",
     "check": "npm run typecheck && npm run lint && npm run test",
     "screenshots": "tsx scripts/capture-screenshots.ts",
-    "bench:llm": "tsx scripts/bench-llm.ts"
+    "bench:llm": "tsx scripts/bench-llm.ts",
+    "test:live-llm": "tsx scripts/test-live-model.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

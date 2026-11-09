@@ -813,9 +813,17 @@ export function createDexieRepositories(): {
         return proj;
       });
 
+      const orderedExperiences = experiences.some(
+        (e) => typeof e.sortOrder === 'number',
+      )
+        ? [...experiences].sort(
+            (a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999),
+          )
+        : experiences;
+
       return {
         profile,
-        experiences,
+        experiences: orderedExperiences,
         achievements,
         skills,
         educations: cleanedEducations,
@@ -826,6 +834,10 @@ export function createDexieRepositories(): {
 
     async saveSnapshot(snapshot: BankSnapshot): Promise<void> {
       initialized = true;
+      const stampedExperiences = snapshot.experiences.map((exp, idx) => ({
+        ...exp,
+        sortOrder: idx,
+      }));
       await db.transaction(
         'rw',
         [
@@ -848,8 +860,8 @@ export function createDexieRepositories(): {
             db.certifications.clear(),
           ]);
           await db.profiles.put(snapshot.profile);
-          if (snapshot.experiences.length)
-            await db.experiences.bulkPut(snapshot.experiences);
+          if (stampedExperiences.length)
+            await db.experiences.bulkPut(stampedExperiences);
           if (snapshot.achievements.length)
             await db.achievements.bulkPut(snapshot.achievements);
           if (snapshot.skills.length) await db.skills.bulkPut(snapshot.skills);

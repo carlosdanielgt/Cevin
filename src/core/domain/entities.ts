@@ -107,6 +107,7 @@ export const ExperienceSchema = z.object({
   location: z.string(),
   start: z.string().min(1),
   end: z.string().min(1),
+  sortOrder: z.number().int().nonnegative().optional(),
 });
 export type Experience = z.infer<typeof ExperienceSchema>;
 
@@ -234,6 +235,7 @@ export const ResumeDraftContentSchema = z.object({
   selectedProjectIds: z.array(z.string()),
   selectedEducationIds: z.array(z.string()),
   selectedCertificationIds: z.array(z.string()),
+  experienceOrder: z.array(z.string()).optional(),
   bullets: z.array(TailoredBulletSchema),
 });
 export type ResumeDraftContent = z.infer<typeof ResumeDraftContentSchema>;

@@ -128,6 +128,7 @@ export interface TailorResumeUseCase {
     machineMadeScore: number;
     machineMadeLabel: string;
   };
+  resetToDefault(applicationId: string): Promise<Result<Application>>;
 }
 
 export interface GenerateCoverLetterUseCase {

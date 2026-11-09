@@ -319,7 +319,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
 
       // Attempt 0
       const firstResponse = await invokeProvider(baseMessages, seed);
-      if (firstResponse.usage.promptTokens) {
+      if (firstResponse.usage?.promptTokens) {
         defaultTokenEstimator.recordObservation(
           totalChars,
           firstResponse.usage.promptTokens,
@@ -343,7 +343,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         });
 
         const readingTokPerSec =
-          firstResponse.usage.promptTokens && firstResponse.usage.promptEvalMs
+          firstResponse.usage?.promptTokens && firstResponse.usage?.promptEvalMs
             ? Math.round(
                 (firstResponse.usage.promptTokens /
                   firstResponse.usage.promptEvalMs) *
@@ -351,7 +351,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
               )
             : undefined;
         const writingTokPerSec =
-          firstResponse.usage.completionTokens && firstResponse.usage.evalMs
+          firstResponse.usage?.completionTokens && firstResponse.usage?.evalMs
             ? Math.round(
                 (firstResponse.usage.completionTokens /
                   firstResponse.usage.evalMs) *
@@ -367,11 +367,11 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
           repaired: false,
           fellBackToBaseline: false,
           durationMs,
-          loadMs: firstResponse.usage.loadMs,
-          promptEvalMs: firstResponse.usage.promptEvalMs,
-          evalMs: firstResponse.usage.evalMs,
-          promptTokens: firstResponse.usage.promptTokens,
-          completionTokens: firstResponse.usage.completionTokens,
+          loadMs: firstResponse.usage?.loadMs,
+          promptEvalMs: firstResponse.usage?.promptEvalMs,
+          evalMs: firstResponse.usage?.evalMs,
+          promptTokens: firstResponse.usage?.promptTokens,
+          completionTokens: firstResponse.usage?.completionTokens,
           readingTokPerSec,
           writingTokPerSec,
           createdAt: nowIso,
@@ -425,11 +425,11 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
           repaired: true,
           fellBackToBaseline: false,
           durationMs,
-          loadMs: secondResponse.usage.loadMs,
-          promptEvalMs: secondResponse.usage.promptEvalMs,
-          evalMs: secondResponse.usage.evalMs,
-          promptTokens: secondResponse.usage.promptTokens,
-          completionTokens: secondResponse.usage.completionTokens,
+          loadMs: secondResponse.usage?.loadMs,
+          promptEvalMs: secondResponse.usage?.promptEvalMs,
+          evalMs: secondResponse.usage?.evalMs,
+          promptTokens: secondResponse.usage?.promptTokens,
+          completionTokens: secondResponse.usage?.completionTokens,
           createdAt: nowIso,
         });
 
