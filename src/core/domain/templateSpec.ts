@@ -159,7 +159,7 @@ const BASE_TEMPLATE_SPECS: Record<
       hangingIndentPt: 12,
     },
     dateAlignment: 'right',
-    headlinePlacement: 'below-name',
+    headlinePlacement: 'inline-with-name',
     rhythmScaling: {
       sparseThresholdRatio: 0.75,
       maxExpandFactor: 1.2,
@@ -225,7 +225,7 @@ const BASE_TEMPLATE_SPECS: Record<
       hangingIndentPt: 11.5,
     },
     dateAlignment: 'right',
-    headlinePlacement: 'below-name',
+    headlinePlacement: 'inline-with-name',
     rhythmScaling: {
       sparseThresholdRatio: 0.75,
       maxExpandFactor: 1.2,
@@ -477,6 +477,7 @@ export function computeDocumentContentHash(doc: ExportableDocument): string {
     const payload = JSON.stringify({
       kind: 'coverLetter',
       templateId: doc.meta.templateId,
+      textAlign: doc.meta.textAlign ?? 'left',
       voice: doc.meta.voice,
       targetCompany: doc.meta.targetCompany,
       targetRole: doc.meta.targetRole,
@@ -498,6 +499,7 @@ export function computeDocumentContentHash(doc: ExportableDocument): string {
   const payload = JSON.stringify({
     kind: 'resume',
     templateId: resumeDoc.meta.templateId,
+    textAlign: resumeDoc.meta.textAlign ?? 'left',
     voice: resumeDoc.meta.voice,
     targetCompany: resumeDoc.meta.targetCompany,
     targetRole: resumeDoc.meta.targetRole,

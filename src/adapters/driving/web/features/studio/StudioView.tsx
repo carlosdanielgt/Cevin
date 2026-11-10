@@ -5,7 +5,9 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Download,
+  FileText,
   Loader2,
   Lock,
   Pencil,
@@ -40,12 +42,14 @@ import {
   StudioStep,
   TailoredBullet,
   TemplateId,
+  TextAlign,
   UserPreferences,
   VoiceLevel,
   assembleBulletText,
   buildGroupedCoverageSummary,
   computeRecruiterAppeal,
   createDefaultCoverLetterDraft,
+  documentToPlainText,
   evaluateFit,
   exportFilename,
   extractJobFactsByRules,
@@ -54,6 +58,7 @@ import {
   mapApplicationToResumeDocument,
   mapToCoverLetterDocument,
   orderExperiencesForDraft,
+  renderDocumentToGoogleDocsHtml,
   sanitizeExportFilenameInput,
   sortExperiencesChronologically,
   validateBulletGrounding,
@@ -886,12 +891,74 @@ export function StudioView({
     }
   };
 
+  const handleChangeTextAlign = async (nextAlign: TextAlign) => {
+    if (activeDoc === 'coverLetter') {
+      const nextCl: CoverLetterDraft = {
+        ...clDraft,
+        textAlign: nextAlign,
+      };
+      await persistApp({
+        ...app,
+        coverLetterDraft: nextCl,
+      });
+    } else {
+      await persistApp({
+        ...app,
+        workingDraft: {
+          ...app.workingDraft,
+          textAlign: nextAlign,
+        },
+      });
+    }
+  };
+
+  const handleCopyForGoogleDocs = async (kind: DocumentKind = activeDoc) => {
+    const targetDoc = kind === 'coverLetter' ? coverLetterDoc : resumeDoc;
+    const html = renderDocumentToGoogleDocsHtml(targetDoc, {
+      templateId: app.templateId,
+      pageSize,
+    });
+    const plain = documentToPlainText(targetDoc);
+
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof ClipboardItem !== 'undefined' &&
+        navigator.clipboard.write
+      ) {
+        const item = new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        });
+        await navigator.clipboard.write([item]);
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(plain);
+      }
+      addToast(
+        'Copied WYSIWYG layout for Google Docs — paste (⌘V / Ctrl+V) into any Google Doc to keep editing.',
+        'success',
+      );
+    } catch {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(plain);
+      }
+      addToast('Copied document text to clipboard.', 'success');
+    }
+  };
+
   const handleExport = async (
     exporterId: string,
     kind: DocumentKind = activeDoc,
   ) => {
     const ext =
-      exporterId === 'markdown' ? 'md' : exporterId === 'text' ? 'txt' : 'pdf';
+      exporterId === 'docx'
+        ? 'docx'
+        : exporterId === 'markdown'
+          ? 'md'
+          : exporterId === 'text'
+            ? 'txt'
+            : 'pdf';
     const defaultForKind = exportFilename({
       fullName: bank.profile.name,
       company: app.company,
@@ -931,7 +998,12 @@ export function StudioView({
     }
     triggerBlobDownload(res.value.blob, res.value.fileName);
     await reloadWorkspace();
-    addToast(`Exported ${res.value.fileName}`, 'success');
+    addToast(
+      exporterId === 'docx'
+        ? `Exported ${res.value.fileName} — upload or open in Google Drive / Google Docs to edit.`
+        : `Exported ${res.value.fileName}`,
+      'success',
+    );
   };
 
   const handleSaveSnapshot = async () => {
@@ -1826,12 +1898,32 @@ export function StudioView({
                   </div>
 
                   <div>
-                    <label
-                      htmlFor="studio-summary-textarea"
-                      className="block text-xs text-ink-muted mb-1"
-                    >
-                      Executive summary
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                      <label
+                        htmlFor="studio-summary-textarea"
+                        className="block text-xs text-ink-muted"
+                      >
+                        Executive summary
+                      </label>
+                      <div className="inline-flex items-center gap-2">
+                        <span className="text-[11px] font-medium text-ink-muted">
+                          Section content alignment:
+                        </span>
+                        <SegmentedControl<TextAlign>
+                          ariaLabel="Align section content (summary, experience bullets, projects, skills)"
+                          size="sm"
+                          value={app.workingDraft.textAlign ?? 'left'}
+                          onValueChange={(nextAlign) =>
+                            void handleChangeTextAlign(nextAlign)
+                          }
+                          options={[
+                            { value: 'left', label: 'Left' },
+                            { value: 'justify', label: 'Justify' },
+                            { value: 'right', label: 'Right' },
+                          ]}
+                        />
+                      </div>
+                    </div>
                     <AutoGrowTextarea
                       id="studio-summary-textarea"
                       minRows={2}
@@ -2929,6 +3021,40 @@ export function StudioView({
                     />
                   </div>
 
+                  {/* Editable Google Drive / Google Docs WYSIWYG Export */}
+                  <div className="p-3 rounded-lg bg-surface-sunken border border-hairline space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-ink">
+                          Editable Google Docs / Drive (WYSIWYG)
+                        </div>
+                        <p className="text-[11px] text-ink-muted">
+                          Keep the exact single-column layout, fonts, section borders, and right-aligned dates while editing in Google Docs.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleExport('docx', activeDoc)}
+                        >
+                          <FileText className="w-3.5 h-3.5 text-accent" />
+                          <span>Google Docs (.docx)</span>
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            void handleCopyForGoogleDocs(activeDoc)
+                          }
+                        >
+                          <Copy className="w-3.5 h-3.5 text-accent" />
+                          <span>Copy for Google Docs</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-2 pt-1">
                     <Input
                       value={versionLabelInput}
@@ -3006,6 +3132,17 @@ export function StudioView({
                             void handleExport('pdf', 'coverLetter'),
                         },
                         {
+                          id: 'docx',
+                          label: 'Export Google Docs / Word (.docx)',
+                          onSelect: () => void handleExport('docx', activeDoc),
+                        },
+                        {
+                          id: 'gdocs-copy',
+                          label: 'Copy for Google Docs (WYSIWYG paste)',
+                          onSelect: () =>
+                            void handleCopyForGoogleDocs(activeDoc),
+                        },
+                        {
                           id: 'md',
                           label: 'Export Markdown (.md)',
                           onSelect: () =>
@@ -3034,6 +3171,14 @@ export function StudioView({
             templateId={app.templateId}
             onChangeTemplate={(nextTpl: TemplateId) =>
               void persistApp({ ...app, templateId: nextTpl })
+            }
+            textAlign={
+              activeDoc === 'coverLetter'
+                ? (clDraft.textAlign ?? 'left')
+                : (app.workingDraft.textAlign ?? 'left')
+            }
+            onChangeTextAlign={(nextAlign: TextAlign) =>
+              void handleChangeTextAlign(nextAlign)
             }
             zoom={previewZoom}
             onChangeZoom={setPreviewZoom}

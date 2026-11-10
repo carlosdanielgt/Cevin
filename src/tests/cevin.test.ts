@@ -5,6 +5,7 @@ import test from 'node:test';
 import { z } from 'zod';
 import {
   createExporterCatalog,
+  docxDocumentExporter,
   markdownResumeExporter,
   pdfResumeExporter,
   plainTextDocumentExporter,
@@ -107,6 +108,9 @@ import {
   orderExperiencesForDraft,
   outlineCoverLetter,
   rankBankItemsForJob,
+  renderDocumentToDocxBytes,
+  renderDocumentToGoogleDocsHtml,
+  renderDocumentToPdfArtifact,
   resolveMetroArea,
   sanitizeExportFilenameInput,
   sanitizeLlmOutput,
@@ -718,11 +722,11 @@ test('Importer & Exporter Contract Suite: PDF (with PositionedText), Markdown, a
     /SCANNED_PDF/,
   );
 
-  // 7. Catalogs expose registered adapters (2 importers, 3 exporters)
+  // 7. Catalogs expose registered adapters (2 importers, 4 exporters including docx)
   const impCat = createImporterCatalog();
   const expCat = createExporterCatalog();
   assert.equal(impCat.list().length, 2);
-  assert.equal(expCat.list().length, 3);
+  assert.equal(expCat.list().length, 4);
 });
 
 test('Full End-to-End Flow: Quick Check -> Save as Prospect -> Promote Prospect (Start Tailoring) -> Review -> Export First_Last_Company_Resume.pdf', async () => {
@@ -2962,6 +2966,158 @@ test('Smart targeted skill selection against 60-skill Bank and project highlight
   );
 });
 
+test('Inline Name+Headline across all templates, Section Content Alignment (left/justify/right), Recruiter Appeal Headline Fix threshold, and Google Docs WYSIWYG export', async () => {
+  const bank = createDemoBankSnapshot();
+  const { applications } = createDemoApplications(bank);
+  const app = applications[0];
 
+  // 1. Verify Name and Headline always share the exact same single line (y) across classic, modern, and compact
+  for (const templateId of ['classic', 'modern', 'compact'] as const) {
+    const doc = mapApplicationToResumeDocument(
+      {
+        ...app,
+        templateId,
+        workingDraft: {
+          ...app.workingDraft,
+          targetHeadline:
+            'Principal Distributed Systems, Kubernetes & Cloud Infrastructure Reliability Architect',
+        },
+      },
+      bank,
+    );
+    const pdf = renderDocumentToPdfArtifact(doc);
+    assert.ok(pdf.pageCount >= 1);
+    const firstPageRuns = pdf.positionedText.filter((r) => r.page === 1);
+    const nameRun = firstPageRuns.find((r) =>
+      r.text.includes(doc.header.name),
+    );
+    const headlineRun = firstPageRuns.find((r) =>
+      r.text.includes('Principal Distributed Systems'),
+    );
+    assert.ok(nameRun, `Expected name run in ${templateId}`);
+    assert.ok(headlineRun, `Expected headline run in ${templateId}`);
+    assert.equal(
+      nameRun.y,
+      headlineRun.y,
+      `Name and Headline must be on the exact same line (y) in template ${templateId}`,
+    );
+    assert.ok(
+      headlineRun.x > nameRun.x,
+      `Headline must sit to the right of Name on the same line in template ${templateId}`,
+    );
+  }
 
+  // 2. Verify Section Content Alignment (left, justify, right) in PDF layout, DOCX, and Google Docs HTML
+  const baseDoc = mapApplicationToResumeDocument(
+    { ...app, templateId: 'classic' },
+    bank,
+  );
+  const leftPdf = renderDocumentToPdfArtifact({
+    ...baseDoc,
+    meta: { ...baseDoc.meta, textAlign: 'left' },
+  });
+  const justifyPdf = renderDocumentToPdfArtifact({
+    ...baseDoc,
+    meta: { ...baseDoc.meta, textAlign: 'justify' },
+  });
+  const rightPdf = renderDocumentToPdfArtifact({
+    ...baseDoc,
+    meta: { ...baseDoc.meta, textAlign: 'right' },
+  });
 
+  // Justified PDF should emit positive Tw operator in stream on multi-line summary/bullet lines
+  const justifyStreamText = new TextDecoder('latin1').decode(justifyPdf.bytes);
+  assert.ok(
+    /\d+\.\d{3} Tw/.test(justifyStreamText),
+    'Justified alignment must emit positive Tw word-spacing operator in PDF stream',
+  );
+
+  // Right-aligned PDF should shift body text runs further right than left-aligned PDF
+  const leftSummaryRun = leftPdf.positionedText.find((r) =>
+    r.text.includes('Staff Infrastructure'),
+  );
+  const rightSummaryRun = rightPdf.positionedText.find((r) =>
+    r.text.includes('Staff Infrastructure'),
+  );
+  assert.ok(leftSummaryRun && rightSummaryRun);
+  assert.ok(
+    rightSummaryRun.x >= leftSummaryRun.x,
+    'Right-aligned summary run must be positioned at or to the right of left-aligned summary run',
+  );
+
+  // 3. Verify Recruiter Appeal does NOT suggest 'fix-appeal-align-headline' when headline already matches targetRole
+  const alignedDoc = mapApplicationToResumeDocument(
+    {
+      ...app,
+      templateId: 'classic',
+      workingDraft: {
+        ...app.workingDraft,
+        targetHeadline: app.roleTitle,
+      },
+    },
+    bank,
+  );
+  const alignedAppeal = computeRecruiterAppeal({
+    doc: alignedDoc,
+    parsedJob: app.parsedJob,
+  });
+  assert.equal(
+    alignedAppeal.fixes.some((f) => f.id === 'fix-appeal-align-headline'),
+    false,
+    'fix-appeal-align-headline must NOT appear when headline already matches target role',
+  );
+
+  const mismatchedDoc = mapApplicationToResumeDocument(
+    {
+      ...app,
+      templateId: 'classic',
+      workingDraft: {
+        ...app.workingDraft,
+        targetHeadline: 'Frontend Mobile UI Designer',
+      },
+    },
+    bank,
+  );
+  const mismatchedAppeal = computeRecruiterAppeal({
+    doc: mismatchedDoc,
+    parsedJob: app.parsedJob,
+  });
+  assert.equal(
+    mismatchedAppeal.fixes.some((f) => f.id === 'fix-appeal-align-headline'),
+    true,
+    'fix-appeal-align-headline MUST appear when headline does not match target role',
+  );
+
+  // 4. Verify Google Docs (.docx and WYSIWYG HTML) export and round-trip extraction
+  const justifiedDoc = {
+    ...baseDoc,
+    meta: { ...baseDoc.meta, textAlign: 'justify' as const },
+  };
+  const docxBytes = renderDocumentToDocxBytes(justifiedDoc);
+  assert.ok(docxBytes.byteLength > 1000, 'Expected valid non-empty .docx archive');
+  const docxBlob = await docxDocumentExporter.export(justifiedDoc, {
+    templateId: 'classic',
+  });
+  assert.ok(docxDocumentExporter.extractTextFromBlob);
+  const extractedDocxText = await docxDocumentExporter.extractTextFromBlob(
+    docxBlob,
+  );
+  assert.ok(
+    extractedDocxText.includes(baseDoc.header.name),
+    'Round-trip .docx text must include candidate full name',
+  );
+  assert.ok(
+    extractedDocxText.includes(app.roleTitle),
+    'Round-trip .docx text must include role headline',
+  );
+
+  const gdocsHtml = renderDocumentToGoogleDocsHtml(justifiedDoc);
+  assert.ok(
+    gdocsHtml.includes('text-align:justify'),
+    'Google Docs WYSIWYG HTML must include text-align:justify when textAlign is justify',
+  );
+  assert.ok(
+    gdocsHtml.includes(baseDoc.header.name),
+    'Google Docs WYSIWYG HTML must include candidate name',
+  );
+});

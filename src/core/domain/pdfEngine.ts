@@ -4,6 +4,7 @@ import {
   PageSize,
   ResumeDocument,
   TemplateId,
+  TextAlign,
 } from './entities';
 import { PositionedText } from './appeal';
 import { formatContactBlock } from './bulletAssembler';
@@ -21,7 +22,7 @@ import {
 export type InternalFontKey = EmbeddedFontKey;
 
 export interface PdfRenderOptions {
-  templateId: TemplateId;
+  templateId?: TemplateId;
   pageSize?: PageSize;
 }
 
@@ -188,6 +189,54 @@ interface TextRun {
   bold: boolean;
   colorRgb: [number, number, number];
   linkUri?: string;
+  wordSpacingPt?: number;
+}
+
+function computeAlignedRunMetrics(params: {
+  text: string;
+  baseLeftX: number;
+  maxWidthPt: number;
+  rawWidthPt: number;
+  align: TextAlign;
+  isLastLine: boolean;
+}): { xPt: number; widthPt: number; wordSpacingPt?: number } {
+  const { text, baseLeftX, maxWidthPt, rawWidthPt, align, isLastLine } = params;
+  if (align === 'right') {
+    const shift = Math.max(0, maxWidthPt - rawWidthPt);
+    return {
+      xPt: Number((baseLeftX + shift).toFixed(2)),
+      widthPt: rawWidthPt,
+    };
+  }
+  if (align === 'justify') {
+    const spaceCount = (text.match(/ /g) ?? []).length;
+    if (spaceCount > 0 && rawWidthPt < maxWidthPt) {
+      const fillRatio = rawWidthPt / Math.max(1, maxWidthPt);
+      if (!isLastLine && fillRatio >= 0.55) {
+        const ws = (maxWidthPt - rawWidthPt) / spaceCount;
+        if (ws <= 8) {
+          return {
+            xPt: baseLeftX,
+            widthPt: maxWidthPt,
+            wordSpacingPt: Number(ws.toFixed(3)),
+          };
+        }
+      } else if (isLastLine && fillRatio >= 0.85 && spaceCount >= 3) {
+        const ws = (maxWidthPt - rawWidthPt) / spaceCount;
+        if (ws <= 2.4) {
+          return {
+            xPt: baseLeftX,
+            widthPt: maxWidthPt,
+            wordSpacingPt: Number(ws.toFixed(3)),
+          };
+        }
+      }
+    }
+  }
+  return {
+    xPt: baseLeftX,
+    widthPt: rawWidthPt,
+  };
 }
 
 interface LayoutLine {
@@ -253,85 +302,72 @@ function buildLayoutLines(
   const scaleLead = (baseLineHeight: number) =>
     baseLineHeight * (1 + (rhythmScale - 1) * 0.32);
 
-  // 1. Header block
+  // 1. Header block — always place Name and Job Title inline on the same line when headline is present
   const contact = formatContactBlock(doc.header);
   const nameText = doc.header.name.trim();
   const headlineText = doc.header.headline.trim();
+  const textAlign: TextAlign = doc.meta.textAlign ?? 'left';
 
-  if (
-    doc.kind === 'resume' &&
-    spec.headlinePlacement === 'inline-with-name' &&
-    headlineText
-  ) {
-    const nameW = measureTextWidthPt(nameText, nameFontKey, spec.sizes.namePt);
-    const headW = measureTextWidthPt(
-      headlineText,
-      boldFontKey,
-      spec.sizes.headlinePt,
-    );
-    if (nameW + 12 + headW <= contentWidthPt) {
-      lines.push({
-        runs: [
-          {
-            text: nameText,
-            xPt: leftX,
-            widthPt: nameW,
-            fontKey: nameFontKey,
-            fontSizePt: spec.sizes.namePt,
-            bold: true,
-            colorRgb: INK_PRIMARY,
-          },
-          {
-            text: headlineText,
-            xPt: leftX + nameW + 12,
-            widthPt: headW,
-            fontKey: boldFontKey,
-            fontSizePt: spec.sizes.headlinePt,
-            bold: true,
-            colorRgb: INK_SECONDARY,
-          },
-        ],
-        heightPt: spec.sizes.namePt * spec.lineHeights.name,
-        spaceBeforePt: 0,
-        spaceAfterPt: 5.5,
-        keepWithNext: true,
-      });
-    } else {
-      lines.push({
-        runs: [
-          {
-            text: nameText,
-            xPt: leftX,
-            widthPt: nameW,
-            fontKey: nameFontKey,
-            fontSizePt: spec.sizes.namePt,
-            bold: true,
-            colorRgb: INK_PRIMARY,
-          },
-        ],
-        heightPt: spec.sizes.namePt * spec.lineHeights.name,
-        spaceBeforePt: 0,
-        spaceAfterPt: 2,
-        keepWithNext: true,
-      });
-      lines.push({
-        runs: [
-          {
-            text: headlineText,
-            xPt: leftX,
-            widthPt: headW,
-            fontKey: boldFontKey,
-            fontSizePt: spec.sizes.headlinePt,
-            bold: true,
-            colorRgb: INK_SECONDARY,
-          },
-        ],
-        heightPt: spec.sizes.headlinePt * spec.lineHeights.heading,
-        spaceBeforePt: 0,
-        spaceAfterPt: 2,
-        keepWithNext: true,
-      });
+  if (headlineText) {
+    let nameSizePt = spec.sizes.namePt;
+    let headSizePt = spec.sizes.headlinePt;
+    const gapPt = 10;
+    let nameW = measureTextWidthPt(nameText, nameFontKey, nameSizePt);
+    let headW = measureTextWidthPt(headlineText, boldFontKey, headSizePt);
+
+    // Smoothly scale down headline and name font sizes if needed so both always fit on the same line
+    while (
+      nameW + gapPt + headW > contentWidthPt &&
+      (headSizePt > 8.25 || nameSizePt > 14.5)
+    ) {
+      if (headSizePt > 8.25) {
+        headSizePt = Number(Math.max(8.25, headSizePt - 0.5).toFixed(2));
+      } else {
+        nameSizePt = Number(Math.max(14.5, nameSizePt - 0.5).toFixed(2));
+      }
+      nameW = measureTextWidthPt(nameText, nameFontKey, nameSizePt);
+      headW = measureTextWidthPt(headlineText, boldFontKey, headSizePt);
     }
+
+    let fittedHeadline = headlineText;
+    if (nameW + gapPt + headW > contentWidthPt) {
+      const availHeadW = Math.max(80, contentWidthPt - nameW - gapPt);
+      const wrappedHead = wrapTextByPoints(
+        headlineText,
+        boldFontKey,
+        headSizePt,
+        availHeadW,
+      );
+      fittedHeadline = wrappedHead[0] ?? headlineText;
+      headW = measureTextWidthPt(fittedHeadline, boldFontKey, headSizePt);
+    }
+
+    lines.push({
+      runs: [
+        {
+          text: nameText,
+          xPt: leftX,
+          widthPt: nameW,
+          fontKey: nameFontKey,
+          fontSizePt: nameSizePt,
+          bold: true,
+          colorRgb: INK_PRIMARY,
+        },
+        {
+          text: fittedHeadline,
+          xPt: leftX + nameW + gapPt,
+          widthPt: headW,
+          fontKey: boldFontKey,
+          fontSizePt: headSizePt,
+          bold: true,
+          colorRgb: INK_SECONDARY,
+        },
+      ],
+      heightPt: nameSizePt * spec.lineHeights.name,
+      spaceBeforePt: 0,
+      spaceAfterPt: 4.5,
+      keepWithNext: true,
+    });
   } else {
     const nameW = measureTextWidthPt(nameText, nameFontKey, spec.sizes.namePt);
     lines.push({
@@ -351,37 +387,6 @@ function buildLayoutLines(
       spaceAfterPt: 2,
       keepWithNext: true,
     });
-    if (headlineText) {
-      const headLines = wrapTextByPoints(
-        headlineText,
-        boldFontKey,
-        spec.sizes.headlinePt,
-        contentWidthPt,
-      );
-      for (const hl of headLines) {
-        lines.push({
-          runs: [
-            {
-              text: hl,
-              xPt: leftX,
-              widthPt: measureTextWidthPt(
-                hl,
-                boldFontKey,
-                spec.sizes.headlinePt,
-              ),
-              fontKey: boldFontKey,
-              fontSizePt: spec.sizes.headlinePt,
-              bold: true,
-              colorRgb: INK_SECONDARY,
-            },
-          ],
-          heightPt: spec.sizes.headlinePt * spec.lineHeights.heading,
-          spaceBeforePt: 0,
-          spaceAfterPt: 2,
-          keepWithNext: true,
-        });
-      }
-    }
   }
 
   // Contact line 1 (`email · phone · location`)
@@ -524,12 +529,22 @@ function buildLayoutLines(
       );
       wrapped.forEach((wLine, idx) => {
         const isLast = idx === wrapped.length - 1;
+        const rawW = measureTextWidthPt(wLine, bodyFontKey, spec.sizes.bodyPt);
+        const aligned = computeAlignedRunMetrics({
+          text: wLine,
+          baseLeftX: leftX,
+          maxWidthPt: contentWidthPt,
+          rawWidthPt: rawW,
+          align: textAlign,
+          isLastLine: isLast,
+        });
         lines.push({
           runs: [
             {
               text: wLine,
-              xPt: leftX,
-              widthPt: measureTextWidthPt(wLine, bodyFontKey, spec.sizes.bodyPt),
+              xPt: aligned.xPt,
+              widthPt: aligned.widthPt,
+              wordSpacingPt: aligned.wordSpacingPt,
               fontKey: bodyFontKey,
               fontSizePt: spec.sizes.bodyPt,
               bold: false,
@@ -595,12 +610,23 @@ function buildLayoutLines(
       contentWidthPt,
     );
     summaryLines.forEach((sLine, idx) => {
+      const isLast = idx === summaryLines.length - 1;
+      const rawW = measureTextWidthPt(sLine, bodyFontKey, spec.sizes.bodyPt);
+      const aligned = computeAlignedRunMetrics({
+        text: sLine,
+        baseLeftX: leftX,
+        maxWidthPt: contentWidthPt,
+        rawWidthPt: rawW,
+        align: textAlign,
+        isLastLine: isLast,
+      });
       lines.push({
         runs: [
           {
             text: sLine,
-            xPt: leftX,
-            widthPt: measureTextWidthPt(sLine, bodyFontKey, spec.sizes.bodyPt),
+            xPt: aligned.xPt,
+            widthPt: aligned.widthPt,
+            wordSpacingPt: aligned.wordSpacingPt,
             fontKey: bodyFontKey,
             fontSizePt: spec.sizes.bodyPt,
             bold: false,
@@ -609,7 +635,7 @@ function buildLayoutLines(
         ],
         heightPt: bodyLineHeight,
         spaceBeforePt: 0,
-        spaceAfterPt: idx === summaryLines.length - 1 ? scaleSpace(2) : 0,
+        spaceAfterPt: isLast ? scaleSpace(2) : 0,
         groupId: 'summary',
       });
     });
@@ -733,11 +759,23 @@ function buildLayoutLines(
             bodyFontKey,
             spec.sizes.bodyPt,
           );
+          const aligned = computeAlignedRunMetrics({
+            text: bLine,
+            baseLeftX: bulletTextX,
+            maxWidthPt: bulletMaxWidth,
+            rawWidthPt: bLineW,
+            align: textAlign,
+            isLastLine,
+          });
           const runs: TextRun[] = [];
           if (lineIdx === 0) {
+            const dotX =
+              textAlign === 'right'
+                ? Math.max(glyphX, aligned.xPt - (bulletTextX - glyphX))
+                : glyphX;
             runs.push({
               text: glyphStr,
-              xPt: glyphX,
+              xPt: dotX,
               widthPt: glyphW,
               fontKey: boldFontKey,
               fontSizePt: spec.sizes.bodyPt,
@@ -747,8 +785,9 @@ function buildLayoutLines(
           }
           runs.push({
             text: bLine,
-            xPt: bulletTextX,
-            widthPt: bLineW,
+            xPt: aligned.xPt,
+            widthPt: aligned.widthPt,
+            wordSpacingPt: aligned.wordSpacingPt,
             fontKey: bodyFontKey,
             fontSizePt: spec.sizes.bodyPt,
             bold: false,
@@ -815,17 +854,28 @@ function buildLayoutLines(
           spec.sizes.bodyPt,
           contentWidthPt,
         );
-        descLines.forEach((dLine) => {
+        descLines.forEach((dLine, dIdx) => {
+          const isLastDesc = dIdx === descLines.length - 1;
+          const rawW = measureTextWidthPt(
+            dLine,
+            bodyFontKey,
+            spec.sizes.bodyPt,
+          );
+          const aligned = computeAlignedRunMetrics({
+            text: dLine,
+            baseLeftX: leftX,
+            maxWidthPt: contentWidthPt,
+            rawWidthPt: rawW,
+            align: textAlign,
+            isLastLine: isLastDesc,
+          });
           lines.push({
             runs: [
               {
                 text: dLine,
-                xPt: leftX,
-                widthPt: measureTextWidthPt(
-                  dLine,
-                  bodyFontKey,
-                  spec.sizes.bodyPt,
-                ),
+                xPt: aligned.xPt,
+                widthPt: aligned.widthPt,
+                wordSpacingPt: aligned.wordSpacingPt,
                 fontKey: bodyFontKey,
                 fontSizePt: spec.sizes.bodyPt,
                 bold: false,
@@ -859,11 +909,29 @@ function buildLayoutLines(
           bulletMaxWidth,
         );
         wrappedH.forEach((hLine, lIdx) => {
+          const isLastH = lIdx === wrappedH.length - 1;
+          const rawHW = measureTextWidthPt(
+            hLine,
+            bodyFontKey,
+            spec.sizes.bodyPt,
+          );
+          const aligned = computeAlignedRunMetrics({
+            text: hLine,
+            baseLeftX: bulletTextX,
+            maxWidthPt: bulletMaxWidth,
+            rawWidthPt: rawHW,
+            align: textAlign,
+            isLastLine: isLastH,
+          });
           const runs: TextRun[] = [];
           if (lIdx === 0) {
+            const dotX =
+              textAlign === 'right'
+                ? Math.max(glyphX, aligned.xPt - (bulletTextX - glyphX))
+                : glyphX;
             runs.push({
               text: glyphStr,
-              xPt: glyphX,
+              xPt: dotX,
               widthPt: glyphW,
               fontKey: boldFontKey,
               fontSizePt: spec.sizes.bodyPt,
@@ -873,8 +941,9 @@ function buildLayoutLines(
           }
           runs.push({
             text: hLine,
-            xPt: bulletTextX,
-            widthPt: measureTextWidthPt(hLine, bodyFontKey, spec.sizes.bodyPt),
+            xPt: aligned.xPt,
+            widthPt: aligned.widthPt,
+            wordSpacingPt: aligned.wordSpacingPt,
             fontKey: bodyFontKey,
             fontSizePt: spec.sizes.bodyPt,
             bold: false,
@@ -884,10 +953,9 @@ function buildLayoutLines(
             runs,
             heightPt: bulletLineHeight,
             spaceBeforePt: 0,
-            spaceAfterPt:
-              lIdx === wrappedH.length - 1
-                ? scaleSpace(spec.sectionSpacingPt.betweenBullets * 0.8)
-                : 0,
+            spaceAfterPt: isLastH
+              ? scaleSpace(spec.sectionSpacingPt.betweenBullets * 0.8)
+              : 0,
           });
         });
       });
@@ -909,6 +977,7 @@ function buildLayoutLines(
         contentWidthPt,
       );
       wrapped.forEach((wLine, wIdx) => {
+        const isLastSkillLine = wIdx === wrapped.length - 1;
         if (wIdx === 0 && wLine.startsWith(catLabel.trim())) {
           const remainder = wLine.slice(catLabel.length);
           const remW = measureTextWidthPt(
@@ -916,11 +985,23 @@ function buildLayoutLines(
             bodyFontKey,
             spec.sizes.bodyPt,
           );
+          const rightShift =
+            textAlign === 'right'
+              ? Math.max(0, contentWidthPt - (catW + remW))
+              : 0;
+          const remAligned = computeAlignedRunMetrics({
+            text: remainder,
+            baseLeftX: leftX + rightShift + catW,
+            maxWidthPt: Math.max(10, contentWidthPt - catW),
+            rawWidthPt: remW,
+            align: textAlign === 'right' ? 'left' : textAlign,
+            isLastLine: isLastSkillLine,
+          });
           lines.push({
             runs: [
               {
                 text: catLabel,
-                xPt: leftX,
+                xPt: Number((leftX + rightShift).toFixed(2)),
                 widthPt: catW,
                 fontKey: boldFontKey,
                 fontSizePt: spec.sizes.bodyPt,
@@ -929,8 +1010,9 @@ function buildLayoutLines(
               },
               {
                 text: remainder,
-                xPt: leftX + catW,
-                widthPt: remW,
+                xPt: remAligned.xPt,
+                widthPt: remAligned.widthPt,
+                wordSpacingPt: remAligned.wordSpacingPt,
                 fontKey: bodyFontKey,
                 fontSizePt: spec.sizes.bodyPt,
                 bold: false,
@@ -940,22 +1022,31 @@ function buildLayoutLines(
             heightPt: bodyLineHeight,
             spaceBeforePt: 0,
             spaceAfterPt:
-              wIdx === wrapped.length - 1 &&
-              gIdx < doc.skillsByCategory.length - 1
+              isLastSkillLine && gIdx < doc.skillsByCategory.length - 1
                 ? scaleSpace(2)
                 : 0,
           });
         } else {
+          const rawW = measureTextWidthPt(
+            wLine,
+            bodyFontKey,
+            spec.sizes.bodyPt,
+          );
+          const aligned = computeAlignedRunMetrics({
+            text: wLine,
+            baseLeftX: leftX,
+            maxWidthPt: contentWidthPt,
+            rawWidthPt: rawW,
+            align: textAlign,
+            isLastLine: isLastSkillLine,
+          });
           lines.push({
             runs: [
               {
                 text: wLine,
-                xPt: leftX,
-                widthPt: measureTextWidthPt(
-                  wLine,
-                  bodyFontKey,
-                  spec.sizes.bodyPt,
-                ),
+                xPt: aligned.xPt,
+                widthPt: aligned.widthPt,
+                wordSpacingPt: aligned.wordSpacingPt,
                 fontKey: bodyFontKey,
                 fontSizePt: spec.sizes.bodyPt,
                 bold: false,
@@ -965,8 +1056,7 @@ function buildLayoutLines(
             heightPt: bodyLineHeight,
             spaceBeforePt: 0,
             spaceAfterPt:
-              wIdx === wrapped.length - 1 &&
-              gIdx < doc.skillsByCategory.length - 1
+              isLastSkillLine && gIdx < doc.skillsByCategory.length - 1
                 ? scaleSpace(2)
                 : 0,
           });
@@ -1260,11 +1350,11 @@ end`;
  */
 export function renderDocumentToPdfArtifact(
   doc: ExportableDocument,
-  options: PdfRenderOptions,
+  options: PdfRenderOptions = {},
 ): RenderedPdfArtifact {
   const templateId: TemplateId =
-    options.templateId || doc.meta.templateId || 'classic';
-  const pageSize: PageSize = options.pageSize || doc.meta.pageSize || 'letter';
+    options?.templateId || doc.meta.templateId || 'classic';
+  const pageSize: PageSize = options?.pageSize || doc.meta.pageSize || 'letter';
   const spec = getTemplateSpec(templateId, pageSize);
 
   const usableHeight =
@@ -1317,8 +1407,14 @@ export function renderDocumentToPdfArtifact(
       const alias = FONT_PDF_ALIAS[run.fontKey];
       const [r, g, b] = run.colorRgb;
       const escaped = encodePdfLiteral(run.text);
+      const twOp =
+        run.wordSpacingPt && run.wordSpacingPt > 0
+          ? ` ${run.wordSpacingPt.toFixed(3)} Tw`
+          : '';
+      const twReset =
+        run.wordSpacingPt && run.wordSpacingPt > 0 ? ' 0 Tw' : '';
       pageCommands.push(
-        `BT /${alias} ${run.fontSizePt.toFixed(2)} Tf ${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} rg 1 0 0 1 ${run.xPt.toFixed(2)} ${item.baselineYPt.toFixed(2)} Tm (${escaped}) Tj ET`,
+        `BT /${alias} ${run.fontSizePt.toFixed(2)} Tf${twOp} ${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} rg 1 0 0 1 ${run.xPt.toFixed(2)} ${item.baselineYPt.toFixed(2)} Tm (${escaped}) Tj${twReset} ET`,
       );
 
       positionedText.push({

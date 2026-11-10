@@ -631,8 +631,23 @@ export function computeRecruiterAppeal(
   const firstThirdLower = firstThird.text.toLowerCase();
 
   // 1a. Headline matches target role title (27 pts)
-  const headlineMatches = headlinesAlign(doc.header.headline, targetRole);
-  const skimHeadlinePts = headlineMatches ? 27 : doc.header.headline.trim() ? 11 : 0;
+  const exactHeadlineMatch =
+    !targetRole.trim() ||
+    doc.header.headline.trim().toLowerCase() ===
+      targetRole.trim().toLowerCase() ||
+    doc.header.headline
+      .trim()
+      .toLowerCase()
+      .includes(targetRole.trim().toLowerCase());
+  const headlineMatches =
+    exactHeadlineMatch || headlinesAlign(doc.header.headline, targetRole);
+  const skimHeadlinePts = exactHeadlineMatch
+    ? 27
+    : headlineMatches
+      ? 19
+      : doc.header.headline.trim()
+        ? 11
+        : 0;
 
   // 1b. Most recent title, company, and tenure appear in the first third of page 1 (18 pts)
   const recentExp = doc.experiences[0];
@@ -1016,17 +1031,20 @@ export function computeRecruiterAppeal(
   };
 
   const appealFixes: AppealSuggestedFix[] = [];
-  if (skimHeadlinePts < 30 && targetRole) {
+  if (skimHeadlinePts < 27 && targetRole) {
+    const currentHeadline = doc.header.headline.trim();
     appealFixes.push({
       id: 'fix-appeal-align-headline',
       title: `Align headline to "${targetRole}"`,
       impactPoints: 6,
-      description: 'Surfaces the exact target role in the first 3 seconds of a recruiter skim.',
+      description: currentHeadline
+        ? `Updates your resume header title from "${currentHeadline}" to "${targetRole}" for 3-second recruiter skims.`
+        : `Sets your resume header title to "${targetRole}" for 3-second recruiter skims.`,
       actionType: 'align-headline',
       actionPayload: targetRole,
     });
   }
-  if (proofLeadPts < 25) {
+  if (proofLeadPts < 22 && rolesWithBullets > 0) {
     appealFixes.push({
       id: 'fix-appeal-promote-bullet',
       title: 'Lead each role with its highest-impact quantified bullet',
@@ -1044,7 +1062,7 @@ export function computeRecruiterAppeal(
       actionType: 'trim-long-bullet',
     });
   }
-  if (claritySummaryPts < 20) {
+  if (claritySummaryPts < 18 && summaryWords > 52) {
     appealFixes.push({
       id: 'fix-appeal-shorten-summary',
       title: 'Tighten summary to 2 sentences (under 55 words)',

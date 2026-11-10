@@ -1,4 +1,5 @@
 import { DocumentExporter, ExporterCatalog } from '../../../core/application';
+import { docxDocumentExporter } from './docx';
 import { markdownResumeExporter } from './markdown';
 import { pdfResumeExporter } from './pdf';
 import { plainTextDocumentExporter } from './text';
@@ -9,6 +10,7 @@ import { plainTextDocumentExporter } from './text';
  */
 const REGISTERED_EXPORTERS: DocumentExporter[] = [
   pdfResumeExporter,
+  docxDocumentExporter,
   markdownResumeExporter,
   plainTextDocumentExporter,
 ];

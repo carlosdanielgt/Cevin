@@ -1,14 +1,19 @@
 import {
   ArrowRight,
+  Calendar,
+  ChevronDown,
   Copy,
   FileText,
+  Filter,
   GitCompare,
   Link2,
   MoreHorizontal,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Sparkles,
+  StickyNote,
   Trash2,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -100,6 +105,8 @@ const ALL_STATUSES: ApplicationStatus[] = [
 ];
 
 type SortMode = 'best-fit' | 'recent';
+type ScoreFilterDimension = 'jobMatch' | 'recruiterAppeal' | 'atsReadiness';
+const SCORE_THRESHOLDS = [0, 60, 70, 80, 85] as const;
 
 export function ApplicationsView({
   initialSelectedId,
@@ -134,6 +141,11 @@ export function ApplicationsView({
   const [statusFilter, setStatusFilter] = useState<ApplicationStatus | 'All'>(
     'All',
   );
+  const [minScoreFilter, setMinScoreFilter] = useState<number>(0);
+  const [scoreDimension, setScoreDimension] =
+    useState<ScoreFilterDimension>('jobMatch');
+  const [companyFilter, setCompanyFilter] = useState<string>('All');
+  const [roleFilter, setRoleFilter] = useState<string>('All');
   const [sortMode, setSortMode] = useState<SortMode>('best-fit');
   const [hideConflicts, setHideConflicts] = useState(false);
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -200,16 +212,61 @@ export function ApplicationsView({
     return map;
   }, [applications, preferences]);
 
-  // Non-empty status filters (never show "Offer 0")
+  // Non-empty status filters for quick tabs (plus currently selected status if empty)
   const visibleStatusFilters = useMemo(() => {
-    const nonEmpty = ALL_STATUSES.filter((s) =>
-      applications.some((a) => a.status === s),
+    const nonEmpty = ALL_STATUSES.filter(
+      (s) =>
+        applications.some((a) => a.status === s) || statusFilter === s,
     );
     return ['All' as const, ...nonEmpty];
+  }, [applications, statusFilter]);
+
+  const distinctCompanies = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const app of applications) {
+      const name = app.company.trim();
+      if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
   }, [applications]);
+
+  const distinctRoles = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const app of applications) {
+      const role = app.roleTitle.trim();
+      if (role) counts.set(role, (counts.get(role) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
+  }, [applications]);
+
+  const hasActiveFilters =
+    statusFilter !== 'All' ||
+    minScoreFilter > 0 ||
+    companyFilter !== 'All' ||
+    roleFilter !== 'All' ||
+    searchQuery.trim().length > 0 ||
+    hideConflicts;
+
+  const handleResetFilters = () => {
+    setStatusFilter('All');
+    setMinScoreFilter(0);
+    setCompanyFilter('All');
+    setRoleFilter('All');
+    setSearchQuery('');
+    setHideConflicts(false);
+  };
 
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const companyQuery =
+      companyFilter === 'All' ? '' : companyFilter.trim().toLowerCase();
+    const roleQuery =
+      roleFilter === 'All' ? '' : roleFilter.trim().toLowerCase();
+
     const list = applications.filter((app) => {
       const matchesStatus =
         statusFilter === 'All' || app.status === statusFilter;
@@ -217,10 +274,31 @@ export function ApplicationsView({
         !q ||
         app.company.toLowerCase().includes(q) ||
         app.roleTitle.toLowerCase().includes(q);
+      const matchesCompany =
+        !companyQuery || app.company.toLowerCase().includes(companyQuery);
+      const matchesRole =
+        !roleQuery || app.roleTitle.toLowerCase().includes(roleQuery);
+
+      const appScore =
+        scoreDimension === 'recruiterAppeal'
+          ? (app.latestScores.recruiterAppeal ?? 78)
+          : scoreDimension === 'atsReadiness'
+            ? app.latestScores.atsReadiness
+            : app.latestScores.jobMatch;
+      const matchesScore = minScoreFilter <= 0 || appScore >= minScoreFilter;
+
       const fitInfo = fitByAppId[app.id];
       const passesConflictFilter =
         !hideConflicts || (fitInfo?.fit.dealbreakerCount ?? 0) === 0;
-      return matchesStatus && matchesSearch && passesConflictFilter;
+
+      return (
+        matchesStatus &&
+        matchesSearch &&
+        matchesCompany &&
+        matchesRole &&
+        matchesScore &&
+        passesConflictFilter
+      );
     });
 
     return [...list].sort((a, b) => {
@@ -239,6 +317,10 @@ export function ApplicationsView({
     applications,
     searchQuery,
     statusFilter,
+    companyFilter,
+    roleFilter,
+    minScoreFilter,
+    scoreDimension,
     hideConflicts,
     sortMode,
     fitByAppId,
@@ -248,6 +330,7 @@ export function ApplicationsView({
     return (
       filteredApps.find((a) => a.id === selectedId) ??
       filteredApps[0] ??
+      applications.find((a) => a.id === selectedId) ??
       applications[0] ??
       null
     );
@@ -336,6 +419,7 @@ export function ApplicationsView({
     setApplications((prev) =>
       prev.map((a) => (a.id === updated.id ? updated : a)),
     );
+    addToast('Saved application details & notes.', 'success');
   };
 
   const handleToggleFactsExpanded = async (
@@ -452,10 +536,23 @@ export function ApplicationsView({
     stageDefaultFactsMode === 'hidden-link' &&
     activeApp.factsExpandedOverride !== true;
 
-
   const isDetailsOpen = activeApp
     ? Boolean(detailsOpenByAppId[activeApp.id])
     : false;
+
+  const hasSavedDetailsOrNotes = Boolean(
+    activeApp &&
+      (activeApp.notes?.trim() ||
+        activeApp.appliedDate?.trim() ||
+        activeApp.postingUrl?.trim()),
+  );
+
+  const scoreDimensionShortLabel =
+    scoreDimension === 'recruiterAppeal'
+      ? 'Appeal'
+      : scoreDimension === 'atsReadiness'
+        ? 'ATS'
+        : 'Match';
 
   return (
     <div className="space-y-6 pb-16">
@@ -498,7 +595,7 @@ export function ApplicationsView({
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Pane (4 cols): Search + ViewMenu, Non-empty Status Filter Chips, Application List */}
+          {/* Left Pane (4 cols): Search + ViewMenu, Status Tabs, Faceted Filters (Score, Role, Company, Status), Application List */}
           <div className="lg:col-span-4 bg-surface border border-border rounded-xl p-3.5 shadow-sm space-y-3">
             <div className="flex items-center gap-2">
               <div className="relative flex-1 min-w-0">
@@ -519,7 +616,7 @@ export function ApplicationsView({
               />
             </div>
 
-            {/* Status Filter Chips (only non-empty statuses) */}
+            {/* Status Filter Chips (synced with Status filter popover) */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-hairline">
               {visibleStatusFilters.map((status) => {
                 const count =
@@ -545,104 +642,410 @@ export function ApplicationsView({
               })}
             </div>
 
-            {/* Application rows: fixed 3-row structure + right ScoreRing/EstimateRing (max 1 AttentionToken) */}
-            <div className="space-y-1.5 max-h-[640px] overflow-y-auto pr-0.5">
-              {filteredApps.map((app) => {
-                const isSelected = activeApp?.id === app.id;
-                const appFit = fitByAppId[app.id]?.fit;
-                const attentionToken = appFit
-                  ? deriveRowAttentionToken({
-                      fit: appFit,
-                      mustHaveGapCount: app.latestScores.gapKeywords.length,
-                      firstGapTerm: app.latestScores.gapKeywords[0],
-                    })
-                  : null;
+            {/* Faceted Filter Bar: Score, Role, Company, Status */}
+            <div
+              data-testid="applications-filter-bar"
+              className="flex flex-wrap items-center gap-1.5 pb-1 border-b border-hairline"
+            >
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-subtle mr-0.5">
+                <Filter className="w-3 h-3" />
+                <span>Filter:</span>
+              </span>
 
-                return (
-                  <div
-                    key={app.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      setSelectedId(app.id);
-                      setCompareIds([]);
-                      onSelectApplication(app.id);
-                    }}
-                    onDoubleClick={() =>
-                      app.status === 'Prospect'
-                        ? void handlePromoteProspect(app)
-                        : onOpenStudio(app.id)
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setSelectedId(app.id);
-                        onSelectApplication(app.id);
-                      }
-                    }}
-                    className={`group relative w-full text-left p-3 rounded-lg border transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-accent-50/60 border-accent/35 shadow-xs'
-                        : 'bg-surface border-hairline hover:bg-surface-raised hover:border-border-strong'
+              {/* 1. Score Filter */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="filter-score-trigger"
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                      minScoreFilter > 0
+                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
                     }`}
                   >
-                    {isSelected && (
-                      <span
-                        aria-hidden="true"
-                        className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-accent"
-                      />
-                    )}
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <Avatar
-                          name={app.company}
-                          size="sm"
-                          className="mt-0.5 shrink-0"
-                        />
-                        <div className="min-w-0 flex-1 space-y-1">
-                          {/* Row 1: company + status pill */}
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-sm text-ink truncate">
-                              {app.company}
-                            </span>
-                            <StatusBadge status={app.status} />
-                          </div>
-
-                          {/* Row 2: role title */}
-                          <p
-                            className="text-xs text-ink-muted truncate"
-                            title={app.roleTitle}
-                          >
-                            {app.roleTitle}
-                          </p>
-
-                          {/* Row 3: relative date + at most ONE AttentionToken */}
-                          <div className="flex items-center gap-2 pt-0.5 min-h-[22px]">
-                            <span className="text-xs text-ink-subtle tabular-nums shrink-0">
-                              {formatRelativeDate(app.updatedAt)}
-                            </span>
-                            {attentionToken && (
-                              <AttentionToken token={attentionToken} />
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right: 36px ScoreRing or EstimateRing */}
-                      <div className="shrink-0 pl-1">
-                        {app.status === 'Prospect' ? (
-                          <EstimateRing score={app.latestScores.jobMatch} />
-                        ) : (
-                          <ScoreRing
-                            score={app.latestScores.jobMatch}
-                            label="Job match"
-                          />
-                        )}
-                      </div>
+                    <span>
+                      {minScoreFilter > 0
+                        ? `${scoreDimensionShortLabel} ${minScoreFilter}+`
+                        : 'Score'}
+                    </span>
+                    <ChevronDown className="w-3 h-3 opacity-70" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-64 p-3 space-y-3">
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                      Score metric
+                    </span>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(
+                        [
+                          { id: 'jobMatch', label: 'Job match' },
+                          { id: 'recruiterAppeal', label: 'Appeal' },
+                          { id: 'atsReadiness', label: 'ATS check' },
+                        ] as const
+                      ).map((dim) => (
+                        <button
+                          key={dim.id}
+                          type="button"
+                          onClick={() => setScoreDimension(dim.id)}
+                          className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                            scoreDimension === dim.id
+                              ? 'bg-ink-900 text-ink-100 font-semibold'
+                              : 'bg-surface-sunken text-ink-muted hover:text-ink'
+                          }`}
+                        >
+                          {dim.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                );
-              })}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                      Minimum score
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {SCORE_THRESHOLDS.map((threshold) => (
+                        <button
+                          key={threshold}
+                          type="button"
+                          onClick={() => setMinScoreFilter(threshold)}
+                          className={`px-2.5 py-1 rounded text-xs font-medium tabular-nums transition-colors cursor-pointer ${
+                            minScoreFilter === threshold
+                              ? 'bg-accent text-white font-semibold'
+                              : 'bg-surface-sunken text-ink-muted hover:text-ink'
+                          }`}
+                        >
+                          {threshold === 0 ? 'Any' : `${threshold}+`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* 2. Role Filter */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="filter-role-trigger"
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
+                      roleFilter !== 'All'
+                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
+                    }`}
+                  >
+                    <span className="truncate">
+                      {roleFilter === 'All' ? 'Role' : roleFilter}
+                    </span>
+                    <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
+                    Filter by role
+                  </div>
+                  <Input
+                    value={roleFilter === 'All' ? '' : roleFilter}
+                    onChange={(e) =>
+                      setRoleFilter(e.target.value ? e.target.value : 'All')
+                    }
+                    placeholder="Type role keyword…"
+                    aria-label="Filter by role keyword"
+                  />
+                  <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setRoleFilter('All')}
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                        roleFilter === 'All'
+                          ? 'bg-ink-900 text-ink-100 font-semibold'
+                          : 'text-ink hover:bg-surface-sunken'
+                      }`}
+                    >
+                      <span>All roles</span>
+                      <span className="opacity-75 tabular-nums">
+                        {applications.length}
+                      </span>
+                    </button>
+                    {distinctRoles.map(([roleName, count]) => (
+                      <button
+                        key={roleName}
+                        type="button"
+                        onClick={() => setRoleFilter(roleName)}
+                        className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                          roleFilter === roleName
+                            ? 'bg-ink-900 text-ink-100 font-semibold'
+                            : 'text-ink hover:bg-surface-sunken'
+                        }`}
+                      >
+                        <span className="truncate">{roleName}</span>
+                        <span className="opacity-75 tabular-nums shrink-0">
+                          {count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* 3. Company Filter */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="filter-company-trigger"
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
+                      companyFilter !== 'All'
+                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
+                    }`}
+                  >
+                    <span className="truncate">
+                      {companyFilter === 'All' ? 'Company' : companyFilter}
+                    </span>
+                    <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
+                    Filter by company
+                  </div>
+                  <Input
+                    value={companyFilter === 'All' ? '' : companyFilter}
+                    onChange={(e) =>
+                      setCompanyFilter(e.target.value ? e.target.value : 'All')
+                    }
+                    placeholder="Type company name…"
+                    aria-label="Filter by company name"
+                  />
+                  <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setCompanyFilter('All')}
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                        companyFilter === 'All'
+                          ? 'bg-ink-900 text-ink-100 font-semibold'
+                          : 'text-ink hover:bg-surface-sunken'
+                      }`}
+                    >
+                      <span>All companies</span>
+                      <span className="opacity-75 tabular-nums">
+                        {applications.length}
+                      </span>
+                    </button>
+                    {distinctCompanies.map(([compName, count]) => (
+                      <button
+                        key={compName}
+                        type="button"
+                        onClick={() => setCompanyFilter(compName)}
+                        className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                          companyFilter === compName
+                            ? 'bg-ink-900 text-ink-100 font-semibold'
+                            : 'text-ink hover:bg-surface-sunken'
+                        }`}
+                      >
+                        <span className="truncate">{compName}</span>
+                        <span className="opacity-75 tabular-nums shrink-0">
+                          {count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* 4. Status Filter (synced with the top Status tabs, shows all statuses) */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="filter-status-trigger"
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                      statusFilter !== 'All'
+                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
+                    }`}
+                  >
+                    <span>
+                      {statusFilter === 'All' ? 'Status' : statusFilter}
+                    </span>
+                    <ChevronDown className="w-3 h-3 opacity-70" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-52 p-2 space-y-1">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1.5 py-0.5">
+                    Application status
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('All')}
+                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                      statusFilter === 'All'
+                        ? 'bg-ink-900 text-ink-100 font-semibold'
+                        : 'text-ink hover:bg-surface-sunken'
+                    }`}
+                  >
+                    <span>All statuses</span>
+                    <span className="opacity-75 tabular-nums">
+                      {applications.length}
+                    </span>
+                  </button>
+                  {ALL_STATUSES.map((st) => {
+                    const count = applications.filter(
+                      (a) => a.status === st,
+                    ).length;
+                    return (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setStatusFilter(st)}
+                        className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                          statusFilter === st
+                            ? 'bg-ink-900 text-ink-100 font-semibold'
+                            : 'text-ink hover:bg-surface-sunken'
+                        }`}
+                      >
+                        <span>{st}</span>
+                        <span className="opacity-75 tabular-nums">{count}</span>
+                      </button>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
+
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  data-testid="reset-application-filters"
+                  onClick={handleResetFilters}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent-50 transition-colors cursor-pointer ml-auto"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
+
+            {/* Application rows: fixed 3-row structure + right ScoreRing/EstimateRing (max 1 AttentionToken) */}
+            <div className="space-y-1.5 max-h-[640px] overflow-y-auto pr-0.5">
+              {filteredApps.length === 0 ? (
+                <div className="py-8 px-4 text-center space-y-2 rounded-lg border border-dashed border-hairline">
+                  <p className="text-xs font-medium text-ink">
+                    No applications match the current filters.
+                  </p>
+                  <p className="text-[11px] text-ink-muted">
+                    Try lowering the minimum score or clearing role, company, or status filters.
+                  </p>
+                  {hasActiveFilters && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleResetFilters}
+                    >
+                      Clear all filters
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                filteredApps.map((app) => {
+                  const isSelected = activeApp?.id === app.id;
+                  const appFit = fitByAppId[app.id]?.fit;
+                  const attentionToken = appFit
+                    ? deriveRowAttentionToken({
+                        fit: appFit,
+                        mustHaveGapCount: app.latestScores.gapKeywords.length,
+                        firstGapTerm: app.latestScores.gapKeywords[0],
+                      })
+                    : null;
+
+                  return (
+                    <div
+                      key={app.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setSelectedId(app.id);
+                        setCompareIds([]);
+                        onSelectApplication(app.id);
+                      }}
+                      onDoubleClick={() =>
+                        app.status === 'Prospect'
+                          ? void handlePromoteProspect(app)
+                          : onOpenStudio(app.id)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedId(app.id);
+                          onSelectApplication(app.id);
+                        }
+                      }}
+                      className={`group relative w-full text-left p-3 rounded-lg border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-accent-50/60 border-accent/35 shadow-xs'
+                          : 'bg-surface border-hairline hover:bg-surface-raised hover:border-border-strong'
+                      }`}
+                    >
+                      {isSelected && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-accent"
+                        />
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <Avatar
+                            name={app.company}
+                            size="sm"
+                            className="mt-0.5 shrink-0"
+                          />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            {/* Row 1: company + status pill */}
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-sm text-ink truncate">
+                                {app.company}
+                              </span>
+                              <StatusBadge status={app.status} />
+                            </div>
+
+                            {/* Row 2: role title */}
+                            <p
+                              className="text-xs text-ink-muted truncate"
+                              title={app.roleTitle}
+                            >
+                              {app.roleTitle}
+                            </p>
+
+                            {/* Row 3: relative date + at most ONE AttentionToken */}
+                            <div className="flex items-center gap-2 pt-0.5 min-h-[22px]">
+                              <span className="text-xs text-ink-subtle tabular-nums shrink-0">
+                                {formatRelativeDate(app.updatedAt)}
+                              </span>
+                              {attentionToken && (
+                                <AttentionToken token={attentionToken} />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right: 36px ScoreRing or EstimateRing */}
+                        <div className="shrink-0 pl-1">
+                          {app.status === 'Prospect' ? (
+                            <EstimateRing score={app.latestScores.jobMatch} />
+                          ) : (
+                            <ScoreRing
+                              score={app.latestScores.jobMatch}
+                              label="Job match"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -758,7 +1161,32 @@ export function ApplicationsView({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      data-testid="toggle-application-details-btn"
+                      onClick={() =>
+                        setDetailsOpenByAppId((prev) => ({
+                          ...prev,
+                          [activeApp.id]: !isDetailsOpen,
+                        }))
+                      }
+                    >
+                      <StickyNote className="w-3.5 h-3.5" />
+                      <span>
+                        {isDetailsOpen
+                          ? 'Hide details & notes'
+                          : 'Details & notes'}
+                      </span>
+                      {hasSavedDetailsOrNotes && !isDetailsOpen && (
+                        <span
+                          aria-label="Has saved details or notes"
+                          className="w-1.5 h-1.5 rounded-full bg-accent"
+                        />
+                      )}
+                    </Button>
+
                     {activeApp.status === 'Prospect' ? (
                       <Button
                         variant="primary"
@@ -849,14 +1277,50 @@ export function ApplicationsView({
                   </div>
                 </div>
 
-                {/* Optional ApplicationDetailsForm (collapsed via ⋯ menu) */}
-                {isDetailsOpen && (
+                {/* Accessible Application Details & Notes strip / form */}
+                {isDetailsOpen ? (
                   <ApplicationDetailsForm
                     postingUrl={activeApp.postingUrl}
                     appliedDate={activeApp.appliedDate}
                     notes={activeApp.notes}
                     onSave={(patch) => void handleSaveAppDetails(activeApp, patch)}
                   />
+                ) : (
+                  <div
+                    data-testid="application-details-summary-bar"
+                    className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg bg-surface-sunken/50 border border-hairline text-xs"
+                  >
+                    <div className="flex flex-wrap items-center gap-4 min-w-0 flex-1">
+                      <span className="inline-flex items-center gap-1.5 font-medium text-ink-muted shrink-0">
+                        <Calendar className="w-3.5 h-3.5 text-ink-subtle" />
+                        <span>
+                          {activeApp.appliedDate
+                            ? `Applied ${activeApp.appliedDate}`
+                            : 'No applied date set'}
+                        </span>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 text-ink-muted min-w-0">
+                        <StickyNote className="w-3.5 h-3.5 text-ink-subtle shrink-0" />
+                        <span className="truncate max-w-md">
+                          {activeApp.notes?.trim()
+                            ? activeApp.notes.trim()
+                            : 'Add posting URL, applied date, or interview notes…'}
+                        </span>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDetailsOpenByAppId((prev) => ({
+                          ...prev,
+                          [activeApp.id]: true,
+                        }))
+                      }
+                      className="text-xs font-semibold text-accent hover:underline shrink-0 cursor-pointer"
+                    >
+                      {hasSavedDetailsOrNotes ? 'Edit details & notes' : 'Add details & notes'}
+                    </button>
+                  </div>
                 )}
 
                 {/* 2. SCORE ROW ALWAYS FIRST (never displaced below the fold by Job facts) */}

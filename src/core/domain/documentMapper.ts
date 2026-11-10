@@ -290,6 +290,7 @@ export function mapToResumeDocument(params: {
       templateId,
       templateVersion: TEMPLATE_SPEC_VERSION,
       pageSize,
+      textAlign: draft.textAlign ?? 'left',
       voice,
       targetCompany,
       targetRole,

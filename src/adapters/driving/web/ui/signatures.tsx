@@ -1,5 +1,8 @@
 import {
   AlertTriangle,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   ArrowDown,
   ArrowUp,
   Briefcase,
@@ -61,6 +64,7 @@ import {
   Skill,
   StudioStep,
   TemplateId,
+  TextAlign,
   UserPreferences,
   VoiceLevel,
   findInlineCliches,
@@ -3880,6 +3884,8 @@ export function TimelineRail({
 export function PreviewToolbar({
   templateId,
   onChangeTemplate,
+  textAlign = 'left',
+  onChangeTextAlign,
   zoom,
   onChangeZoom,
   currentPage = 1,
@@ -3891,6 +3897,8 @@ export function PreviewToolbar({
 }: {
   templateId: TemplateId;
   onChangeTemplate: (next: TemplateId) => void;
+  textAlign?: TextAlign;
+  onChangeTextAlign?: (next: TextAlign) => void;
   zoom: 'sm' | 'md' | 'lg';
   onChangeZoom: (next: 'sm' | 'md' | 'lg') => void;
   currentPage?: number;
@@ -3905,6 +3913,28 @@ export function PreviewToolbar({
     { id: 'classic', label: 'Classic', desc: 'Editorial serif headings' },
     { id: 'modern', label: 'Modern', desc: 'Clean cobalt accents' },
     { id: 'compact', label: 'Compact', desc: 'High-density 1-page fit' },
+  ];
+
+  const alignOptions: Array<{
+    value: TextAlign;
+    label: string;
+    icon: typeof AlignLeft;
+  }> = [
+    {
+      value: 'left',
+      label: 'Align section content left',
+      icon: AlignLeft,
+    },
+    {
+      value: 'justify',
+      label: 'Justify section content evenly',
+      icon: AlignJustify,
+    },
+    {
+      value: 'right',
+      label: 'Align section content right',
+      icon: AlignRight,
+    },
   ];
 
   const zoomLabel = zoom === 'sm' ? '90%' : zoom === 'lg' ? '110%' : '100%';
@@ -3958,6 +3988,40 @@ export function PreviewToolbar({
           </div>
         </PopoverContent>
       </Popover>
+
+      {onChangeTextAlign && (
+        <>
+          <span aria-hidden="true" className="h-4 w-px bg-hairline" />
+          <div
+            role="group"
+            aria-label="Section content alignment"
+            className="inline-flex items-center gap-0.5 bg-surface-sunken/80 border border-hairline rounded-full p-0.5"
+          >
+            {alignOptions.map((opt) => {
+              const Icon = opt.icon;
+              const active = textAlign === opt.value;
+              return (
+                <Tooltip key={opt.value} content={opt.label}>
+                  <button
+                    type="button"
+                    aria-label={opt.label}
+                    aria-pressed={active}
+                    onClick={() => onChangeTextAlign(opt.value)}
+                    className={cn(
+                      'w-6 h-6 rounded-full inline-flex items-center justify-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                      active
+                        ? 'bg-accent text-white shadow-xs'
+                        : 'text-ink-muted hover:text-ink hover:bg-surface',
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {onToggleSkimMode && (
         <>
@@ -4038,6 +4102,8 @@ export function DeskPreview({
   coverLetterDoc,
   templateId,
   onChangeTemplate,
+  textAlign = 'left',
+  onChangeTextAlign,
   zoom,
   onChangeZoom,
   pageSize = 'letter',
@@ -4057,6 +4123,8 @@ export function DeskPreview({
   coverLetterDoc: CoverLetterDocument;
   templateId: TemplateId;
   onChangeTemplate: (next: TemplateId) => void;
+  textAlign?: TextAlign;
+  onChangeTextAlign?: (next: TextAlign) => void;
   zoom: 'sm' | 'md' | 'lg';
   onChangeZoom: (next: 'sm' | 'md' | 'lg') => void;
   pageSize?: PageSize;
@@ -4089,6 +4157,8 @@ export function DeskPreview({
       <PreviewToolbar
         templateId={templateId}
         onChangeTemplate={onChangeTemplate}
+        textAlign={textAlign}
+        onChangeTextAlign={onChangeTextAlign}
         zoom={zoom}
         onChangeZoom={onChangeZoom}
         currentPage={currentPage}

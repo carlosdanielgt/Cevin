@@ -1060,6 +1060,7 @@ export function mapToCoverLetterDocument(params: {
       templateId,
       templateVersion: TEMPLATE_SPEC_VERSION,
       pageSize,
+      textAlign: draft.textAlign ?? 'left',
       voice: draft.voice,
       targetCompany,
       targetRole,

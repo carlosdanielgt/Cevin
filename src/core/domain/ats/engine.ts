@@ -350,13 +350,19 @@ export function computeAtsAndJobMatchScores(
 
   if (titleAlignmentScore < 95 && (parsedJob?.title || application.roleTitle)) {
     const desiredTitle = parsedJob?.title || application.roleTitle;
+    const currentHeadline = (
+      draft.targetHeadline ||
+      bank.profile.headline ||
+      ''
+    ).trim();
     fixes.push({
       id: 'fix-align-headline',
       title: `Align resume headline to "${desiredTitle}"`,
       impactPoints: 4,
       category: 'title',
-      description:
-        'ATS title-matching and 10-second recruiter skims both check whether your top headline mirrors the target role title.',
+      description: currentHeadline
+        ? `Updates your resume header title from "${currentHeadline}" to "${desiredTitle}" so ATS and recruiter skims match the target role.`
+        : `Sets your resume header title to "${desiredTitle}" so ATS and recruiter skims match the target role.`,
       actionType: 'align-headline',
       actionPayload: desiredTitle,
     });

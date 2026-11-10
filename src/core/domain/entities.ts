@@ -225,6 +225,9 @@ export const TailoredBulletSchema = z.object({
 });
 export type TailoredBullet = z.infer<typeof TailoredBulletSchema>;
 
+export const TextAlignSchema = z.enum(['left', 'justify', 'right']);
+export type TextAlign = z.infer<typeof TextAlignSchema>;
+
 export const ResumeDraftContentSchema = z.object({
   targetHeadline: z.string(),
   summary: z.string(),
@@ -237,6 +240,7 @@ export const ResumeDraftContentSchema = z.object({
   selectedEducationIds: z.array(z.string()),
   selectedCertificationIds: z.array(z.string()),
   experienceOrder: z.array(z.string()).optional(),
+  textAlign: TextAlignSchema.optional(),
   bullets: z.array(TailoredBulletSchema),
 });
 export type ResumeDraftContent = z.infer<typeof ResumeDraftContentSchema>;
@@ -258,6 +262,7 @@ export const CoverLetterDraftSchema = z.object({
   selectedProofAchievementIds: z.array(z.string()),
   whyCompanyNotes: z.string(),
   voice: VoiceLevelSchema,
+  textAlign: TextAlignSchema.optional(),
   blocks: z.array(CoverLetterBlockSchema),
 });
 export type CoverLetterDraft = z.infer<typeof CoverLetterDraftSchema>;
@@ -392,6 +397,7 @@ export interface ResumeDocument {
     templateId: TemplateId;
     templateVersion?: string;
     pageSize?: PageSize;
+    textAlign?: TextAlign;
     contentHash?: string;
     voice: VoiceLevel;
     targetCompany: string;
@@ -459,6 +465,7 @@ export interface CoverLetterDocument {
     templateId: TemplateId;
     templateVersion?: string;
     pageSize?: PageSize;
+    textAlign?: TextAlign;
     contentHash?: string;
     voice: VoiceLevel;
     targetCompany: string;
