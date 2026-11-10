@@ -72,6 +72,7 @@ export function rankBankItemsForJob(
   embeddings?: {
     jobVector: number[];
     achievementVectors: Record<string, number[]>;
+    skillVectors?: Record<string, number[]>;
   },
 ): BankRankingResult {
   const customAliases = buildCustomAliasMap(bank.skills);
@@ -175,28 +176,132 @@ export function rankBankItemsForJob(
 
   rankedAchievements.sort((a, b) => b.score - a.score);
 
-  // Recommend skills that match JD first, followed by remaining Bank skills
-  const recommendedSkillIds: string[] = [];
+  // Recommend skills that match JD directly first, followed by top relevant transferable skills
+  // (targeted selection: 8 to 14 skills, max 16, never dumping entire 60-skill bank)
+  const scoredSkills: Array<{
+    skill: Skill;
+    score: number;
+    isDirectMatch: boolean;
+  }> = [];
+
+  const topRankedAchievements = rankedAchievements.slice(0, 6);
   const jdCorpus = `${parsedJob.title} ${parsedJob.requirements.map((r) => r.text).join(' ')} ${parsedJob.keywords.map((k) => k.term).join(' ')} ${parsedJob.responsibilities.join(' ')}`;
 
   for (const skill of bank.skills) {
+    let score = 0;
+    let isDirectMatch = false;
     const skillCorpus = `${skill.name} ${skill.aliases.join(' ')}`;
+
+    // 1. Direct requirement check
+    for (const req of parsedJob.requirements) {
+      const matchName =
+        evaluateKeywordPresence(skill.name, req.text, customAliases) !== 'gap';
+      const matchAlias = skill.aliases.some(
+        (a) => evaluateKeywordPresence(a, req.text, customAliases) !== 'gap',
+      );
+      const reverseMatch =
+        evaluateKeywordPresence(req.text, skillCorpus, customAliases) !== 'gap';
+      if (matchName || matchAlias || reverseMatch) {
+        isDirectMatch = true;
+        score += req.priority === 'must-have' ? 18 : 12;
+      }
+    }
+
+    // 2. Keyword presence in JD corpus
     const presence = evaluateKeywordPresence(
       skill.name,
       jdCorpus,
       customAliases,
     );
-    const reversePresence = parsedJob.requirements.some(
-      (r) =>
-        evaluateKeywordPresence(r.text, skillCorpus, customAliases) !== 'gap',
-    );
-    if (presence !== 'gap' || reversePresence) {
-      recommendedSkillIds.push(skill.id);
+    if (presence !== 'gap') {
+      isDirectMatch = true;
+      score += presence === 'covered' ? 15 : 10;
+    } else {
+      for (const a of skill.aliases) {
+        if (evaluateKeywordPresence(a, jdCorpus, customAliases) !== 'gap') {
+          isDirectMatch = true;
+          score += 10;
+          break;
+        }
+      }
+    }
+
+    // 3. Title alignment
+    if (
+      parsedJob.title &&
+      evaluateKeywordPresence(skill.name, parsedJob.title, customAliases) !==
+        'gap'
+    ) {
+      isDirectMatch = true;
+      score += 10;
+    }
+
+    // 4. Grounding in candidate's top ranked achievements
+    for (const item of topRankedAchievements) {
+      const ach = item.achievement;
+      const achText = `${ach.action} ${ach.result} ${ach.metric ?? ''} ${ach.tags.join(' ')}`;
+      if (
+        ach.tags.some(
+          (t) =>
+            t.toLowerCase() === skill.name.toLowerCase() ||
+            skill.aliases.some((a) => a.toLowerCase() === t.toLowerCase()),
+        ) ||
+        evaluateKeywordPresence(skill.name, achText, customAliases) !== 'gap'
+      ) {
+        score += 4;
+      }
+    }
+
+    // 5. Semantic / vector similarity if embeddings are supplied
+    if (
+      embeddings?.jobVector &&
+      embeddings?.skillVectors?.[skill.id]
+    ) {
+      const sim = cosineSimilarity(
+        embeddings.jobVector,
+        embeddings.skillVectors[skill.id],
+      );
+      if (sim > 0.65) {
+        score += Math.round(sim * 15);
+        if (sim > 0.75) {
+          isDirectMatch = true;
+        }
+      }
+    }
+
+    scoredSkills.push({ skill, score, isDirectMatch });
+  }
+
+  // Sort by score descending
+  scoredSkills.sort((a, b) => b.score - a.score);
+
+  const directMatches = scoredSkills.filter(
+    (s) => s.isDirectMatch && s.score > 0,
+  );
+  const transferable = scoredSkills.filter(
+    (s) => !s.isDirectMatch && s.score > 0,
+  );
+
+  const recommendedSkillIds: string[] = [];
+
+  // Always include direct matches up to 14
+  for (const item of directMatches) {
+    if (recommendedSkillIds.length < 14) {
+      recommendedSkillIds.push(item.skill.id);
     }
   }
-  for (const skill of bank.skills) {
-    if (!recommendedSkillIds.includes(skill.id)) {
-      recommendedSkillIds.push(skill.id);
+
+  // If fewer than 10 skills, fill with top-scoring transferable skills
+  for (const item of transferable) {
+    if (recommendedSkillIds.length < 10) {
+      recommendedSkillIds.push(item.skill.id);
+    }
+  }
+
+  // If the job has no requirements or bank has very few matches, ensure at least 6-8 top skills from the bank if available
+  if (recommendedSkillIds.length === 0 && bank.skills.length > 0) {
+    for (const item of scoredSkills.slice(0, 8)) {
+      recommendedSkillIds.push(item.skill.id);
     }
   }
 

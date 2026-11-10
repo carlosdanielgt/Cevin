@@ -2098,55 +2098,192 @@ export function StudioView({
                 {/* Included Skills */}
                 <PanelSection className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-ink">
-                      Included skills (
-                      {app.workingDraft.selectedSkillIds.length} of{' '}
-                      {bank.skills.length})
-                    </h3>
+                    <div>
+                      <h3 className="text-sm font-semibold text-ink">
+                        Included skills (
+                        {
+                          bank.skills.filter((s) =>
+                            app.workingDraft.selectedSkillIds.includes(s.id),
+                          ).length
+                        }{' '}
+                        of {bank.skills.length})
+                      </h3>
+                      <p className="text-xs text-ink-muted mt-0.5">
+                        Targeted for this role. Click any chip to toggle it on or off.
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {bank.skills.map((skill) => {
-                      const selected =
-                        app.workingDraft.selectedSkillIds.includes(skill.id);
-                      return (
-                        <button
-                          key={skill.id}
-                          type="button"
-                          onClick={() => {
-                            const nextSelected = selected
-                              ? app.workingDraft.selectedSkillIds.filter(
+
+                  {/* Selected skills group */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+                      Active on resume
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {bank.skills
+                        .filter((skill) =>
+                          app.workingDraft.selectedSkillIds.includes(skill.id),
+                        )
+                        .map((skill) => (
+                          <button
+                            key={skill.id}
+                            type="button"
+                            onClick={() => {
+                              const nextSelected =
+                                app.workingDraft.selectedSkillIds.filter(
                                   (id) => id !== skill.id,
-                                )
-                              : [
+                                );
+                              const prevExcluded =
+                                app.workingDraft.excludedSkillIds ?? [];
+                              const nextExcluded = Array.from(
+                                new Set([...prevExcluded, skill.id]),
+                              );
+                              void persistApp({
+                                ...app,
+                                workingDraft: {
+                                  ...app.workingDraft,
+                                  selectedSkillIds: nextSelected,
+                                  excludedSkillIds: nextExcluded,
+                                },
+                              });
+                            }}
+                            className="px-2.5 py-1 rounded-sm text-xs font-semibold border bg-accent-50 text-accent-700 border-accent/30 hover:bg-warning-50 hover:text-warning-800 hover:border-warning-300 transition-colors cursor-pointer flex items-center gap-1.5"
+                            title="Click to remove from resume"
+                          >
+                            <span>{skill.name}</span>
+                            <span className="text-[10px] text-accent/60">×</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Unselected skills from bank */}
+                  {bank.skills.some(
+                    (s) => !app.workingDraft.selectedSkillIds.includes(s.id),
+                  ) && (
+                    <div className="space-y-1.5 pt-2 border-t border-hairline">
+                      <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+                        More from your Bank (click to add)
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto pr-1">
+                        {bank.skills
+                          .filter(
+                            (skill) =>
+                              !app.workingDraft.selectedSkillIds.includes(
+                                skill.id,
+                              ),
+                          )
+                          .map((skill) => (
+                            <button
+                              key={skill.id}
+                              type="button"
+                              onClick={() => {
+                                const nextSelected = [
                                   ...app.workingDraft.selectedSkillIds,
                                   skill.id,
                                 ];
-                            const prevExcluded =
-                              app.workingDraft.excludedSkillIds ?? [];
-                            const nextExcluded = selected
-                              ? Array.from(new Set([...prevExcluded, skill.id]))
-                              : prevExcluded.filter((id) => id !== skill.id);
-                            void persistApp({
-                              ...app,
-                              workingDraft: {
-                                ...app.workingDraft,
-                                selectedSkillIds: nextSelected,
-                                excludedSkillIds: nextExcluded,
-                              },
-                            });
-                          }}
-                          className={`px-2.5 py-1 rounded-sm text-xs font-medium border transition-colors cursor-pointer ${
-                            selected
-                              ? 'bg-accent-50 text-accent-700 border-accent/30 font-semibold'
-                              : 'bg-surface-sunken text-ink-muted border-hairline hover:text-ink'
-                          }`}
-                        >
-                          {skill.name}
-                        </button>
-                      );
-                    })}
-                  </div>
+                                const prevExcluded =
+                                  app.workingDraft.excludedSkillIds ?? [];
+                                const nextExcluded = prevExcluded.filter(
+                                  (id) => id !== skill.id,
+                                );
+                                void persistApp({
+                                  ...app,
+                                  workingDraft: {
+                                    ...app.workingDraft,
+                                    selectedSkillIds: nextSelected,
+                                    excludedSkillIds: nextExcluded,
+                                  },
+                                });
+                              }}
+                              className="px-2.5 py-1 rounded-sm text-xs font-medium border bg-surface-sunken text-ink-muted border-hairline hover:text-ink hover:border-accent/40 hover:bg-surface transition-colors cursor-pointer flex items-center gap-1"
+                              title="Click to include on resume"
+                            >
+                              <Plus className="w-3 h-3 text-ink-muted" />
+                              <span>{skill.name}</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </PanelSection>
+
+                {/* Included Projects */}
+                {bank.projects.length > 0 && (
+                  <PanelSection className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-ink">
+                          Included projects (
+                          {
+                            bank.projects.filter((p) =>
+                              app.workingDraft.selectedProjectIds.includes(p.id),
+                            ).length
+                          }{' '}
+                          of {bank.projects.length})
+                        </h3>
+                        <p className="text-xs text-ink-muted mt-0.5">
+                          Toggle projects to include or exclude on your resume.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {bank.projects.map((proj) => {
+                        const isIncluded =
+                          app.workingDraft.selectedProjectIds.includes(proj.id);
+                        return (
+                          <div
+                            key={proj.id}
+                            className={`p-3 rounded-lg border transition-colors flex items-center justify-between gap-3 ${
+                              isIncluded
+                                ? 'bg-surface border-accent/30 shadow-xs'
+                                : 'bg-surface-sunken/40 border-hairline opacity-75'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-ink">
+                                  {proj.name}
+                                </span>
+                                {proj.role && (
+                                  <span className="text-[11px] text-ink-muted">
+                                    · {proj.role}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-ink-muted line-clamp-1 mt-0.5">
+                                {proj.description}
+                              </p>
+                            </div>
+                            <Button
+                              variant={isIncluded ? 'secondary' : 'ghost'}
+                              size="sm"
+                              onClick={() => {
+                                const nextProjects = isIncluded
+                                  ? app.workingDraft.selectedProjectIds.filter(
+                                      (id) => id !== proj.id,
+                                    )
+                                  : [
+                                      ...app.workingDraft.selectedProjectIds,
+                                      proj.id,
+                                    ];
+                                void persistApp({
+                                  ...app,
+                                  workingDraft: {
+                                    ...app.workingDraft,
+                                    selectedProjectIds: nextProjects,
+                                  },
+                                });
+                              }}
+                            >
+                              {isIncluded ? 'Included' : 'Add to resume'}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </PanelSection>
+                )}
 
                 <StickyFooterBar>
                   <Button

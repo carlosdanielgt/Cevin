@@ -1095,59 +1095,131 @@ export function BankView() {
             </Button>
           </div>
           <div className="space-y-3">
-            {bank.projects.map((proj) => (
-              <div
-                key={proj.id}
-                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input
-                    value={proj.name}
-                    onChange={(e) => {
-                      const next = bank.projects.map((p) =>
-                        p.id === proj.id ? { ...p, name: e.target.value } : p,
-                      );
-                      void persistBank({ ...bank, projects: next });
-                    }}
-                    placeholder="Project name"
-                  />
-                  <Input
-                    value={proj.role}
-                    onChange={(e) => {
-                      const next = bank.projects.map((p) =>
-                        p.id === proj.id ? { ...p, role: e.target.value } : p,
-                      );
-                      void persistBank({ ...bank, projects: next });
-                    }}
-                    placeholder="Role"
-                  />
-                </div>
-                <Input
-                  value={proj.link ?? ''}
-                  onChange={(e) => {
-                    const next = bank.projects.map((p) =>
-                      p.id === proj.id
-                        ? { ...p, link: e.target.value.trim() || undefined }
-                        : p,
-                    );
-                    void persistBank({ ...bank, projects: next });
-                  }}
-                  placeholder="Project Link (e.g. https://github.com/user/repo) — rendered in PROJECTS section"
-                />
-                <Textarea
-                  rows={2}
-                  value={proj.description}
-                  onChange={(e) => {
-                    const next = bank.projects.map((p) =>
-                      p.id === proj.id
-                        ? { ...p, description: e.target.value }
-                        : p,
-                    );
-                    void persistBank({ ...bank, projects: next });
-                  }}
-                />
+            {bank.projects.length === 0 ? (
+              <div className="p-8 text-center border border-dashed border-hairline rounded-lg text-ink-muted text-sm">
+                No projects added yet. Click &quot;Add project&quot; above to add open source tools, libraries, or portfolio projects.
               </div>
-            ))}
+            ) : (
+              bank.projects.map((proj) => (
+                <div
+                  key={proj.id}
+                  className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium text-sm text-ink flex items-center gap-2">
+                      <FolderGit2 className="w-4 h-4 text-accent" />
+                      <span>{proj.name || 'Untitled Project'}</span>
+                      {proj.role && (
+                        <span className="text-xs text-ink-muted">· {proj.role}</span>
+                      )}
+                    </div>
+                    <IconButton
+                      size="sm"
+                      label="Delete project"
+                      onClick={() => {
+                        const next = bank.projects.filter(
+                          (p) => p.id !== proj.id,
+                        );
+                        void persistBank({ ...bank, projects: next });
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-warning-700" />
+                    </IconButton>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                        Project name
+                      </label>
+                      <Input
+                        value={proj.name}
+                        onChange={(e) => {
+                          const next = bank.projects.map((p) =>
+                            p.id === proj.id ? { ...p, name: e.target.value } : p,
+                          );
+                          void persistBank({ ...bank, projects: next });
+                        }}
+                        placeholder="e.g. distributed-rate-limiter"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                        Role
+                      </label>
+                      <Input
+                        value={proj.role}
+                        onChange={(e) => {
+                          const next = bank.projects.map((p) =>
+                            p.id === proj.id ? { ...p, role: e.target.value } : p,
+                          );
+                          void persistBank({ ...bank, projects: next });
+                        }}
+                        placeholder="e.g. Creator & Maintainer"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Project link (optional)
+                    </label>
+                    <Input
+                      value={proj.link ?? ''}
+                      onChange={(e) => {
+                        const next = bank.projects.map((p) =>
+                          p.id === proj.id
+                            ? { ...p, link: e.target.value.trim() || undefined }
+                            : p,
+                        );
+                        void persistBank({ ...bank, projects: next });
+                      }}
+                      placeholder="https://github.com/user/repo — rendered in PROJECTS section"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Description
+                    </label>
+                    <Textarea
+                      rows={2}
+                      value={proj.description}
+                      onChange={(e) => {
+                        const next = bank.projects.map((p) =>
+                          p.id === proj.id
+                            ? { ...p, description: e.target.value }
+                            : p,
+                        );
+                        void persistBank({ ...bank, projects: next });
+                      }}
+                      placeholder="Brief 1-2 sentence overview of the project"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                      Key highlights / metrics (one bullet per line, optional)
+                    </label>
+                    <Textarea
+                      rows={2}
+                      value={(proj.highlights ?? []).join('\n')}
+                      onChange={(e) => {
+                        const lines = e.target.value
+                          .split('\n')
+                          .map((l) => l.trim())
+                          .filter(Boolean);
+                        const next = bank.projects.map((p) =>
+                          p.id === proj.id ? { ...p, highlights: lines } : p,
+                        );
+                        void persistBank({ ...bank, projects: next });
+                      }}
+                      placeholder="Leave blank if no extra bullet points are desired"
+                    />
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

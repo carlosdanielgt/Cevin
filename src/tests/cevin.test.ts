@@ -2905,6 +2905,63 @@ test('Cevin pure-geometry SVG math & CevinMarkTimingController state machine', (
   assert.equal(formatCevinActivityLabel('warming-up'), 'Cevin is warming up');
 });
 
+test('Smart targeted skill selection against 60-skill Bank and project highlight cleanup', async () => {
+  const bank = createDemoBankSnapshot();
+
+  // 1. Verify demo project has clean highlights (no unwanted 'Adopted by 1,100+' default)
+  assert.deepEqual(bank.projects[0].highlights, []);
+
+  // 2. Expand bank to 60 skills (10 relevant infra/backend skills + 50 unrelated skills)
+  const full60Skills = [...bank.skills];
+  for (let i = full60Skills.length; i < 60; i++) {
+    full60Skills.push({
+      id: `skill-extra-${i}`,
+      name: `Specialty Skill ${i}`,
+      category: 'Tools',
+      aliases: [`Alt ${i}`],
+    });
+  }
+  const largeBank = { ...bank, skills: full60Skills };
+  assert.equal(largeBank.skills.length, 60);
+
+  const { applications } = createDemoApplications(bank);
+  const kestrelApp = applications[0];
+  assert.ok(kestrelApp.parsedJob);
+
+  // 3. Verify ranking selects targeted relevant skills (<= 14), not all 60
+  const ranking = rankBankItemsForJob(largeBank, kestrelApp.parsedJob);
+  assert.ok(
+    ranking.recommendedSkillIds.length >= 8 &&
+      ranking.recommendedSkillIds.length <= 14,
+    `Selected skills should be targeted (expected 8-14, got ${ranking.recommendedSkillIds.length})`,
+  );
+  assert.ok(
+    !ranking.recommendedSkillIds.includes('skill-extra-55'),
+    'Irrelevant bank skill must not be recommended',
+  );
+
+  // 4. Initial demo application must have targeted skills
+  assert.equal(
+    kestrelApp.workingDraft.selectedSkillIds.length,
+    10,
+    'Kestrel demo draft should have 10 targeted skills, not all 60',
+  );
+
+  // 5. Container createApplication with JD uses smart ranking
+  const container = buildCevinContainer({ inMemoryOnly: true, seedDemo: true });
+  await container.manageBank.saveBank(largeBank);
+  const createdApp = await container.manageApplications.createApplication({
+    roleTitle: 'Staff Infrastructure & Reliability Engineer',
+    company: 'Kestrel Pay',
+    jobDescription: kestrelApp.jobDescription,
+  });
+  assert.ok(
+    createdApp.workingDraft.selectedSkillIds.length >= 8 &&
+      createdApp.workingDraft.selectedSkillIds.length <= 14,
+    `New application must have targeted skills (got ${createdApp.workingDraft.selectedSkillIds.length})`,
+  );
+});
+
 
 
 

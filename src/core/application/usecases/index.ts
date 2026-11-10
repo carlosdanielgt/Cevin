@@ -27,12 +27,14 @@ import {
   UserPreferences,
   VoiceLevel,
   applyVoiceLexiconPass,
+  buildCustomAliasMap,
   buildGroundedCoverLetterBlocks,
   computeAtsAndJobMatchScores,
   computeBulletImpactStrength,
   computeDocumentContentHash,
   createDefaultCoverLetterDraft,
   evaluateCoverLetterChecks,
+  evaluateKeywordPresence,
   evaluateFit,
   evaluateQuickCheckPosting,
   evaluateRoundTripText,
@@ -188,11 +190,31 @@ function syncApplicationWithBank(
   let skillsChanged =
     currentSelected.length !== app.workingDraft.selectedSkillIds.length;
 
-  for (const skill of bank.skills) {
-    if (!selectedSet.has(skill.id) && !excludedSet.has(skill.id)) {
-      currentSelected.push(skill.id);
-      selectedSet.add(skill.id);
-      skillsChanged = true;
+  // Only auto-sync newly added bank skills if they match this application's job requirements/keywords
+  // (e.g. candidate added a missing skill like Helm in Experience Bank to cover an identified gap)
+  if (app.parsedJob) {
+    const customAliases = buildCustomAliasMap(bank.skills);
+    const jdCorpus = `${app.parsedJob.title} ${app.parsedJob.requirements.map((r) => r.text).join(' ')} ${app.parsedJob.keywords.map((k) => k.term).join(' ')} ${app.parsedJob.responsibilities.join(' ')}`;
+
+    for (const skill of bank.skills) {
+      if (!selectedSet.has(skill.id) && !excludedSet.has(skill.id)) {
+        const skillCorpus = `${skill.name} ${skill.aliases.join(' ')}`;
+        const presence = evaluateKeywordPresence(
+          skill.name,
+          jdCorpus,
+          customAliases,
+        );
+        const reversePresence = app.parsedJob.requirements.some(
+          (r) =>
+            evaluateKeywordPresence(r.text, skillCorpus, customAliases) !==
+            'gap',
+        );
+        if (presence !== 'gap' || reversePresence) {
+          currentSelected.push(skill.id);
+          selectedSet.add(skill.id);
+          skillsChanged = true;
+        }
+      }
     }
   }
 
@@ -3344,8 +3366,28 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           }
           case 'add-matched-skills': {
             const allSkillIds = new Set(draft.selectedSkillIds);
+            const customAliases = buildCustomAliasMap(bank.skills);
+            const jdCorpus = app.parsedJob
+              ? `${app.parsedJob.title} ${app.parsedJob.requirements.map((r) => r.text).join(' ')} ${app.parsedJob.keywords.map((k) => k.term).join(' ')} ${app.parsedJob.responsibilities.join(' ')}`
+              : '';
             for (const s of bank.skills) {
-              allSkillIds.add(s.id);
+              if (jdCorpus) {
+                const sCorpus = `${s.name} ${s.aliases.join(' ')}`;
+                const match =
+                  evaluateKeywordPresence(s.name, jdCorpus, customAliases) !==
+                    'gap' ||
+                  (app.parsedJob?.requirements.some(
+                    (r) =>
+                      evaluateKeywordPresence(
+                        r.text,
+                        sCorpus,
+                        customAliases,
+                      ) !== 'gap',
+                  ) ?? false);
+                if (match) {
+                  allSkillIds.add(s.id);
+                }
+              }
             }
             draft.selectedSkillIds = Array.from(allSkillIds);
             break;
@@ -3910,6 +3952,10 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           parsedJob?.company ||
           'New Target Company';
 
+        const initialSkillIds = parsedJob
+          ? rankBankItemsForJob(bank, parsedJob).recommendedSkillIds
+          : bank.skills.slice(0, 8).map((s) => s.id);
+
         const workingDraft = {
           targetHeadline: roleTitle,
           summary: buildDeterministicSummary({
@@ -3921,7 +3967,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           summaryLocked: false,
           summarySourceIds: defaultAchIds.slice(0, 2),
           selectedAchievementIds: defaultAchIds,
-          selectedSkillIds: bank.skills.map((s) => s.id),
+          selectedSkillIds: initialSkillIds,
           selectedProjectIds: bank.projects.map((p) => p.id),
           selectedEducationIds: bank.educations.map((e) => e.id),
           selectedCertificationIds: bank.certifications.map((c) => c.id),
