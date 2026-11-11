@@ -6,6 +6,7 @@ import {
   TemplateId,
   TextAlign,
 } from './entities';
+import { formatContactBlock } from './bulletAssembler';
 import { PAGE_SIZES, getTemplateSpec } from './templateSpec';
 
 export interface DocxRenderOptions {
@@ -300,25 +301,34 @@ function buildResumeDocxBodyXml(
     `<w:p><w:pPr><w:spacing w:before="0" w:after="60"/></w:pPr>${nameRuns.join('')}</w:p>`,
   );
 
-  // 2. Contact line with bottom hairline rule
-  const contactSegments = [
-    doc.header.email,
-    doc.header.phone,
-    doc.header.location,
-    ...doc.header.links.map((l) => l.label),
-  ].filter(Boolean);
-  if (contactSegments.length > 0) {
+  // 2. Contact lines with bottom hairline rule on the final contact line
+  const contact = formatContactBlock(doc.header);
+  const hasLine1 = contact.line1.length > 0;
+  const hasLine2 = contact.line2.length > 0;
+  if (hasLine1 || hasLine2) {
     const contactBdr = `<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="${ruleHex}"/></w:pBdr>`;
-    paragraphs.push(
-      `<w:p><w:pPr><w:spacing w:before="0" w:after="120"/>${contactBdr}</w:pPr>${buildRunXml(
-        {
-          text: contactSegments.join('  ·  '),
+    if (hasLine1) {
+      const bdr = !hasLine2 ? contactBdr : '';
+      const afterTwips = hasLine2 ? 30 : 120;
+      paragraphs.push(
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="${afterTwips}"/>${bdr}</w:pPr>${buildRunXml({
+          text: contact.line1.join('  ·  '),
           fontFamily: bodyFont,
           sizePt: spec.sizes.contactPt,
           colorHex: mutedHex,
-        },
-      )}</w:p>`,
-    );
+        })}</w:p>`,
+      );
+    }
+    if (hasLine2) {
+      paragraphs.push(
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="120"/>${contactBdr}</w:pPr>${buildRunXml({
+          text: contact.line2.map((l) => l.display).join('  ·  '),
+          fontFamily: bodyFont,
+          sizePt: spec.sizes.contactPt,
+          colorHex: mutedHex,
+        })}</w:p>`,
+      );
+    }
   }
 
   // 3. Summary
@@ -611,24 +621,33 @@ function buildCoverLetterDocxBodyXml(
     `<w:p><w:pPr><w:spacing w:before="0" w:after="60"/></w:pPr>${nameRuns.join('')}</w:p>`,
   );
 
-  const contactSegments = [
-    doc.header.email,
-    doc.header.phone,
-    doc.header.location,
-    ...doc.header.links.map((l) => l.label),
-  ].filter(Boolean);
-  if (contactSegments.length > 0) {
+  const contact = formatContactBlock(doc.header);
+  const hasLine1 = contact.line1.length > 0;
+  const hasLine2 = contact.line2.length > 0;
+  if (hasLine1 || hasLine2) {
     const contactBdr = `<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="${ruleHex}"/></w:pBdr>`;
-    paragraphs.push(
-      `<w:p><w:pPr><w:spacing w:before="0" w:after="180"/>${contactBdr}</w:pPr>${buildRunXml(
-        {
-          text: contactSegments.join('  ·  '),
+    if (hasLine1) {
+      const bdr = !hasLine2 ? contactBdr : '';
+      const afterTwips = hasLine2 ? 30 : 180;
+      paragraphs.push(
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="${afterTwips}"/>${bdr}</w:pPr>${buildRunXml({
+          text: contact.line1.join('  ·  '),
           fontFamily: bodyFont,
           sizePt: spec.sizes.contactPt,
           colorHex: mutedHex,
-        },
-      )}</w:p>`,
-    );
+        })}</w:p>`,
+      );
+    }
+    if (hasLine2) {
+      paragraphs.push(
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="180"/>${contactBdr}</w:pPr>${buildRunXml({
+          text: contact.line2.map((l) => l.display).join('  ·  '),
+          fontFamily: bodyFont,
+          sizePt: spec.sizes.contactPt,
+          colorHex: mutedHex,
+        })}</w:p>`,
+      );
+    }
   }
 
   paragraphs.push(
@@ -758,12 +777,27 @@ export function renderDocumentToGoogleDocsHtml(
   const sectionColor = spec.id === 'modern' ? accentHex : inkHex;
   const textAlign = alignToCss(doc.meta.textAlign);
 
-  const contactSegments = [
-    doc.header.email,
-    doc.header.phone,
-    doc.header.location,
-    ...doc.header.links.map((l) => l.label),
-  ].filter(Boolean);
+  const contact = formatContactBlock(doc.header);
+  const hasLine1 = contact.line1.length > 0;
+  const hasLine2 = contact.line2.length > 0;
+
+  let contactHtml = '';
+  if (hasLine1 || hasLine2) {
+    if (hasLine1) {
+      const bdrStyle = !hasLine2 ? `border-bottom:1px solid ${ruleHex}; padding-bottom:4pt;` : '';
+      const marginBottom = hasLine2 ? '2pt' : '8pt';
+      contactHtml += `<p style="margin:0 0 ${marginBottom} 0; ${bdrStyle} font-family:${bodyFont}; font-size:${spec.sizes.contactPt}pt; color:${mutedHex};">${escapeHtml(contact.line1.join('  ·  '))}</p>`;
+    }
+    if (hasLine2) {
+      const linksHtml = contact.line2
+        .map(
+          (l) =>
+            `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener noreferrer" style="color:${accentHex}; text-decoration:underline;">${escapeHtml(l.display)}</a>`,
+        )
+        .join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+      contactHtml += `<p style="margin:0 0 8pt 0; padding-bottom:4pt; font-family:${bodyFont}; font-size:${spec.sizes.contactPt}pt; color:${mutedHex}; border-bottom:1px solid ${ruleHex};">${linksHtml}</p>`;
+    }
+  }
 
   const headerHtml = `
     <p style="margin:0 0 3pt 0; line-height:1.2;">
@@ -774,11 +808,7 @@ export function renderDocumentToGoogleDocsHtml(
           : ''
       }
     </p>
-    ${
-      contactSegments.length > 0
-        ? `<p style="margin:0 0 8pt 0; padding-bottom:4pt; font-family:${bodyFont}; font-size:${spec.sizes.contactPt}pt; color:${mutedHex}; border-bottom:1px solid ${ruleHex};">${escapeHtml(contactSegments.join('  ·  '))}</p>`
-        : ''
-    }
+    ${contactHtml}
   `;
 
   if (doc.kind === 'coverLetter') {

@@ -268,7 +268,9 @@ export function formatContactBlock(
 
   const line2 = (profile.links ?? [])
     .map((link) => {
-      const rawUrl = (link.url ?? '').trim();
+      const rawUrl =
+        (link.url ?? '').trim() ||
+        (link.label?.includes('.') ? link.label.trim() : '');
       if (!rawUrl) return null;
       const display = rawUrl
         .replace(/^[a-z]+:\s*/i, (prefix) =>

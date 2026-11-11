@@ -1,26 +1,18 @@
 /**
- * Pure-geometry coordinate math and SVG path generators for the Cevin brand mark,
- * shared "cevin" geometric wordmark, and animated "working" mark (`CevinMark`).
+ * Pure-geometry coordinate math, clearance verifications, and SVG definitions
+ * for the Cevin brand mark, small rendition, and animated "working" mark (`CevinMark`).
  *
- * All coordinates are computed from primitives (`path` arcs/lines, `circle`, `rect`)
+ * All coordinates are computed from primitives (`path` arcs and lines, `circle`)
  * with y pointing down and P(theta) = (cx + r*cos(theta), cy + r*sin(theta)) rounded to 2 decimals.
  */
 
 export const CEVIN_BRAND_COLORS = {
   ink: '#151A22',
-  fold: '#2A3342',
-  paper: '#FFFFFF',
+  paper: '#F4F1EB',
+  white: '#FFFFFF',
   cobalt: '#1D4ED8',
-  background: '#F4F1EB',
-  dark: {
-    background: '#151A22',
-    tile: '#F4F1EB',
-    fold: '#D9D4C8',
-    ring: '#151A22',
-    wordmark: '#F4F1EB',
-    cobalt: '#5B8CFF',
-  },
-  error: '#D97706',
+  cobaltOnInk: '#5B8CFF',
+  danger: '#DC2626',
 } as const;
 
 export interface Point2D {
@@ -37,17 +29,10 @@ export interface BoundingBoxExtents {
   height: number;
 }
 
-/**
- * Rounds a number to 2 decimal places, stripping trailing zeros when formatting for SVG paths.
- */
 export function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-/**
- * Computes a point on a circle with y-axis pointing down:
- * P(thetaDeg) = (cx + r * cos(theta), cy + r * sin(theta)), rounded to 2 decimals.
- */
 export function pointOnCircle(
   cx: number,
   cy: number,
@@ -61,252 +46,7 @@ export function pointOnCircle(
   };
 }
 
-export interface WordmarkGeometry {
-  x0: number;
-  strokeWidth: number;
-  cPath: string;
-  ePath: string;
-  vPath: string;
-  iStemPath: string;
-  iDot: { cx: number; cy: number; r: number };
-  nPath: string;
-  combinedStrokePath: string;
-  letterExtents: {
-    c: BoundingBoxExtents;
-    e: BoundingBoxExtents;
-    v: BoundingBoxExtents;
-    i: BoundingBoxExtents;
-    n: BoundingBoxExtents;
-  };
-}
-
-/**
- * Computes exact paths and outer bounding extents (including stroke=6 round caps/joins and i-dot r=3.8)
- * for the shared "cevin" geometric wordmark relative to `x0`.
- *
- * - c: circle center (x0+20, 32), r=16, 35deg opening on the right. Arc from P(35deg) to P(-35deg), large=1, sweep=1.
- * - e: center (x0+64, 32), r=16. Bar from (cx-16, 32) to (cx+16, 32), then arc with large=1, sweep=0 to P(35deg).
- * - v: apex (x0+108, 48), arms to (x0+93, 16) and (x0+123, 16).
- * - i: stem (x0+139, 16) to (x0+139, 48). Cobalt dot, center (x0+139, 5), r=3.8.
- * - n: stems at x0+157 and x0+185. Left stem from y=48 to 16. Arch: semicircle of radius 14 from (x0+157, 31)
- *      clockwise (sweep=1) to (x0+185, 31), then down to y=48.
- */
-export function computeWordmarkGeometry(x0: number): WordmarkGeometry {
-  const strokeWidth = 6;
-  const halfStroke = strokeWidth / 2; // 3
-
-  // c: center (x0 + 20, 32), r = 16
-  const cCx = x0 + 20;
-  const cCy = 32;
-  const cR = 16;
-  const cStart = pointOnCircle(cCx, cCy, cR, 35);
-  const cEnd = pointOnCircle(cCx, cCy, cR, -35);
-  const cPath = `M${cStart.x} ${cStart.y}A${cR} ${cR} 0 1 1 ${cEnd.x} ${cEnd.y}`;
-
-  // e: center (x0 + 64, 32), r = 16
-  const eCx = x0 + 64;
-  const eCy = 32;
-  const eR = 16;
-  const eBarLeft = eCx - eR;
-  const eBarRight = eCx + eR;
-  const eEnd = pointOnCircle(eCx, eCy, eR, 35);
-  const ePath = `M${eBarLeft} ${eCy}H${eBarRight}A${eR} ${eR} 0 1 0 ${eEnd.x} ${eEnd.y}`;
-
-  // v: (x0+93, 16) -> (x0+108, 48) -> (x0+123, 16)
-  const vLeftX = x0 + 93;
-  const vApexX = x0 + 108;
-  const vRightX = x0 + 123;
-  const vPath = `M${vLeftX} 16L${vApexX} 48L${vRightX} 16`;
-
-  // i: stem (x0+139, 16) to (x0+139, 48), dot (x0+139, 5), r=3.8
-  const iX = x0 + 139;
-  const iStemPath = `M${iX} 16V48`;
-  const iDot = { cx: iX, cy: 5, r: 3.8 };
-
-  // n: stems at x0+157 and x0+185, arch radius 14 from y=31
-  const nLeftX = x0 + 157;
-  const nRightX = x0 + 185;
-  const nPath = `M${nLeftX} 48V16M${nLeftX} 31A14 14 0 0 1 ${nRightX} 31V48`;
-
-  const combinedStrokePath = `${cPath}${ePath}${vPath}${iStemPath}${nPath}`;
-
-  const makeExtents = (
-    minX: number,
-    maxX: number,
-    minY: number,
-    maxY: number,
-  ): BoundingBoxExtents => ({
-    minX: round2(minX),
-    maxX: round2(maxX),
-    minY: round2(minY),
-    maxY: round2(maxY),
-    width: round2(maxX - minX),
-    height: round2(maxY - minY),
-  });
-
-  return {
-    x0,
-    strokeWidth,
-    cPath,
-    ePath,
-    vPath,
-    iStemPath,
-    iDot,
-    nPath,
-    combinedStrokePath,
-    letterExtents: {
-      c: makeExtents(
-        cCx - cR - halfStroke,
-        cStart.x + halfStroke,
-        16 - halfStroke,
-        48 + halfStroke,
-      ),
-      e: makeExtents(
-        eBarLeft - halfStroke,
-        eBarRight + halfStroke,
-        16 - halfStroke,
-        48 + halfStroke,
-      ),
-      v: makeExtents(
-        vLeftX - halfStroke,
-        vRightX + halfStroke,
-        16 - halfStroke,
-        48 + halfStroke,
-      ),
-      i: makeExtents(
-        iX - iDot.r,
-        iX + iDot.r,
-        iDot.cy - iDot.r,
-        48 + halfStroke,
-      ),
-      n: makeExtents(
-        nLeftX - halfStroke,
-        nRightX + halfStroke,
-        16 - halfStroke,
-        48 + halfStroke,
-      ),
-    },
-  };
-}
-
-export interface OptionAMarkGeometry {
-  tilePath: string;
-  foldPath: string;
-  ringCenter: Point2D;
-  ringRadius: number;
-  ringStroke: number;
-  pPlus35: Point2D;
-  pMinus35: Point2D;
-  ringPath: string;
-  dot: { cx: number; cy: number; r: number };
-  capDistance: number;
-  dotClearance: number;
-  orbitRadius: number;
-  iconOnly: {
-    tilePath: string;
-    ringStroke: number;
-    dot: { cx: number; cy: number; r: number };
-    capDistance: number;
-    dotClearance: number;
-  };
-}
-
-/**
- * Computes Option A (folded sheet) mark geometry and verifies dot-to-cap clearance:
- * - Standard lockup (`stroke=8`): dot (48.5, 32), r=4.2 -> clearance = 1.58 px (>= 1.5 px).
- * - Icon-only (`stroke=9`, no fold): dot (48.8, 32), r=4.0 -> clearance = 1.39 px (>= 1.2 px).
- */
-export function computeOptionAMarkGeometry(): OptionAMarkGeometry {
-  const tilePath =
-    'M14 0H48L64 16V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z';
-  const foldPath = 'M48 0V16H64Z';
-  const ringCenter: Point2D = { x: 32, y: 32 };
-  const ringRadius = 16;
-  const ringStroke = 8;
-
-  const pPlus35 = pointOnCircle(ringCenter.x, ringCenter.y, ringRadius, 35);
-  const pMinus35 = pointOnCircle(ringCenter.x, ringCenter.y, ringRadius, -35);
-  const ringPath = `M${pPlus35.x} ${pPlus35.y}A${ringRadius} ${ringRadius} 0 1 1 ${pMinus35.x} ${pMinus35.y}`;
-
-  const dot = { cx: 48.5, cy: 32, r: 4.2 };
-  const dx = dot.cx - pPlus35.x;
-  const dy = pPlus35.y - dot.cy;
-  const capDistance = round2(Math.hypot(dx, dy));
-  const dotClearance = round2(capDistance - (ringStroke / 2 + dot.r));
-
-  // Icon-only variant: tile without fold, ring stroke 9, recomputed dot for >= 1.2 clearance
-  const iconOnlyTilePath =
-    'M14 0H50A14 14 0 0 1 64 14V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z';
-  const iconRingStroke = 9;
-  const iconDot = { cx: 48.8, cy: 32, r: 4.0 };
-  const iconCapDist = round2(
-    Math.hypot(iconDot.cx - pPlus35.x, pPlus35.y - iconDot.cy),
-  );
-  const iconClearance = round2(
-    iconCapDist - (iconRingStroke / 2 + iconDot.r),
-  );
-
-  return {
-    tilePath,
-    foldPath,
-    ringCenter,
-    ringRadius,
-    ringStroke,
-    pPlus35,
-    pMinus35,
-    ringPath,
-    dot,
-    capDistance,
-    dotClearance,
-    orbitRadius: 16.5,
-    iconOnly: {
-      tilePath: iconOnlyTilePath,
-      ringStroke: iconRingStroke,
-      dot: iconDot,
-      capDistance: iconCapDist,
-      dotClearance: iconClearance,
-    },
-  };
-}
-
-export interface OptionBMarkGeometry {
-  squaredCPath: string;
-  squaredCStroke: number;
-  outerExtents: BoundingBoxExtents;
-  bullet: { cx: number; cy: number; r: number };
-  linePath: string;
-  lineStroke: number;
-  lineLength: number;
-}
-
-/**
- * Computes Option B (bullet C) mark geometry:
- * - Squared C: stroke 8, M52 12H24A12 12 0 0 0 12 24V40A12 12 0 0 0 24 52H52 -> outer extents x: 8..56, y: 8..56.
- * - Bullet: circle center (27, 32), r=3.5.
- * - Line: stroke 4, round caps, from (36, 32) to (50, 32) -> length 14.
- */
-export function computeOptionBMarkGeometry(): OptionBMarkGeometry {
-  const squaredCPath = 'M52 12H24A12 12 0 0 0 12 24V40A12 12 0 0 0 24 52H52';
-  const squaredCStroke = 8;
-  const halfStroke = squaredCStroke / 2; // 4
-
-  return {
-    squaredCPath,
-    squaredCStroke,
-    outerExtents: {
-      minX: 12 - halfStroke, // 8
-      maxX: 52 + halfStroke, // 56
-      minY: 12 - halfStroke, // 8
-      maxY: 52 + halfStroke, // 56
-      width: 48,
-      height: 48,
-    },
-    bullet: { cx: 27, cy: 32, r: 3.5 },
-    linePath: 'M36 32H50',
-    lineStroke: 4,
-    lineLength: 50 - 36, // 14
-  };
-}
+export type CevinMarkTone = 'paper' | 'ink' | 'mono';
 
 export type CevinMarkState =
   | 'idle'
@@ -315,68 +55,236 @@ export type CevinMarkState =
   | 'done'
   | 'error';
 
-export type CevinMarkVariant = 'tile' | 'glyph';
+// ============================================================================
+// Standard Rendition Geometry (viewBox 0 0 64 64, for sizes > 20px)
+// ============================================================================
 
-export interface WordmarkLetterCoordinates {
-  c: { cx: number; cy: number; r: number };
-  e: { cx: number; cy: number; r: number };
-  v: { leftX: number; apexX: number; rightX: number };
-  i: { x: number; dotCy: number; dotR: number };
-  n: { leftX: number; rightX: number; archR: number };
-}
+const STANDARD_RING_CENTER = { x: 32, y: 32 };
+const STANDARD_RING_RADIUS = 22;
+const STANDARD_RING_STROKE = 8;
+const STANDARD_OPENING_HALF_ANGLE = 40;
 
-export function buildWordmarkGeometry(x0: number): WordmarkGeometry & {
-  letters: WordmarkLetterCoordinates;
-} {
-  const base = computeWordmarkGeometry(x0);
-  return {
-    ...base,
-    letters: {
-      c: { cx: x0 + 20, cy: 32, r: 16 },
-      e: { cx: x0 + 64, cy: 32, r: 16 },
-      v: { leftX: x0 + 93, apexX: x0 + 108, rightX: x0 + 123 },
-      i: { x: x0 + 139, dotCy: 5, dotR: 3.8 },
-      n: { leftX: x0 + 157, rightX: x0 + 185, archR: 14 },
-    },
-  };
-}
+const pPlus40 = pointOnCircle(
+  STANDARD_RING_CENTER.x,
+  STANDARD_RING_CENTER.y,
+  STANDARD_RING_RADIUS,
+  STANDARD_OPENING_HALF_ANGLE,
+); // (48.85, 46.14)
+const pMinus40 = pointOnCircle(
+  STANDARD_RING_CENTER.x,
+  STANDARD_RING_CENTER.y,
+  STANDARD_RING_RADIUS,
+  -STANDARD_OPENING_HALF_ANGLE,
+); // (48.85, 17.86)
 
-const computedOptionA = computeOptionAMarkGeometry();
-export const CEVIN_OPTION_A_GEOMETRY = {
-  ...computedOptionA,
-  iconOnlyDot: computedOptionA.iconOnly.dot,
+const STANDARD_RING_PATH = `M${pPlus40.x} ${pPlus40.y}A${STANDARD_RING_RADIUS} ${STANDARD_RING_RADIUS} 0 1 1 ${pMinus40.x} ${pMinus40.y}`;
+
+const STANDARD_BULLET = { cx: 24, cy: 32, r: 4 };
+const STANDARD_LINE = {
+  x1: 33,
+  y1: 32,
+  x2: 58,
+  y2: 32,
+  stroke: 4,
+  length: 25,
+  path: 'M33 32H58',
+};
+
+// Clearances for Standard Mark:
+// 1. Bullet left edge to ring inner edge:
+//    Bullet left edge = 24 - 4 = 20.
+//    Ring inner radius = 22 - (8/2) = 18. Ring inner edge = 32 - 18 = 14.
+//    Clearance = 20 - 14 = 6.0 (>= 5).
+const stdClearance1 = round2(
+  STANDARD_BULLET.cx -
+    STANDARD_BULLET.r -
+    (STANDARD_RING_CENTER.x - (STANDARD_RING_RADIUS - STANDARD_RING_STROKE / 2)),
+);
+
+// 2. Bullet right edge to line start cap tip:
+//    Bullet right edge = 24 + 4 = 28.
+//    Line start cap tip = 33 - (4/2) = 31.
+//    Clearance = 31 - 28 = 3.0 (>= 2.5).
+const stdClearance2 = round2(
+  STANDARD_LINE.x1 -
+    STANDARD_LINE.stroke / 2 -
+    (STANDARD_BULLET.cx + STANDARD_BULLET.r),
+);
+
+// 3. Line to ring cap:
+//    Ring cap center y = 46.14 (bottom) and 17.86 (top). Cap radius = 8/2 = 4.
+//    Line is at y = 32, stroke = 4 (y ranges from 30 to 34).
+//    Distance from line to ring cap = (46.14 - 32) - (4/2 + 8/2) = 14.14 - 6 = 8.14 (>= 6).
+const stdClearance3 = round2(
+  pPlus40.y -
+    STANDARD_LINE.y1 -
+    (STANDARD_RING_STROKE / 2 + STANDARD_LINE.stroke / 2),
+);
+
+// Extents:
+// Ring outer extent: cx - (r + stroke/2) = 32 - 26 = 6.
+// Ring top: 32 - 26 = 6. Bottom: 32 + 26 = 58.
+// Ring right cap extent: 48.85 + 4 = 52.85.
+// Line right cap tip: 58 + (4/2) = 60.
+const STANDARD_EXTENTS: BoundingBoxExtents = {
+  minX: 6,
+  maxX: 60,
+  minY: 6,
+  maxY: 58,
+  width: 54,
+  height: 52,
+};
+
+export const CEVIN_MARK_GEOMETRY = {
+  ring: {
+    center: STANDARD_RING_CENTER,
+    radius: STANDARD_RING_RADIUS,
+    stroke: STANDARD_RING_STROKE,
+    openingHalfAngle: STANDARD_OPENING_HALF_ANGLE,
+    pStart: pPlus40,
+    pEnd: pMinus40,
+    path: STANDARD_RING_PATH,
+  },
+  bullet: STANDARD_BULLET,
+  line: STANDARD_LINE,
+  dashArray: `${STANDARD_LINE.length} 50`,
+  dashOffsetRetracted: STANDARD_LINE.length + 1, // 26
+  dashOffsetDrawn: 0,
+  clearances: {
+    bulletLeftToRingInner: stdClearance1, // 6.0 (>= 5)
+    bulletRightToLineStart: stdClearance2, // 3.0 (>= 2.5)
+    lineToRingCap: stdClearance3, // 8.14 (>= 6)
+  },
+  extents: STANDARD_EXTENTS,
+  minLegibleSizePx: 24,
 } as const;
 
-const computedOptionB = computeOptionBMarkGeometry();
-export const CEVIN_OPTION_B_GEOMETRY = {
-  ...computedOptionB,
-  framePath: computedOptionB.squaredCPath,
+// ============================================================================
+// Small Rendition Geometry (for size <= 20px)
+// ============================================================================
+
+const SMALL_RING_STROKE = 9;
+const SMALL_BULLET = { cx: 24, cy: 32, r: 4.5 };
+const SMALL_LINE = {
+  x1: 34,
+  y1: 32,
+  x2: 57,
+  y2: 32,
+  stroke: 5,
+  length: 23,
+  path: 'M34 32H57',
+};
+
+// Clearances for Small Rendition:
+// 1. Bullet left edge = 24 - 4.5 = 19.5. Ring inner edge = 32 - (22 - 4.5) = 14.5.
+//    Clearance = 19.5 - 14.5 = 5.0 (>= 5).
+const smallClearance1 = round2(
+  SMALL_BULLET.cx -
+    SMALL_BULLET.r -
+    (STANDARD_RING_CENTER.x - (STANDARD_RING_RADIUS - SMALL_RING_STROKE / 2)),
+);
+
+// 2. Bullet right edge = 24 + 4.5 = 28.5. Line start cap = 34 - 2.5 = 31.5.
+//    Clearance = 31.5 - 28.5 = 3.0 (>= 2.5).
+const smallClearance2 = round2(
+  SMALL_LINE.x1 -
+    SMALL_LINE.stroke / 2 -
+    (SMALL_BULLET.cx + SMALL_BULLET.r),
+);
+
+// 3. Line to ring cap = 14.14 - (4.5 + 2.5) = 7.14 (>= 6).
+const smallClearance3 = round2(
+  pPlus40.y - SMALL_LINE.y1 - (SMALL_RING_STROKE / 2 + SMALL_LINE.stroke / 2),
+);
+
+// Extents:
+// Ring outer extent: 32 - (22 + 4.5) = 5.5. Top: 5.5, Bottom: 58.5.
+// Line right cap tip: 57 + 2.5 = 59.5.
+const SMALL_EXTENTS: BoundingBoxExtents = {
+  minX: 5.5,
+  maxX: 59.5,
+  minY: 5.5,
+  maxY: 58.5,
+  width: 54,
+  height: 53,
+};
+
+export const CEVIN_MARK_SMALL_GEOMETRY = {
+  ring: {
+    center: STANDARD_RING_CENTER,
+    radius: STANDARD_RING_RADIUS,
+    stroke: SMALL_RING_STROKE,
+    openingHalfAngle: STANDARD_OPENING_HALF_ANGLE,
+    pStart: pPlus40,
+    pEnd: pMinus40,
+    path: STANDARD_RING_PATH,
+  },
+  bullet: SMALL_BULLET,
+  line: SMALL_LINE,
+  dashArray: `${SMALL_LINE.length} 50`,
+  dashOffsetRetracted: SMALL_LINE.length + 1, // 24
+  dashOffsetDrawn: 0,
+  clearances: {
+    bulletLeftToRingInner: smallClearance1, // 5.0 (>= 5)
+    bulletRightToLineStart: smallClearance2, // 3.0 (>= 2.5)
+    lineToRingCap: smallClearance3, // 7.14 (>= 6)
+  },
+  extents: SMALL_EXTENTS,
+  minLegibleSizePx: 19.2,
+} as const;
+
+// Backward-compatible alias for existing imports
+export const CEVIN_OPTION_A_GEOMETRY = {
+  ringPath: STANDARD_RING_PATH,
+  dot: { cx: STANDARD_BULLET.cx, cy: STANDARD_BULLET.cy, r: STANDARD_BULLET.r },
+  iconOnlyDot: {
+    cx: SMALL_BULLET.cx,
+    cy: SMALL_BULLET.cy,
+    r: SMALL_BULLET.r,
+  },
 } as const;
 
 export const CEVIN_LOGO_REPORT = {
-  optionA: {
-    pPlus35: computedOptionA.pPlus35,
-    pMinus35: computedOptionA.pMinus35,
-    dotClearanceStandardPx: computedOptionA.dotClearance,
-    dotClearanceIconOnlyPx: computedOptionA.iconOnly.dotClearance,
+  math: {
+    arcStartP40: pPlus40, // (48.85, 46.14)
+    arcEndPMinus40: pMinus40, // (48.85, 17.86)
+    arcFormula: 'M48.85 46.14A22 22 0 1 1 48.85 17.86',
   },
-  optionB: {
-    outerStrokeExtents: {
-      minX: computedOptionB.outerExtents.minX,
-      maxX: computedOptionB.outerExtents.maxX,
-      minY: computedOptionB.outerExtents.minY,
-      maxY: computedOptionB.outerExtents.maxY,
+  standard: {
+    clearances: {
+      bulletLeftToRingInner: stdClearance1, // 6.0 (>= 5)
+      bulletRightToLineStart: stdClearance2, // 3.0 (>= 2.5)
+      lineToRingCap: stdClearance3, // 8.14 (>= 6)
     },
-    lineLength: computedOptionB.lineLength,
+    extents: STANDARD_EXTENTS,
+    viewBoxPadding: { left: 6, right: 4, top: 6, bottom: 6 },
+    minLegibleSizePx: 24,
+  },
+  small: {
+    clearances: {
+      bulletLeftToRingInner: smallClearance1, // 5.0 (>= 5)
+      bulletRightToLineStart: smallClearance2, // 3.0 (>= 2.5)
+      lineToRingCap: smallClearance3, // 7.14 (>= 6)
+    },
+    extents: SMALL_EXTENTS,
+    viewBoxPadding: { left: 5.5, right: 4.5, top: 5.5, bottom: 5.5 },
+    minLegibleSizePx: 19.2,
+  },
+  animation: {
+    lineLength: 25,
+    dashArray: '25 50',
+    retractedOffset: 26,
+    drawnOffset: 0,
+    states: {
+      idle: 'Line drawn (offset 0), bullet scale 1',
+      thinking: 'Line retracted (offset 26), bullet breathing 1 -> 1.3 -> 1 over 1.2s ease-in-out infinite',
+      writing: 'Line drawing 26 -> 0 in 0.7s, hold 0.3s, fade 0.2s over 1.2s period; bullet at rest',
+      done: '700ms one-shot: line draws 26 -> 0 in 0.5s, bullet bounce 1 -> 1.25 -> 1 in 0.7s',
+      error: 'Static, color switches to danger (#DC2626), line retracted (offset 26)',
+    },
+    reducedMotion: {
+      thinkingAndWriting: 'Bullet opacity pulse 0.5 -> 1 over 1.2s; line drawn and static',
+      done: 'Static mark rendered immediately',
+    },
   },
 } as const;
-
-/**
- * Computes the deterministic rotation angle in degrees around (32, 32) for `progress` in [0, 1].
- * Sweeps 290deg clockwise along the C arc from 0deg (resting position) to 290deg.
- */
-export function computeProgressOrbitAngleDeg(progress: number): number {
-  const clamped = Math.max(0, Math.min(1, progress));
-  return round2(clamped * 290);
-}
-

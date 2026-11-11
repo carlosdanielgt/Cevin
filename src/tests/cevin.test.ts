@@ -51,6 +51,8 @@ import {
 import {
   APPEAL_CALIBRATION_FIXTURES,
   CEVIN_LOGO_REPORT,
+  CEVIN_MARK_GEOMETRY,
+  CEVIN_MARK_SMALL_GEOMETRY,
   CevinMarkTimingController,
   DEFAULT_USER_PREFERENCES,
   FACT_KIND_REGISTRY,
@@ -63,10 +65,8 @@ import {
   assembleBullet,
   buildGroundedCoverLetterBlocks,
   buildGroupedCoverageSummary,
-  buildWordmarkGeometry,
   composeFirstImpressionTakeaway,
   computeAtsAndJobMatchScores,
-  computeProgressOrbitAngleDeg,
   computeBulletImpactStrength,
   computeLetterAppealScore,
   computeRecruiterAppeal,
@@ -2804,46 +2804,69 @@ test('Review step coverage bug fixes: existing Bank skills (e.g. Docker) are cov
 });
 
 test('Cevin pure-geometry SVG math & CevinMarkTimingController state machine', () => {
-  // 1. Verify Option A geometry & dot clearance >= 1.5px (and icon-only stroke 9 clearance >= 1.2px)
-  assert.deepEqual(CEVIN_LOGO_REPORT.optionA.pPlus35, {
-    x: 45.11,
-    y: 41.18,
-  });
-  assert.deepEqual(CEVIN_LOGO_REPORT.optionA.pMinus35, {
-    x: 45.11,
-    y: 22.82,
-  });
-  assert.ok(
-    CEVIN_LOGO_REPORT.optionA.dotClearanceStandardPx >= 1.5,
-    `Expected Option A standard clearance >= 1.5px, got ${CEVIN_LOGO_REPORT.optionA.dotClearanceStandardPx}`,
-  );
-  assert.ok(
-    CEVIN_LOGO_REPORT.optionA.dotClearanceIconOnlyPx >= 1.2,
-    `Expected Option A icon-only clearance >= 1.2px, got ${CEVIN_LOGO_REPORT.optionA.dotClearanceIconOnlyPx}`,
+  // 1. Verify Standard Mark Geometry & Clearance Checks
+  assert.deepEqual(CEVIN_LOGO_REPORT.math.arcStartP40, { x: 48.85, y: 46.14 });
+  assert.deepEqual(CEVIN_LOGO_REPORT.math.arcEndPMinus40, { x: 48.85, y: 17.86 });
+  assert.equal(
+    CEVIN_MARK_GEOMETRY.ring.path,
+    'M48.85 46.14A22 22 0 1 1 48.85 17.86',
   );
 
-  // 2. Verify Option B outer stroke extents (8..56) and line length (14)
-  assert.deepEqual(CEVIN_LOGO_REPORT.optionB.outerStrokeExtents, {
-    minX: 8,
-    maxX: 56,
-    minY: 8,
-    maxY: 56,
+  // Clearance 1: Bullet left edge to ring inner edge >= 5
+  assert.ok(
+    CEVIN_LOGO_REPORT.standard.clearances.bulletLeftToRingInner >= 5,
+    `Expected standard clearance 1 >= 5, got ${CEVIN_LOGO_REPORT.standard.clearances.bulletLeftToRingInner}`,
+  );
+  assert.equal(CEVIN_LOGO_REPORT.standard.clearances.bulletLeftToRingInner, 6);
+
+  // Clearance 2: Bullet right edge to line start cap >= 2.5
+  assert.ok(
+    CEVIN_LOGO_REPORT.standard.clearances.bulletRightToLineStart >= 2.5,
+    `Expected standard clearance 2 >= 2.5, got ${CEVIN_LOGO_REPORT.standard.clearances.bulletRightToLineStart}`,
+  );
+  assert.equal(CEVIN_LOGO_REPORT.standard.clearances.bulletRightToLineStart, 3);
+
+  // Clearance 3: Line to each ring cap >= 6
+  assert.ok(
+    CEVIN_LOGO_REPORT.standard.clearances.lineToRingCap >= 6,
+    `Expected standard clearance 3 >= 6, got ${CEVIN_LOGO_REPORT.standard.clearances.lineToRingCap}`,
+  );
+  assert.equal(CEVIN_LOGO_REPORT.standard.clearances.lineToRingCap, 8.14);
+
+  // Outer extents inside 0 0 64 64
+  assert.deepEqual(CEVIN_LOGO_REPORT.standard.extents, {
+    minX: 6,
+    maxX: 60,
+    minY: 6,
+    maxY: 58,
+    width: 54,
+    height: 52,
   });
-  assert.equal(CEVIN_LOGO_REPORT.optionB.lineLength, 14);
 
-  // 3. Verify Wordmark geometry for x0=88 and x0=80
-  const wm88 = buildWordmarkGeometry(88);
-  assert.equal(wm88.letters.c.cx, 108);
-  assert.equal(wm88.letters.e.cx, 152);
-  assert.equal(wm88.letters.v.apexX, 196);
-  assert.equal(wm88.letters.i.x, 227);
-  assert.equal(wm88.letters.n.leftX, 245);
-  assert.equal(wm88.letters.n.rightX, 273);
+  // 2. Verify Small Rendition Geometry (for <= 20px)
+  assert.equal(CEVIN_MARK_SMALL_GEOMETRY.ring.stroke, 9);
+  assert.equal(CEVIN_MARK_SMALL_GEOMETRY.bullet.r, 4.5);
+  assert.equal(CEVIN_MARK_SMALL_GEOMETRY.line.stroke, 5);
+  assert.equal(CEVIN_MARK_SMALL_GEOMETRY.line.length, 23);
+  assert.ok(CEVIN_LOGO_REPORT.small.clearances.bulletLeftToRingInner >= 5);
+  assert.equal(CEVIN_LOGO_REPORT.small.clearances.bulletLeftToRingInner, 5);
+  assert.ok(CEVIN_LOGO_REPORT.small.clearances.bulletRightToLineStart >= 2.5);
+  assert.equal(CEVIN_LOGO_REPORT.small.clearances.bulletRightToLineStart, 3);
+  assert.ok(CEVIN_LOGO_REPORT.small.clearances.lineToRingCap >= 6);
+  assert.equal(CEVIN_LOGO_REPORT.small.clearances.lineToRingCap, 7.14);
+  assert.deepEqual(CEVIN_LOGO_REPORT.small.extents, {
+    minX: 5.5,
+    maxX: 59.5,
+    minY: 5.5,
+    maxY: 58.5,
+    width: 54,
+    height: 53,
+  });
 
-  // 4. Verify determinate progress orbit angle mapping
-  assert.equal(computeProgressOrbitAngleDeg(0), 0);
-  assert.equal(computeProgressOrbitAngleDeg(0.5), 145);
-  assert.equal(computeProgressOrbitAngleDeg(1), 290);
+  // 3. Verify Animation line dasharray and offsets
+  assert.equal(CEVIN_MARK_GEOMETRY.dashArray, '25 50');
+  assert.equal(CEVIN_MARK_GEOMETRY.dashOffsetRetracted, 26);
+  assert.equal(CEVIN_MARK_GEOMETRY.dashOffsetDrawn, 0);
 
   // 5. Verify CevinMarkTimingController:
   // - Fast task (<300ms) never becomes visible and never plays 'done'
@@ -3091,6 +3114,13 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
   // 4. Verify Google Docs (.docx and WYSIWYG HTML) export and round-trip extraction
   const justifiedDoc = {
     ...baseDoc,
+    header: {
+      ...baseDoc.header,
+      links: [
+        { label: 'GitHub', url: 'https://github.com/danieldiaz' },
+        { label: 'LinkedIn', url: 'https://linkedin.com/in/danieldiaz' },
+      ],
+    },
     meta: { ...baseDoc.meta, textAlign: 'justify' as const },
   };
   const docxBytes = renderDocumentToDocxBytes(justifiedDoc);
@@ -3110,6 +3140,14 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
     extractedDocxText.includes(app.roleTitle),
     'Round-trip .docx text must include role headline',
   );
+  assert.ok(
+    extractedDocxText.includes('github.com/danieldiaz'),
+    'Round-trip .docx text must include cleaned GitHub URL, not just a bare label',
+  );
+  assert.ok(
+    extractedDocxText.includes('linkedin.com/in/danieldiaz'),
+    'Round-trip .docx text must include cleaned LinkedIn URL, not just a bare label',
+  );
 
   const gdocsHtml = renderDocumentToGoogleDocsHtml(justifiedDoc);
   assert.ok(
@@ -3119,5 +3157,15 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
   assert.ok(
     gdocsHtml.includes(baseDoc.header.name),
     'Google Docs WYSIWYG HTML must include candidate name',
+  );
+  assert.ok(
+    gdocsHtml.includes('href="https://github.com/danieldiaz"') &&
+      gdocsHtml.includes('github.com/danieldiaz'),
+    'Google Docs WYSIWYG HTML must include clickable GitHub link with display URL',
+  );
+  assert.ok(
+    gdocsHtml.includes('href="https://linkedin.com/in/danieldiaz"') &&
+      gdocsHtml.includes('linkedin.com/in/danieldiaz'),
+    'Google Docs WYSIWYG HTML must include clickable LinkedIn link with display URL',
   );
 });

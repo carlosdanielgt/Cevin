@@ -117,143 +117,164 @@
   --duration-slow: 280ms;
 
   /* Cevin animated mark tokens */
-  --animate-cevin-ring-think: cevin-ring-think 1.6s ease-in-out infinite;
-  --animate-cevin-dot-orbit: cevin-dot-orbit 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
-  --animate-cevin-ring-write: cevin-ring-write 1.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-  --animate-cevin-dot-pulse: cevin-dot-pulse 0.7s ease-in-out infinite;
-  --animate-cevin-dot-done: cevin-dot-done 420ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-  --animate-cevin-ping-expand: cevin-ping-expand 500ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  --animate-cevin-dot-error: cevin-dot-error 360ms ease-in-out 1;
+  /* Cevin Brand Logo Tokens */
+  --color-logo-ink: #151A22;
+  --color-logo-paper: #F4F1EB;
+  --color-logo-cobalt: #1D4ED8;
+  --color-logo-cobalt-on-ink: #5B8CFF;
+
+  /* Cevin animated mark tokens */
+  --animate-cevin-bullet-breathe: cevin-bullet-breathe 1.2s ease-in-out infinite;
+  --animate-cevin-line-write: cevin-line-write 1.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  --animate-cevin-line-done: cevin-line-done 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  --animate-cevin-bullet-bounce: cevin-bullet-bounce 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
-@keyframes cevin-ring-think {
-  0%, 100% { stroke-dashoffset: 0; }
-  50% { stroke-dashoffset: -18; }
-}
-
-@keyframes cevin-dot-orbit {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-@keyframes cevin-ring-write {
-  0% { stroke-dashoffset: 82.0; opacity: 1; }
-  58% { stroke-dashoffset: 0; opacity: 1; }
-  82% { stroke-dashoffset: 0; opacity: 1; }
-  100% { stroke-dashoffset: 0; opacity: 0.18; }
-}
-
-@keyframes cevin-dot-pulse {
+@keyframes cevin-bullet-breathe {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.22); }
+  50% { transform: scale(1.3); }
 }
 
-@keyframes cevin-dot-done {
+@keyframes cevin-line-write {
+  0% { stroke-dashoffset: 26; opacity: 1; }
+  58.33% { stroke-dashoffset: 0; opacity: 1; }
+  83.33% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+@keyframes cevin-line-done {
+  0% { stroke-dashoffset: 26; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes cevin-bullet-bounce {
   0% { transform: scale(1); }
-  45% { transform: scale(1.32); }
+  50% { transform: scale(1.25); }
   100% { transform: scale(1); }
 }
 
-@keyframes cevin-ping-expand {
-  0% { transform: scale(1); opacity: 0.55; }
-  100% { transform: scale(2.86); opacity: 0; }
-}
-
-@keyframes cevin-dot-error {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-2.5px); }
-  40% { transform: translateX(2.5px); }
-  60% { transform: translateX(-2.5px); }
-  80% { transform: translateX(2.5px); }
+@keyframes cevin-reduced-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 .cevin-mark {
-  --tile: light-dark(#151A22, #F4F1EB);
-  --fold: light-dark(#2A3342, #D9D4C8);
-  --ring: light-dark(#FFFFFF, #151A22);
-  --dot: light-dark(#1D4ED8, #5B8CFF);
+  --ring-color: #151A22;
+  --bullet-color: #1D4ED8;
+  --line-color: #1D4ED8;
 }
 
-.cevin-mark.is-glyph {
-  --ring: currentColor;
+.cevin-mark.tone-paper {
+  --ring-color: #151A22;
+  --bullet-color: #1D4ED8;
+  --line-color: #1D4ED8;
 }
 
-.cevin-mark #tile-body {
-  fill: var(--tile);
+.cevin-mark.tone-ink {
+  --ring-color: #F4F1EB;
+  --bullet-color: #5B8CFF;
+  --line-color: #5B8CFF;
 }
 
-.cevin-mark #tile-fold {
-  fill: var(--fold);
+.cevin-mark.tone-mono {
+  --ring-color: currentColor;
+  --bullet-color: currentColor;
+  --line-color: currentColor;
 }
 
-.cevin-mark #ring {
-  stroke: var(--ring);
+.cevin-mark #c {
+  stroke: var(--ring-color);
   stroke-width: 8;
   stroke-linecap: round;
   fill: none;
-  stroke-dasharray: 82.0 18.5;
+}
+
+.cevin-mark.is-small #c {
+  stroke-width: 9;
+}
+
+.cevin-mark #bullet {
+  fill: var(--bullet-color);
+  transform-origin: 24px 32px;
+}
+
+.cevin-mark #line {
+  stroke: var(--line-color);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 25 50;
   stroke-dashoffset: 0;
 }
 
-.cevin-mark #dot {
-  fill: var(--dot);
-  transform-origin: 48.5px 32px;
+.cevin-mark.is-small #line {
+  stroke-width: 5;
+  stroke-dasharray: 23 50;
 }
 
-.cevin-mark #ping {
-  stroke: var(--dot);
-  stroke-width: 2;
-  fill: none;
-  opacity: 0;
-  transform-origin: 48.5px 32px;
-}
-
-.cevin-mark.is-thinking #ring {
-  animation: var(--animate-cevin-ring-think);
-}
-
-.cevin-mark.is-thinking #dot {
-  transform-origin: 32px 32px;
-  animation: var(--animate-cevin-dot-orbit);
-}
-
-.cevin-mark.is-writing #ring {
-  animation: var(--animate-cevin-ring-write);
-}
-
-.cevin-mark.is-writing #dot {
-  transform-origin: 48.5px 32px;
-  animation: var(--animate-cevin-dot-pulse);
-}
-
-.cevin-mark.is-done #ring {
+.cevin-mark.is-idle #line {
   stroke-dashoffset: 0;
 }
 
-.cevin-mark.is-done #dot {
-  transform-origin: 48.5px 32px;
-  animation: var(--animate-cevin-dot-done);
+.cevin-mark.is-idle #bullet {
+  transform: scale(1);
 }
 
-.cevin-mark.is-done #ping {
-  animation: var(--animate-cevin-ping-expand);
+.cevin-mark.is-thinking #line {
+  stroke-dashoffset: 26;
 }
 
-.cevin-mark.is-error #dot {
-  --dot: #DC2626;
-  fill: #DC2626;
-  animation: var(--animate-cevin-dot-error);
+.cevin-mark.is-thinking #bullet {
+  animation: var(--animate-cevin-bullet-breathe);
+}
+
+.cevin-mark.is-writing #line {
+  animation: var(--animate-cevin-line-write);
+}
+
+.cevin-mark.is-writing #bullet {
+  transform: scale(1);
+}
+
+.cevin-mark.is-done #line {
+  animation: var(--animate-cevin-line-done);
+}
+
+.cevin-mark.is-done #bullet {
+  animation: var(--animate-cevin-bullet-bounce);
+}
+
+.cevin-mark.is-error {
+  --ring-color: #DC2626;
+  --bullet-color: #DC2626;
+  --line-color: #DC2626;
+}
+
+.cevin-mark.is-error #line {
+  stroke-dashoffset: 26;
+}
+
+.cevin-mark.is-error #bullet {
+  transform: scale(1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cevin-mark #ring,
-  .cevin-mark #dot,
-  .cevin-mark #ping {
+  .cevin-mark.is-thinking #bullet,
+  .cevin-mark.is-writing #bullet {
+    animation: cevin-reduced-pulse 1.2s ease-in-out infinite !important;
+  }
+  .cevin-mark.is-thinking #line,
+  .cevin-mark.is-writing #line {
+    stroke-dashoffset: 0 !important;
+    opacity: 1 !important;
     animation: none !important;
   }
-  .cevin-mark.is-thinking #dot,
-  .cevin-mark.is-writing #dot {
-    opacity: 0.72;
+  .cevin-mark.is-done #line {
+    stroke-dashoffset: 0 !important;
+    animation: none !important;
+  }
+  .cevin-mark.is-done #bullet {
+    transform: scale(1) !important;
+    animation: none !important;
   }
 }
 

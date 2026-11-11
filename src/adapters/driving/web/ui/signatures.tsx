@@ -98,6 +98,7 @@ import {
   IconButton,
   InfoTip,
   Input,
+  Logo,
   MultiSelectChips,
   Popover,
   PopoverContent,
@@ -1178,12 +1179,11 @@ export function SidebarNav({
             className="inline-flex items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-md cursor-pointer"
           >
             {expanded ? (
-              <>
-                <CevinLogo option="A" scheme="dark" height={28} />
-                <span className="sr-only">Cevin</span>
-              </>
+              <Logo variant="lockup" tone="ink" fontSize={24} size={26} />
             ) : (
-              <CevinMark state="idle" size={24} variant="tile" />
+              <div className="w-full flex items-center justify-center">
+                <Logo variant="mark" tone="ink" size={28} />
+              </div>
             )}
           </button>
           {expanded && (
