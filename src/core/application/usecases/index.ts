@@ -42,16 +42,19 @@ import {
   extractDeterministicJobBrief,
   extractDomainKeywordsFromText,
   extractJobFactsByRules,
+  extractTargetJdExcerpt,
   formatAchievementInVoice,
   getOneStepMoreHumanVoice,
   lintMachineMadeScore,
   mapApplicationToResumeDocument,
+  mapExtractedExperienceToAchievement,
   mapToCoverLetterDocument,
   normalizeKeyword,
   orderExperiencesForDraft,
   outlineCoverLetter,
   rankBankItemsForJob,
   sanitizeExportFilenameInput,
+  sliceCandidateBankForSummary,
   smartTrimBulletText,
   sortExperiencesChronologically,
   validateBulletGrounding,
@@ -74,6 +77,7 @@ import {
   ApplicationRepository,
   BankRepository,
   CachedTaskResult,
+  CareerIntelligencePort,
   Clock,
   ExporterCatalog,
   IdGenerator,
@@ -245,10 +249,47 @@ function syncApplicationWithBank(
   return { app: nextApp, changed: true };
 }
 
+const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
+  id: 'cevin_3b_mlx',
+  label: 'Cevin 3B Fine-Tuned (MLX 4-bit)',
+  isRecommendedDefault: true,
+  matches: (name: string) => {
+    const norm = name.trim().toLowerCase();
+    return (
+      norm === 'cevin-3b-4bit-fused' ||
+      norm.includes('cevin-3b') ||
+      norm.includes('qwen2.5-3b')
+    );
+  },
+  numCtx: 1024,
+  parallelRecommended: 1,
+  disableRawPromptTrimming: true,
+  temperatures: {
+    classify: 0,
+    extract: 0,
+    bullet: 0,
+    summary: 0.2,
+    letter: 0.2,
+  },
+  topP: 0.9,
+  tokenCaps: {
+    bullet: 512,
+    summary: 512,
+    letterBlock: 512,
+    briefRefine: 512,
+    importClassify: 512,
+    jobFact: 512,
+  },
+  stop: [],
+  keepAlive: '30m',
+  fewShotStyle: 'inline',
+  serverEnv: ['CEVIN_MLX_MODEL_PATH=./cevin-3b-4bit-fused'],
+};
+
 const DEFAULT_LLAMA31_PROFILE: ModelProfile = {
   id: 'llama3_1_8b',
   label: 'Llama 3.1 8B (Tuned for llama3.1:8b)',
-  isRecommendedDefault: true,
+  isRecommendedDefault: false,
   matches: (name: string) => {
     const norm = name.trim().toLowerCase();
     return (
@@ -261,6 +302,7 @@ const DEFAULT_LLAMA31_PROFILE: ModelProfile = {
   },
   numCtx: 4096,
   parallelRecommended: 2,
+  disableRawPromptTrimming: false,
   temperatures: {
     classify: 0,
     extract: 0,
@@ -392,6 +434,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     if (deps.modelProfileCatalog) {
       return deps.modelProfileCatalog.resolveForModel(modelName);
     }
+    if (DEFAULT_CEVIN3B_MLX_PROFILE.matches(modelName)) {
+      return DEFAULT_CEVIN3B_MLX_PROFILE;
+    }
     return DEFAULT_LLAMA31_PROFILE.matches(modelName)
       ? DEFAULT_LLAMA31_PROFILE
       : DEFAULT_GENERIC_PROFILE;
@@ -410,6 +455,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     const settings = await deps.settingsRepo.getSettings();
     const descriptor =
       deps.llmCatalog.getById(settings.activeProviderId) ??
+      deps.llmCatalog.getById('cevin-3b-mlx') ??
       deps.llmCatalog.getById('mock') ??
       deps.llmCatalog.list()[0];
 
@@ -420,12 +466,16 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     const modelId =
       typeof rawConfig.model === 'string' && rawConfig.model
         ? rawConfig.model
-        : descriptor.id === 'mock'
-          ? 'Demo mode'
-          : 'llama3.1:8b';
+        : descriptor.id === 'cevin-3b-mlx'
+          ? 'cevin-3b-4bit-fused'
+          : descriptor.id === 'mock'
+            ? 'Demo mode'
+            : 'llama3.1:8b';
     const profile = resolveModelProfile(modelId);
     const parallelSlots =
-      settings.parallelSlots ?? profile.parallelRecommended ?? 2;
+      descriptor.id === 'cevin-3b-mlx'
+        ? 1
+        : (settings.parallelSlots ?? profile.parallelRecommended ?? 2);
     const embedModel =
       typeof rawConfig.embeddingModel === 'string' && rawConfig.embeddingModel
         ? rawConfig.embeddingModel
@@ -544,6 +594,20 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         typeof window !== 'undefined' && window.location?.origin
           ? window.location.origin
           : 'http://localhost:8080';
+
+      if (providerId === 'cevin-3b-mlx') {
+        return {
+          connected: false,
+          providerId,
+          endpoint,
+          models: [],
+          statusCode: 'UNREACHABLE',
+          headline: `Can't reach Cevin 3B MLX FastAPI at ${endpoint}`,
+          remediationCommand: 'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
+          details:
+            'Start the local Apple Silicon MLX FastAPI microservice (mlx_server.py), or select Llama 3.1 8B (Ollama) / Demo mode in Settings.',
+        };
+      }
 
       if (
         rawMsg.toLowerCase().includes('cors') ||
@@ -1657,12 +1721,13 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         }
 
         const diag = await testConnectionInternal(settings.activeProviderId);
+        const isMlxProvider = settings.activeProviderId === 'cevin-3b-mlx';
         if (diag.connected) {
           const cfg = settings.providerConfigs[settings.activeProviderId] ?? {};
           const modelName =
             (typeof cfg.model === 'string' && cfg.model) ||
             diag.models[0]?.name ||
-            'llama3.1:8b';
+            (isMlxProvider ? 'cevin-3b-4bit-fused' : 'llama3.1:8b');
           const profile = resolveModelProfile(modelName);
 
           if (activity.warmingUp) {
@@ -1705,7 +1770,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
 
           return {
             state: 'connected',
-            label: `Ollama · ${modelName}`,
+            label: isMlxProvider
+              ? `Cevin 3B MLX · ${modelName}`
+              : `Ollama · ${modelName}`,
             modelName,
             providerId: settings.activeProviderId,
             detail: diag.headline,
@@ -1714,7 +1781,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         }
         return {
           state: 'offline',
-          label: "Can't reach Ollama",
+          label: isMlxProvider
+            ? "Can't reach MLX FastAPI"
+            : "Can't reach Ollama",
           providerId: settings.activeProviderId,
           detail: diag.headline,
         };
@@ -2586,47 +2655,83 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           };
         }
         const bank = await deps.bankRepo.getSnapshot();
-        const compactBrief = extractDeterministicJobBrief(
-          app.jobDescription || app.roleTitle,
-        );
+        const active = await getActiveLlmProvider();
 
-        const topSkills = bank.skills
-          .filter((s) => app.workingDraft.selectedSkillIds.includes(s.id))
-          .slice(0, 6)
-          .map((s) => s.name);
-        const companies = bank.experiences.slice(0, 2).map((e) => e.company);
-        const firstMetricAch = bank.achievements.find(
-          (a) =>
-            app.workingDraft.selectedAchievementIds.includes(a.id) &&
-            Boolean(a.metric),
-        );
+        let summaryText = '';
+        if (
+          active.providerId === 'cevin-3b-mlx' &&
+          active.provider.careerIntelligence
+        ) {
+          try {
+            const jdExcerpt = extractTargetJdExcerpt(
+              app.jobDescription || app.roleTitle,
+              250,
+            );
+            const bankSlice = sliceCandidateBankForSummary({
+              bank,
+              parsedJob: app.parsedJob,
+              rawJd: app.jobDescription,
+              selectedSkillIds: app.workingDraft.selectedSkillIds,
+              selectedAchievementIds: app.workingDraft.selectedAchievementIds,
+            });
+            const mlxSummary = await gateway.runWithActivity('writing', () =>
+              active.provider.careerIntelligence!.synthesizeExecutiveSummary(
+                jdExcerpt,
+                bankSlice,
+              ),
+            );
+            if (mlxSummary.tailored_summary?.trim()) {
+              summaryText = mlxSummary.tailored_summary.trim();
+            }
+          } catch {
+            // Fall through to gateway task / deterministic baseline
+          }
+        }
 
-        const sumRes = await gateway.runWithActivity('writing', () =>
-          gateway.executeTask(
-            writeSummaryTask,
-            {
-              headline: bank.profile.headline,
-              targetRole: app.roleTitle || bank.profile.headline,
-              targetCompany: app.company,
-              verifiedSkills: topSkills,
-              verifiedCompanies: companies,
-              topMetricSnippet: firstMetricAch?.metric,
-              briefText: compactBrief.briefText,
-              briefHash: compactBrief.briefHash,
-              voice,
-            },
-            {
-              itemKey: `summary-${applicationId}`,
-              priority: 'interactive',
-              bypassCache: true,
-              seedOffset: 1,
-            },
-          ),
-        );
+        if (!summaryText) {
+          const compactBrief = extractDeterministicJobBrief(
+            app.jobDescription || app.roleTitle,
+          );
+
+          const topSkills = bank.skills
+            .filter((s) => app.workingDraft.selectedSkillIds.includes(s.id))
+            .slice(0, 6)
+            .map((s) => s.name);
+          const companies = bank.experiences.slice(0, 2).map((e) => e.company);
+          const firstMetricAch = bank.achievements.find(
+            (a) =>
+              app.workingDraft.selectedAchievementIds.includes(a.id) &&
+              Boolean(a.metric),
+          );
+
+          const sumRes = await gateway.runWithActivity('writing', () =>
+            gateway.executeTask(
+              writeSummaryTask,
+              {
+                headline: bank.profile.headline,
+                targetRole: app.roleTitle || bank.profile.headline,
+                targetCompany: app.company,
+                verifiedSkills: topSkills,
+                verifiedCompanies: companies,
+                topMetricSnippet: firstMetricAch?.metric,
+                briefText: compactBrief.briefText,
+                briefHash: compactBrief.briefHash,
+                voice,
+              },
+              {
+                itemKey: `summary-${applicationId}`,
+                priority: 'interactive',
+                bypassCache: true,
+                seedOffset: 1,
+              },
+            ),
+          );
+          summaryText = sumRes.text;
+        }
 
         const nextWorkingDraft = {
           ...app.workingDraft,
-          summary: sumRes.text,
+          summary: summaryText,
         };
         const clDraft = ensureCoverLetterDraft(app, bank);
 
@@ -4838,6 +4943,119 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       },
       subscribe(listener) {
         return gateway.subscribeActivity(listener);
+      },
+    },
+
+    careerIntelligence: {
+      async extractExperienceRecord(rawStatement, timeframe) {
+        const { provider } = await getActiveLlmProvider();
+        const port: CareerIntelligencePort | undefined =
+          provider.careerIntelligence;
+        if (!port) {
+          throw new Error('CareerIntelligencePort not configured on active provider');
+        }
+        return port.extractExperienceRecord(rawStatement, timeframe);
+      },
+
+      async classifyRequirementMatch(requirement, experience, targetRole) {
+        const { provider } = await getActiveLlmProvider();
+        const port = provider.careerIntelligence;
+        if (!port) {
+          throw new Error('CareerIntelligencePort not configured on active provider');
+        }
+        return port.classifyRequirementMatch(requirement, experience, targetRole);
+      },
+
+      async auditBulletHallucination(sourceRecord, generatedBullet) {
+        const { provider } = await getActiveLlmProvider();
+        const port = provider.careerIntelligence;
+        if (!port) {
+          throw new Error('CareerIntelligencePort not configured on active provider');
+        }
+        return port.auditBulletHallucination(sourceRecord, generatedBullet);
+      },
+
+      async evaluateAndRewriteBullet(draftBullet, evidence) {
+        const { provider } = await getActiveLlmProvider();
+        const port = provider.careerIntelligence;
+        if (!port) {
+          throw new Error('CareerIntelligencePort not configured on active provider');
+        }
+        return port.evaluateAndRewriteBullet(draftBullet, evidence);
+      },
+
+      async synthesizeExecutiveSummary(jdExcerpt, candidateBank) {
+        const { provider } = await getActiveLlmProvider();
+        const port = provider.careerIntelligence;
+        if (!port) {
+          throw new Error('CareerIntelligencePort not configured on active provider');
+        }
+        return port.synthesizeExecutiveSummary(jdExcerpt, candidateBank);
+      },
+
+      async synthesizeApplicationExecutiveSummary(applicationId: string) {
+        const app = await deps.appRepo.getApplication(applicationId);
+        if (!app) {
+          return {
+            ok: false,
+            error: { code: 'NOT_FOUND', message: 'Application not found.' },
+          };
+        }
+        const bank = await deps.bankRepo.getSnapshot();
+        const jdExcerpt = extractTargetJdExcerpt(
+          app.jobDescription || app.roleTitle,
+          250,
+        );
+        const bankSlice = sliceCandidateBankForSummary({
+          bank,
+          parsedJob: app.parsedJob,
+          rawJd: app.jobDescription,
+          selectedSkillIds: app.workingDraft.selectedSkillIds,
+          selectedAchievementIds: app.workingDraft.selectedAchievementIds,
+        });
+        const dto = await this.synthesizeExecutiveSummary(jdExcerpt, bankSlice);
+
+        const nextWorkingDraft = {
+          ...app.workingDraft,
+          summary: dto.tailored_summary,
+        };
+        const clDraft = ensureCoverLetterDraft(app, bank);
+        const updated: Application = {
+          ...app,
+          workingDraft: nextWorkingDraft,
+          coverLetterDraft: clDraft,
+          documents: {
+            resume: nextWorkingDraft,
+            coverLetter: clDraft,
+          },
+          updatedAt: deps.clock.nowIso(),
+        };
+        updated.latestScores = computeAtsAndJobMatchScores(updated, bank).scores;
+        await deps.appRepo.saveApplication(updated);
+
+        return {
+          ok: true,
+          value: {
+            ...dto,
+            application: updated,
+          },
+        };
+      },
+
+      async extractAndMapExperienceStatement({
+        rawStatement,
+        timeframe = 'Unspecified',
+        experienceId,
+      }) {
+        const bank = await deps.bankRepo.getSnapshot();
+        const dto = await this.extractExperienceRecord(rawStatement, timeframe);
+        const achievement = mapExtractedExperienceToAchievement({
+          extracted: dto,
+          experienceId,
+          achievementId: deps.idGen.nextId('ach'),
+          skills: bank.skills,
+        });
+        return { dto, achievement };
       },
     },
   };

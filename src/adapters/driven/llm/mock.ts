@@ -1,5 +1,13 @@
 import { z } from 'zod';
 import {
+  BulletEvaluationDto,
+  CandidateBankSubsetDto,
+  CareerIntelligencePort,
+  EvidenceContextDto,
+  ExecutiveSummaryDto,
+  ExperienceRecordDto,
+  ExtractedExperienceDto,
+  HallucinationAuditDto,
   LlmChatRequest,
   LlmCompletionRequest,
   LlmCompletionResponse,
@@ -9,12 +17,15 @@ import {
   LlmRuntimeStatus,
   LlmUsageMetrics,
   ModelInfo,
+  RequirementMatchDto,
+  SourceRecordDto,
   deterministicParseJobDescription,
 } from '../../../core/application';
 import {
   VoiceLevel,
   assembleBullet,
   extractDomainKeywordsFromText,
+  extractNormalizedNumbers,
 } from '../../../core/domain';
 
 export const MockConfigSchema = z.object({
@@ -522,6 +533,261 @@ export function createMockProvider(
   };
 }
 
+export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligencePort {
+  return {
+    async extractExperienceRecord(
+      rawStatement: string,
+      timeframe = 'Unspecified',
+    ): Promise<ExtractedExperienceDto> {
+      const cleaned = rawStatement.replace(/^[-•*]\s+/, '').trim();
+      const kws = extractDomainKeywordsFromText(cleaned).map((k) => k.term);
+      const parts = cleaned.split(
+        /,\s*(?:resulting in|achieving|cutting|reducing|eliminating|sustaining|while)\s*/i,
+      );
+      const action = parts[0]?.trim() || cleaned;
+      const impact =
+        parts.length > 1
+          ? cleaned.slice(parts[0].length).replace(/^,\s*/, '').trim()
+          : 'delivering measurable production reliability';
+      const nums = extractNormalizedNumbers(cleaned);
+
+      return {
+        task: 'experience_extraction',
+        evidence_quote: cleaned,
+        domain: kws[0] ? `${kws[0]} & Systems Engineering` : 'Distributed Systems & Infrastructure',
+        company: 'Prior Organization',
+        role_context: 'Senior Software Engineer',
+        timeframe: timeframe || 'Unspecified',
+        project: kws.length > 0 ? `${kws[0]} Platform` : 'Core Platform',
+        action,
+        technologies: kws.slice(0, 6),
+        scale: nums[0] ?? 'production scale',
+        impact,
+      };
+    },
+
+    async classifyRequirementMatch(
+      requirement: string,
+      experience: ExperienceRecordDto,
+    ): Promise<RequirementMatchDto> {
+      const reqClean = requirement.replace(/\[Role:[^\]]*\]/i, '').trim();
+      const reqKws = extractDomainKeywordsFromText(reqClean).map((k) =>
+        k.term.toLowerCase(),
+      );
+      const expCorpus = [
+        experience.project,
+        experience.role,
+        experience.action,
+        ...experience.technologies,
+        experience.scale,
+        experience.impact,
+        experience.domain,
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      const matched = reqKws.filter((kw) => expCorpus.includes(kw));
+      const missing = reqKws.filter((kw) => !expCorpus.includes(kw));
+      const directHit =
+        matched.length > 0 ||
+        expCorpus.includes(reqClean.toLowerCase().slice(0, 12));
+
+      const matchLevel =
+        matched.length > 0 && missing.length === 0
+          ? 'strong'
+          : directHit
+            ? 'partial'
+            : 'none';
+
+      return {
+        task: 'experience_matching',
+        experience_id: experience.experience_id,
+        direct_evidence: directHit
+          ? `${experience.action} (${experience.technologies.join(', ')})`
+          : '',
+        missing_evidence:
+          missing.length > 0 ? missing.join(', ') : 'None',
+        reasoning: directHit
+          ? `Covers ${matched.join(', ') || reqClean} directly in ${experience.project}.`
+          : `No direct evidence of ${reqClean} in ${experience.project}.`,
+        confidence: matchLevel === 'strong' ? 0.94 : matchLevel === 'partial' ? 0.78 : 0.9,
+        match_level: matchLevel,
+      };
+    },
+
+    async auditBulletHallucination(
+      sourceRecord: SourceRecordDto,
+      generatedBullet: string,
+    ): Promise<HallucinationAuditDto> {
+      const sourceCorpus = [
+        sourceRecord.project,
+        sourceRecord.action,
+        ...sourceRecord.technologies,
+        sourceRecord.scale,
+        sourceRecord.impact,
+      ].join(' ');
+      const sourceNums = extractNormalizedNumbers(sourceCorpus);
+      const bulletNums = extractNormalizedNumbers(generatedBullet);
+
+      const violations: string[] = [];
+      for (const bNum of bulletNums) {
+        const bDigits = bNum.replace(/[^0-9.]/g, '');
+        const found = sourceNums.some(
+          (sNum) => sNum === bNum || sNum.replace(/[^0-9.]/g, '') === bDigits,
+        );
+        if (!found) {
+          violations.push(
+            `Metric distortion: bullet claims '${bNum}', whereas source record states '${sourceRecord.scale || sourceRecord.impact}'.`,
+          );
+        }
+      }
+
+      const bulletKws = extractDomainKeywordsFromText(generatedBullet);
+      const sourceLower = sourceCorpus.toLowerCase();
+      for (const kw of bulletKws) {
+        if (!sourceLower.includes(kw.term.toLowerCase())) {
+          violations.push(
+            `Unverified technology: '${kw.term}' is absent from the source Experience Bank record (${sourceRecord.technologies.join(', ')}).`,
+          );
+        }
+      }
+
+      const supported = violations.length === 0;
+      const corrected = supported
+        ? generatedBullet
+        : assembleBullet(
+            {
+              action: sourceRecord.action,
+              result: sourceRecord.impact,
+              metric: sourceRecord.scale,
+            },
+            'balanced',
+            0,
+          );
+
+      return {
+        task: 'hallucination_audit',
+        violations,
+        explanation: supported
+          ? 'All technologies and metrics in the generated bullet trace directly to the source Experience Bank record.'
+          : `Detected ${violations.length} unverified claim(s) not grounded in the source record.`,
+        factual_consistency_score: supported ? 1.0 : 0.0,
+        verdict: supported ? 'supported' : 'unsupported',
+        corrected_bullet: corrected,
+      };
+    },
+
+    async evaluateAndRewriteBullet(
+      draftBullet: string,
+      evidence: EvidenceContextDto,
+    ): Promise<BulletEvaluationDto> {
+      const hasScale = Boolean(evidence.scale && evidence.scale.trim());
+      const hasImpact = Boolean(evidence.impact && evidence.impact.trim());
+      const questions: string[] = [];
+
+      if (!hasScale) {
+        questions.push(
+          `What was the concrete scale or volume for "${evidence.project}" (e.g., requests/sec, cluster count, or team size)?`,
+        );
+      }
+      if (!hasImpact) {
+        questions.push(
+          `What measurable outcome resulted from "${evidence.action}" (e.g., latency reduction, cost savings, or uptime)?`,
+        );
+      }
+
+      const groundedRewrite =
+        hasScale && hasImpact
+          ? assembleBullet(
+              {
+                action: evidence.action,
+                result: evidence.impact!,
+                metric: evidence.scale!,
+              },
+              'balanced',
+              0,
+            )
+          : `${evidence.action.replace(/[.]+$/, '')}${
+              evidence.technologies.length > 0
+                ? ` using ${evidence.technologies.join(', ')}`
+                : ''
+            }${hasImpact ? `, ${evidence.impact}` : ''}.`;
+
+      return {
+        task: 'bullet_evaluation_and_rewrite',
+        critique:
+          questions.length === 0
+            ? 'Complete evidence provided; tightened action verb and preserved verified scale and impact.'
+            : `Partial evidence record for ${evidence.project}; preserved verified action without inventing missing metrics.`,
+        draft_scores: {
+          ownership: 3,
+          action: 3,
+          technical_depth: evidence.technologies.length > 0 ? 3 : 2,
+          scope: hasScale ? 3 : 1,
+          impact: hasImpact ? 3 : 1,
+          clarity: draftBullet.split(/\s+/).length <= 26 ? 3 : 2,
+        },
+        missing_evidence_questions: questions,
+        grounded_rewrite: groundedRewrite,
+      };
+    },
+
+    async synthesizeExecutiveSummary(
+      jdExcerpt: string,
+      candidateBank: CandidateBankSubsetDto,
+    ): Promise<ExecutiveSummaryDto> {
+      const selectedSkills = candidateBank.matched_skills
+        .slice(0, 5)
+        .map((s) => s.name);
+      const jdKws = extractDomainKeywordsFromText(jdExcerpt).map((k) => k.term);
+      const selectedLower = new Set(selectedSkills.map((s) => s.toLowerCase()));
+      const omitted = jdKws.filter(
+        (k) => !selectedLower.has(k.toLowerCase()),
+      );
+
+      const topAchs = candidateBank.top_achievements.slice(0, 2);
+      const verifiedMetrics = topAchs
+        .map((a) => a.metric || a.result)
+        .filter(Boolean);
+
+      const skillClause =
+        selectedSkills.length > 0
+          ? selectedSkills.join(', ')
+          : 'distributed systems and reliable cloud infrastructure';
+
+      const firstAch = topAchs[0];
+      const secondAch = topAchs[1];
+      let outcomeSentence =
+        'Proven track record of delivering resilient production architecture and measurable reliability improvements.';
+      if (firstAch && secondAch) {
+        outcomeSentence = `Proven track record of ${
+          firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result
+        } while ${secondAch.result}.`;
+      } else if (firstAch) {
+        outcomeSentence = `Proven track record of ${
+          firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result
+        }.`;
+      }
+
+      const headline =
+        candidateBank.profile.headline || 'Senior Systems & Platform Engineer';
+      const tailoredSummary = `${headline} specializing in ${skillClause}. ${outcomeSentence}`;
+
+      return {
+        task: 'executive_summary_synthesis',
+        jd_sentiment_and_pain_point:
+          jdExcerpt.slice(0, 160) ||
+          'High-reliability distributed systems and low-latency execution at scale.',
+        ideal_candidate_archetype: `${headline} with verified production metrics in ${skillClause}.`,
+        selected_skills: selectedSkills,
+        omitted_jd_skills: omitted.slice(0, 5),
+        verified_metrics_used: verifiedMetrics,
+        tailored_summary: tailoredSummary,
+      };
+    },
+  };
+}
+
 export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> = {
   id: 'mock',
   label: 'Demo mode (no AI needed)',
@@ -548,5 +814,11 @@ export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> 
     alwaysFailValidation: false,
     mockJobFactMode: 'valid',
   },
-  create: (config) => createMockProvider(config),
+  create: (config) => {
+    const base = createMockProvider(config);
+    return {
+      ...base,
+      careerIntelligence: createDeterministicCareerIntelligenceAdapter(),
+    };
+  },
 };

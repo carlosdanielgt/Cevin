@@ -177,10 +177,22 @@ export function SettingsView({
     }
   };
 
-  const ollamaConfig = (settings.providerConfigs.ollama ?? {
-    baseUrl: 'http://localhost:11434',
-    model: 'llama3.1:8b',
-  }) as { baseUrl?: string; model?: string; embeddingModel?: string };
+  const mlxConfig = (settings.providerConfigs['cevin-3b-mlx'] ?? {
+    baseUrl: 'http://localhost:8000',
+    model: 'cevin-3b-4bit-fused',
+    numCtx: 1024,
+  }) as { baseUrl?: string; model?: string; numCtx?: number };
+
+  const ollamaConfig = (settings.providerConfigs['ollama-llama3.1'] ??
+    settings.providerConfigs.ollama ?? {
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.1:8b',
+    }) as { baseUrl?: string; model?: string; embeddingModel?: string };
+
+  const isMlxSelected = settings.activeProviderId === 'cevin-3b-mlx';
+  const isOllamaSelected =
+    settings.activeProviderId === 'ollama-llama3.1' ||
+    settings.activeProviderId === 'ollama';
 
   const navItems: Array<{
     id: SettingsSectionId;
@@ -296,7 +308,7 @@ export function SettingsView({
                   AI connection
                 </h2>
                 <p className="text-xs text-ink-muted mt-0.5">
-                  Tuned for <strong>llama3.1:8b</strong>
+                  Default engine: <strong>cevin-3b-4bit-fused</strong> (Apple MLX 4-bit fine-tuned)
                 </p>
               </div>
               <Badge
@@ -309,40 +321,80 @@ export function SettingsView({
                 {settings.activeProviderId === 'mock'
                   ? 'Demo mode active'
                   : diag?.connected
-                    ? `Connected · ${ollamaConfig.model ?? 'llama3.1:8b'}`
-                    : 'Ollama unreachable'}
+                    ? `Connected · ${
+                        isMlxSelected
+                          ? (mlxConfig.model ?? 'cevin-3b-4bit-fused')
+                          : (ollamaConfig.model ?? 'llama3.1:8b')
+                      }`
+                    : isMlxSelected
+                      ? 'MLX FastAPI unreachable'
+                      : 'Ollama unreachable'}
               </Badge>
             </div>
 
-            {/* 2 Radio Cards with Lucide Icon, 2px accent ring + check badge + accent-50 tint when selected */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* 3 Radio Cards: Cevin 3B Fine-Tuned (MLX FastAPI), Llama 3.1 8B (Ollama Legacy), Built-in demo mode */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               <button
                 type="button"
                 onClick={() =>
-                  void updateSettings({ activeProviderId: 'ollama' })
+                  void updateSettings({ activeProviderId: 'cevin-3b-mlx' })
                 }
                 className={`relative p-4 rounded-lg border text-left transition-all cursor-pointer ${
-                  settings.activeProviderId === 'ollama'
+                  isMlxSelected
                     ? 'border-accent ring-2 ring-accent bg-accent-50/60'
                     : 'border-border bg-surface hover:border-border-strong'
                 }`}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
-                    <Cpu className="w-4 h-4" />
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
+                      <ShieldCheck className="w-4 h-4" />
+                    </div>
+                    <Badge tone="accent">Default</Badge>
                   </div>
-                  {settings.activeProviderId === 'ollama' && (
+                  {isMlxSelected && (
                     <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center">
                       <Check className="w-3 h-3" />
                     </span>
                   )}
                 </div>
                 <div className="text-sm font-semibold text-ink">
-                  Local AI via Ollama
+                  Cevin 3B Fine-Tuned — MLX FastAPI
                 </div>
                 <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                  Connects directly to Ollama on your computer for private,
-                  zero-cloud bullet rephrasing.
+                  Specialized 4-bit Apple Silicon MLX model with Chain-of-Thought grounding and hallucination audit.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void updateSettings({ activeProviderId: 'ollama-llama3.1' })
+                }
+                className={`relative p-4 rounded-lg border text-left transition-all cursor-pointer ${
+                  isOllamaSelected
+                    ? 'border-accent ring-2 ring-accent bg-accent-50/60'
+                    : 'border-border bg-surface hover:border-border-strong'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
+                      <Cpu className="w-4 h-4" />
+                    </div>
+                    <Badge tone="neutral">Legacy</Badge>
+                  </div>
+                  {isOllamaSelected && (
+                    <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center">
+                      <Check className="w-3 h-3" />
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-ink">
+                  Llama 3.1 8B — Ollama Legacy
+                </div>
+                <p className="text-xs text-ink-muted mt-1 leading-relaxed">
+                  General-purpose fallback connecting to local Ollama for zero-cloud bullet rephrasing.
                 </p>
               </button>
 
@@ -435,7 +487,12 @@ export function SettingsView({
             ) : (
               <Banner
                 tone="warning"
-                title={diag?.headline ?? "Can't reach local Ollama"}
+                title={
+                  diag?.headline ??
+                  (isMlxSelected
+                    ? "Can't reach Cevin 3B MLX FastAPI"
+                    : "Can't reach local Ollama")
+                }
                 actions={
                   <Button
                     size="sm"
@@ -460,11 +517,27 @@ export function SettingsView({
                 }
               >
                 {diag?.details ??
-                  'Start Ollama with browser access enabled, or use Built-in demo mode.'}
+                  (isMlxSelected
+                    ? 'Start the local Apple Silicon MLX FastAPI server, or switch to Ollama / Demo mode.'
+                    : 'Start Ollama with browser access enabled, or use Built-in demo mode.')}
               </Banner>
             )}
 
-            {settings.activeProviderId === 'ollama' && (
+            {isMlxSelected && (
+              <div className="space-y-3 pt-1">
+                <div className="text-xs font-medium text-ink">
+                  Quick terminal setup for cevin-3b-4bit-fused (Apple Silicon MLX)
+                </div>
+                <CopyCommandField
+                  command={
+                    diag?.remediationCommand ??
+                    'uvicorn mlx_server:app --host 127.0.0.1 --port 8000'
+                  }
+                />
+              </div>
+            )}
+
+            {isOllamaSelected && (
               <div className="space-y-3 pt-1">
                 <div className="text-xs font-medium text-ink">
                   Quick terminal setup for llama3.1:8b
@@ -606,7 +679,47 @@ export function SettingsView({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-ink-muted mb-1">
-                      Ollama base URL
+                      MLX FastAPI base URL
+                    </label>
+                    <Input
+                      value={mlxConfig.baseUrl ?? 'http://localhost:8000'}
+                      onChange={(e) =>
+                        void updateSettings({
+                          providerConfigs: {
+                            ...settings.providerConfigs,
+                            'cevin-3b-mlx': {
+                              ...mlxConfig,
+                              baseUrl: e.target.value,
+                            },
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-ink-muted mb-1">
+                      Fused MLX model directory
+                    </label>
+                    <Input
+                      value={mlxConfig.model ?? 'cevin-3b-4bit-fused'}
+                      onChange={(e) =>
+                        void updateSettings({
+                          providerConfigs: {
+                            ...settings.providerConfigs,
+                            'cevin-3b-mlx': {
+                              ...mlxConfig,
+                              model: e.target.value,
+                            },
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-ink-muted mb-1">
+                      Ollama base URL (Legacy fallback)
                     </label>
                     <Input
                       value={ollamaConfig.baseUrl ?? 'http://localhost:11434'}
@@ -614,6 +727,10 @@ export function SettingsView({
                         void updateSettings({
                           providerConfigs: {
                             ...settings.providerConfigs,
+                            'ollama-llama3.1': {
+                              ...ollamaConfig,
+                              baseUrl: e.target.value,
+                            },
                             ollama: {
                               ...ollamaConfig,
                               baseUrl: e.target.value,
@@ -625,7 +742,7 @@ export function SettingsView({
                   </div>
                   <div>
                     <label className="block text-xs text-ink-muted mb-1">
-                      Model tag
+                      Ollama model tag
                     </label>
                     <Input
                       value={ollamaConfig.model ?? 'llama3.1:8b'}
@@ -633,6 +750,10 @@ export function SettingsView({
                         void updateSettings({
                           providerConfigs: {
                             ...settings.providerConfigs,
+                            'ollama-llama3.1': {
+                              ...ollamaConfig,
+                              model: e.target.value,
+                            },
                             ollama: {
                               ...ollamaConfig,
                               model: e.target.value,

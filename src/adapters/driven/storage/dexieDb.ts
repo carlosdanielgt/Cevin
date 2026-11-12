@@ -344,8 +344,19 @@ export class CevinDexieDatabase extends Dexie {
 
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  activeProviderId: 'mock',
+  activeProviderId: 'cevin-3b-mlx',
   providerConfigs: {
+    'cevin-3b-mlx': {
+      baseUrl: 'http://localhost:8000',
+      model: 'cevin-3b-4bit-fused',
+      numCtx: 1024,
+    },
+    'ollama-llama3.1': {
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.1:8b',
+      embeddingModel: '',
+      numCtx: 4096,
+    },
     ollama: {
       baseUrl: 'http://localhost:11434',
       model: 'llama3.1:8b',
@@ -368,7 +379,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   hidePracticalConflicts: false,
   remoteProviderConfirmed: {},
   smarterMatchingEnabled: false,
-  parallelSlots: 2,
+  parallelSlots: 1,
 };
 
 /**
@@ -953,6 +964,10 @@ export function createDexieRepositories(): {
       return {
         ...DEFAULT_APP_SETTINGS,
         ...(record?.value ?? {}),
+        providerConfigs: {
+          ...DEFAULT_APP_SETTINGS.providerConfigs,
+          ...(record?.value?.providerConfigs ?? {}),
+        },
       };
     },
     async saveSettings(settings: AppSettings): Promise<void> {

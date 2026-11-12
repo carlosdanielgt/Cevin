@@ -1,5 +1,17 @@
 import { z } from 'zod';
 import {
+  BulletEvaluationDto,
+  BulletEvaluationDtoSchema,
+  CandidateBankSubsetDto,
+  CareerIntelligencePort,
+  EvidenceContextDto,
+  ExperienceRecordDto,
+  ExecutiveSummaryDto,
+  ExecutiveSummaryDtoSchema,
+  ExtractedExperienceDto,
+  ExtractedExperienceDtoSchema,
+  HallucinationAuditDto,
+  HallucinationAuditDtoSchema,
   LlmChatRequest,
   LlmCompletionRequest,
   LlmCompletionResponse,
@@ -10,7 +22,17 @@ import {
   LlmRuntimeStatus,
   LlmUsageMetrics,
   ModelInfo,
+  RequirementMatchDto,
+  RequirementMatchDtoSchema,
+  SourceRecordDto,
+  buildMlxBulletEvaluationPrompt,
+  buildMlxExecutiveSummaryPrompt,
+  buildMlxExperienceExtractionPrompt,
+  buildMlxHallucinationAuditPrompt,
+  buildMlxRequirementMatchPrompt,
 } from '../../../core/application';
+import { findUnverifiedSummaryNumbers } from '../../../core/domain';
+import { createDeterministicCareerIntelligenceAdapter } from './mock';
 
 export const OllamaConfigSchema = z.object({
   baseUrl: z.string().url().default('http://localhost:11434'),
@@ -45,14 +67,157 @@ function extractTimings(payload: OllamaChatResponsePayload): LlmUsageMetrics {
   };
 }
 
+const OLLAMA_LEGACY_SYSTEM_PROMPT = `You are Cevin's local Career Intelligence Engine running on Llama 3.1 8B via Ollama.
+Follow the requested JSON schema strictly. Never invent metrics, technologies, or experience not grounded in the provided source evidence. Return ONLY valid JSON.`;
+
+export function createOllamaCareerIntelligenceAdapter(
+  rawConfig: OllamaConfig,
+  fetchImpl: typeof fetch = fetch,
+): CareerIntelligencePort {
+  const config = OllamaConfigSchema.parse(rawConfig);
+  const baseUrl = config.baseUrl.replace(/\/+$/, '');
+  const fallback = createDeterministicCareerIntelligenceAdapter();
+
+  async function runOllamaJson<T>(
+    userPrompt: string,
+    temperature: number,
+    schema: z.ZodType<T>,
+  ): Promise<T> {
+    const response = await fetchImpl(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.model,
+        stream: false,
+        format: 'json',
+        keep_alive: '30m',
+        options: {
+          num_ctx: config.numCtx,
+          temperature,
+          top_p: 0.9,
+        },
+        messages: [
+          { role: 'system', content: OLLAMA_LEGACY_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama /api/chat failed with HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as OllamaChatResponsePayload;
+    const rawJson = payload.message?.content ?? '{}';
+    return schema.parse(JSON.parse(rawJson));
+  }
+
+  return {
+    async extractExperienceRecord(
+      rawStatement: string,
+      timeframe = 'Unspecified',
+    ): Promise<ExtractedExperienceDto> {
+      try {
+        return await runOllamaJson(
+          buildMlxExperienceExtractionPrompt(rawStatement, timeframe),
+          0.0,
+          ExtractedExperienceDtoSchema,
+        );
+      } catch {
+        return fallback.extractExperienceRecord(rawStatement, timeframe);
+      }
+    },
+
+    async classifyRequirementMatch(
+      requirement: string,
+      experience: ExperienceRecordDto,
+      targetRole?: string,
+    ): Promise<RequirementMatchDto> {
+      try {
+        return await runOllamaJson(
+          buildMlxRequirementMatchPrompt(requirement, experience, targetRole),
+          0.0,
+          RequirementMatchDtoSchema,
+        );
+      } catch {
+        return fallback.classifyRequirementMatch(
+          requirement,
+          experience,
+          targetRole,
+        );
+      }
+    },
+
+    async auditBulletHallucination(
+      sourceRecord: SourceRecordDto,
+      generatedBullet: string,
+    ): Promise<HallucinationAuditDto> {
+      try {
+        return await runOllamaJson(
+          buildMlxHallucinationAuditPrompt(sourceRecord, generatedBullet),
+          0.0,
+          HallucinationAuditDtoSchema,
+        );
+      } catch {
+        return fallback.auditBulletHallucination(sourceRecord, generatedBullet);
+      }
+    },
+
+    async evaluateAndRewriteBullet(
+      draftBullet: string,
+      evidence: EvidenceContextDto,
+    ): Promise<BulletEvaluationDto> {
+      try {
+        return await runOllamaJson(
+          buildMlxBulletEvaluationPrompt(draftBullet, evidence),
+          0.0,
+          BulletEvaluationDtoSchema,
+        );
+      } catch {
+        return fallback.evaluateAndRewriteBullet(draftBullet, evidence);
+      }
+    },
+
+    async synthesizeExecutiveSummary(
+      jdExcerpt: string,
+      candidateBank: CandidateBankSubsetDto,
+    ): Promise<ExecutiveSummaryDto> {
+      try {
+        const result = await runOllamaJson(
+          buildMlxExecutiveSummaryPrompt(jdExcerpt, candidateBank),
+          0.2,
+          ExecutiveSummaryDtoSchema,
+        );
+        const unverified = findUnverifiedSummaryNumbers(
+          result.tailored_summary,
+          candidateBank.top_achievements,
+          candidateBank.profile.headline,
+        );
+        if (unverified.length > 0) {
+          return fallback.synthesizeExecutiveSummary(jdExcerpt, candidateBank);
+        }
+        return result;
+      } catch {
+        return fallback.synthesizeExecutiveSummary(jdExcerpt, candidateBank);
+      }
+    },
+  };
+}
+
 export function createOllamaProvider(
   rawConfig: OllamaConfig,
   fetchImpl: typeof fetch = fetch,
 ): LlmProvider {
   const config = OllamaConfigSchema.parse(rawConfig);
   const baseUrl = config.baseUrl.replace(/\/+$/, '');
+  const careerIntelligence = createOllamaCareerIntelligenceAdapter(
+    config,
+    fetchImpl,
+  );
 
   return {
+    careerIntelligence,
+
     async listModels(): Promise<ModelInfo[]> {
       const response = await fetchImpl(`${baseUrl}/api/tags`, {
         method: 'GET',
@@ -364,26 +529,8 @@ export function createOllamaProvider(
   };
 }
 
-/**
- * Ollama LLM provider descriptor registered in the LlmProviderCatalog.
- */
-export const ollamaProviderDescriptor: LlmProviderDescriptor<OllamaConfig> = {
-  id: 'ollama',
-  label: 'Ollama (on this computer)',
-  description:
-    'Runs locally on this computer using Ollama. Tuned for llama3.1:8b on Apple Silicon.',
-  locality: 'local',
-  capabilities: {
-    streaming: true,
-    jsonSchema: true,
-    embeddings: true,
-    reportsTimings: true,
-    keepAlive: true,
-    runtimeStatus: true,
-    parallel: true,
-  },
-  configSchema: OllamaConfigSchema,
-  configFields: [
+const OLLAMA_CONFIG_FIELDS: LlmProviderDescriptor<OllamaConfig>['configFields'] =
+  [
     {
       key: 'baseUrl',
       label: 'Ollama URL',
@@ -408,12 +555,44 @@ export const ollamaProviderDescriptor: LlmProviderDescriptor<OllamaConfig> = {
       helpText:
         'Kept constant at 4096 tokens per slot so Ollama never reallocates memory mid-session.',
     },
-  ],
-  defaultConfig: {
-    baseUrl: 'http://localhost:11434',
-    model: 'llama3.1:8b',
-    embeddingModel: '',
-    numCtx: 4096,
-  },
-  create: (config) => createOllamaProvider(config),
+  ];
+
+/**
+ * Legacy Ollama LLM provider descriptor (`ollama-llama3.1`) selectable as fallback.
+ */
+export const ollamaLlama31ProviderDescriptor: LlmProviderDescriptor<OllamaConfig> =
+  {
+    id: 'ollama-llama3.1',
+    label: 'Llama 3.1 8B — Ollama Legacy',
+    description:
+      'Legacy general-purpose fallback running llama3.1:8b via Ollama (http://localhost:11434).',
+    locality: 'local',
+    capabilities: {
+      streaming: true,
+      jsonSchema: true,
+      embeddings: true,
+      reportsTimings: true,
+      keepAlive: true,
+      runtimeStatus: true,
+      parallel: true,
+    },
+    configSchema: OllamaConfigSchema,
+    configFields: OLLAMA_CONFIG_FIELDS,
+    defaultConfig: {
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.1:8b',
+      embeddingModel: '',
+      numCtx: 4096,
+    },
+    create: (config) => createOllamaProvider(config),
+  };
+
+/**
+ * Backward-compatible alias (`ollama`) pointing to the same Ollama adapter.
+ */
+export const ollamaProviderDescriptor: LlmProviderDescriptor<OllamaConfig> = {
+  ...ollamaLlama31ProviderDescriptor,
+  id: 'ollama',
+  label: 'Llama 3.1 8B — Ollama Legacy',
 };
+

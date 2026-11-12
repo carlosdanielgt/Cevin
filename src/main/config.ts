@@ -6,6 +6,11 @@ export const APP_CONFIG = {
   appName: 'Cevin',
   version: '1.0.0',
   defaultPort: 8080,
+  mlxDefaults: {
+    baseUrl: 'http://localhost:8000',
+    recommendedGenerationModel: 'cevin-3b-4bit-fused',
+    defaultNumCtx: 1024,
+  },
   ollamaDefaults: {
     baseUrl: 'http://localhost:11434',
     recommendedGenerationModel: 'llama3.1:8b',
@@ -15,3 +20,4 @@ export const APP_CONFIG = {
   storageDbName: 'cevin_local_studio_db',
   minSupportedViewportWidthPx: 1024,
 } as const;
+

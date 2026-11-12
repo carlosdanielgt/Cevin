@@ -385,8 +385,11 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         );
       const tokenCap = task.getTokenCap(profile);
 
-      if (estimatedInputTokens + tokenCap > profile.numCtx) {
-        // Trim suffix message if needed so we never exceed profile.numCtx (4096)
+      if (
+        !profile.disableRawPromptTrimming &&
+        estimatedInputTokens + tokenCap > profile.numCtx
+      ) {
+        // Legacy llama3.1:8b prompt-trimming harness: only run when raw truncation is not disabled
         const maxSuffixChars = Math.max(
           400,
           Math.floor((profile.numCtx - tokenCap - 450) * 3.5),

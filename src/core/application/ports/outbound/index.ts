@@ -128,6 +128,10 @@ export interface LlmProvider {
    * Releases model weights from memory immediately (e.g., `keep_alive: 0`).
    */
   unload?(model?: string): Promise<void>;
+  /**
+   * Optional dedicated hexagonal CareerIntelligencePort implementation (Task 1–5 contracts).
+   */
+  careerIntelligence?: import('./careerIntelligence').CareerIntelligencePort;
 }
 
 /**
@@ -185,6 +189,11 @@ export interface ModelProfile {
   keepAlive: string;
   fewShotStyle: 'chat-turns' | 'inline';
   serverEnv: string[];
+  /**
+   * When true (e.g. for `cevin-3b-4bit-fused` trained with `mask_prompt: true`),
+   * bypasses destructive raw prompt-string truncation in the gateway so structured JSON is never sliced.
+   */
+  disableRawPromptTrimming?: boolean;
 }
 
 export interface ModelProfileCatalog {
@@ -192,6 +201,8 @@ export interface ModelProfileCatalog {
   getById(id: string): ModelProfile | undefined;
   resolveForModel(modelName: string): ModelProfile;
 }
+
+export * from './careerIntelligence';
 
 /**
  * Persistent LRU cache entry for deterministic LLM task outputs.

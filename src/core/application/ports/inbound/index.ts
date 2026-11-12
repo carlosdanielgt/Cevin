@@ -34,13 +34,25 @@ import {
 } from '../../../domain';
 import {
   AppSettings,
+  BulletEvaluationDto,
+  CandidateBankSubsetDto,
+  CareerIntelligencePort,
+  EvidenceContextDto,
+  ExperienceRecordDto,
+  ExecutiveSummaryDto,
+  ExtractedExperienceDto,
+  HallucinationAuditDto,
   LlmConfigFieldMeta,
   LlmRuntimeStatus,
   ModelInfo,
   PerformanceProfile,
   PerformanceSummary,
+  RequirementMatchDto,
   ResumeTemplate,
+  SourceRecordDto,
 } from '../outbound';
+
+
 
 export interface ParsedResumeCandidate {
   rawDocument: RawDocument;
@@ -531,6 +543,41 @@ export interface CevinActivityUseCase {
   subscribe(listener: (snapshot: CevinActivitySnapshot) => void): () => void;
 }
 
+export interface CareerIntelligenceUseCase extends CareerIntelligencePort {
+  extractExperienceRecord(
+    rawStatement: string,
+    timeframe?: string,
+  ): Promise<ExtractedExperienceDto>;
+  classifyRequirementMatch(
+    requirement: string,
+    experience: ExperienceRecordDto,
+    targetRole?: string,
+  ): Promise<RequirementMatchDto>;
+  auditBulletHallucination(
+    sourceRecord: SourceRecordDto,
+    generatedBullet: string,
+  ): Promise<HallucinationAuditDto>;
+  evaluateAndRewriteBullet(
+    draftBullet: string,
+    evidence: EvidenceContextDto,
+  ): Promise<BulletEvaluationDto>;
+  synthesizeExecutiveSummary(
+    jdExcerpt: string,
+    candidateBank: CandidateBankSubsetDto,
+  ): Promise<ExecutiveSummaryDto>;
+  synthesizeApplicationExecutiveSummary(
+    applicationId: string,
+  ): Promise<Result<ExecutiveSummaryDto & { application: Application }>>;
+  extractAndMapExperienceStatement(params: {
+    rawStatement: string;
+    timeframe?: string;
+    experienceId: string;
+  }): Promise<{
+    dto: ExtractedExperienceDto;
+    achievement: Achievement;
+  }>;
+}
+
 export interface CevinUseCases {
   importResumeFile: ImportResumeFileUseCase;
   analyzeJobDescription: AnalyzeJobDescriptionUseCase;
@@ -568,6 +615,8 @@ export interface CevinUseCases {
   testLlmConnection: TestLlmConnectionUseCase;
   performance: HarnessPerformanceUseCase;
   activity: CevinActivityUseCase;
+  careerIntelligence: CareerIntelligenceUseCase;
 }
+
 
 

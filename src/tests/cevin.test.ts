@@ -16,12 +16,18 @@ import {
   pdfResumeImporter,
 } from '../adapters/driven/importers';
 import {
+  cevin3bMlxProfile,
+  createMlxCareerIntelligenceAdapter,
+  createMlxFastApiProvider,
   createModelProfileCatalog,
   createOllamaProvider,
+  mlxFastApiProviderDescriptor,
   mockProviderDescriptor,
+  ollamaLlama31ProviderDescriptor,
   ollamaProviderDescriptor,
 } from '../adapters/driven/llm';
 import {
+  DEFAULT_APP_SETTINGS,
   createInMemoryPerformanceLog,
   createInMemoryRepositories,
   createInMemoryResultCache,
@@ -33,12 +39,18 @@ import {
   getCompanyInitials,
 } from '../adapters/driving/web/ui/primitives';
 import {
+  CEVIN_MLX_SYSTEM_PROMPT,
   HARNESS_TASK_CATALOG,
   LlmProvider,
   LlmProviderDescriptor,
   PROMPT_VERSION,
   buildAnalyzeJobPrompt,
   buildCoverLetterPrompt,
+  buildMlxBulletEvaluationPrompt,
+  buildMlxExecutiveSummaryPrompt,
+  buildMlxExperienceExtractionPrompt,
+  buildMlxHallucinationAuditPrompt,
+  buildMlxRequirementMatchPrompt,
   buildStructureResumePrompt,
   buildTailorBulletPrompt,
   createDemoApplications,
@@ -85,8 +97,10 @@ import {
   extractFirstThirdPageText,
   extractJobFactsByRules,
   extractStrongestMetricWithContext,
+  extractTargetJdExcerpt,
   findBankEvidenceForTerm,
   findInlineCliches,
+  findUnverifiedSummaryNumbers,
   formatAchievementInVoice,
   formatCevinActivityLabel,
   formatContactBlock,
@@ -102,6 +116,7 @@ import {
   locateBlocks,
   mapApplicationToCoverLetterDocument,
   mapApplicationToResumeDocument,
+  mapExtractedExperienceToAchievement,
   mapToCoverLetterDocument,
   normalizeEmbeddedProofText,
   normalizeKeyword,
@@ -114,9 +129,16 @@ import {
   resolveMetroArea,
   sanitizeExportFilenameInput,
   sanitizeLlmOutput,
+  scanDeterministicSkillIds,
   segmentBulletForSkimAndHighlight,
+  sliceCandidateBankForSummary,
+  sliceEvidenceForBulletRewrite,
+  sliceExperienceRecordForMatching,
+  sliceSourceRecordForAudit,
   smartTrimBulletText,
   sortExperiencesChronologically,
+  splitCareerStatements,
+  stripJdBoilerplateForMlx,
   validateBulletGrounding,
   validateBulletOutput,
   validateCoverLetterGrounding,
@@ -732,7 +754,11 @@ test('Importer & Exporter Contract Suite: PDF (with PositionedText), Markdown, a
 test('Full End-to-End Flow: Quick Check -> Save as Prospect -> Promote Prospect (Start Tailoring) -> Review -> Export First_Last_Company_Resume.pdf', async () => {
   const container = buildCevinContainer({ inMemoryOnly: true, seedDemo: true });
 
-  // 1. Check sidebar status in Demo mode
+  // 1. Default provider is Cevin 3B Fine-Tuned (MLX FastAPI), and switching to mock enters Demo mode
+  const initialSettings = await container.manageSettings.getSettings();
+  assert.equal(initialSettings.activeProviderId, 'cevin-3b-mlx');
+  await container.manageSettings.saveSettings({ activeProviderId: 'mock' });
+
   const demoStatus = await container.testLlmConnection.getSidebarStatus();
   assert.equal(demoStatus.state, 'demo');
   assert.equal(demoStatus.label, 'Demo mode');
@@ -3169,3 +3195,484 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
     'Google Docs WYSIWYG HTML must include clickable LinkedIn link with display URL',
   );
 });
+
+// ============================================================================
+// 4. CEVIN 3B FINE-TUNED MLX ADAPTER, DOMAIN PRE-PROCESSORS & AUDIT SANDWICH
+// ============================================================================
+
+test('Domain Pre-Processors strip JD boilerplate, split statements, scan deterministic skills, and slice candidate entities cleanly', () => {
+  assert.equal(
+    DEFAULT_APP_SETTINGS.activeProviderId,
+    'cevin-3b-mlx',
+    'cevin-3b-mlx must be the default inference provider',
+  );
+
+  // 1. JD Boilerplate Stripper & Excerpt Capper (~250 words)
+  const rawVerboseJd = `Role: Staff Distributed Systems Engineer
+Company: Kestrel Pay
+About Us:
+Kestrel Pay is reinventing global treasury settlement for modern enterprises.
+Requirements:
+- 6+ years building high-throughput backend services in Go, Rust, or TypeScript
+- Deep production experience with Kubernetes, Kafka, and PostgreSQL at scale
+- Proven track record reducing tail latency and cloud infrastructure spend
+Benefits and Perks:
+- Unlimited PTO, 401k matching, and free catered lunches every day
+Equal Opportunity Employer:
+We are an equal opportunity employer and value diversity at our company. All qualified applicants will receive consideration without regard to race, religion, or national origin.`;
+
+  const stripped = stripJdBoilerplateForMlx(rawVerboseJd);
+  assert.ok(stripped.includes('Kubernetes, Kafka, and PostgreSQL'));
+  assert.equal(
+    stripped.toLowerCase().includes('equal opportunity employer'),
+    false,
+    'EEO boilerplate must be stripped before MLX inference',
+  );
+  assert.equal(
+    stripped.toLowerCase().includes('catered lunches'),
+    false,
+    'Benefits boilerplate must be stripped before MLX inference',
+  );
+
+  const excerpt = extractTargetJdExcerpt(rawVerboseJd, 40);
+  const wordCount = excerpt.split(/\s+/).filter(Boolean).length;
+  assert.ok(wordCount <= 40, `Expected <= 40 words, got ${wordCount}`);
+
+  // 2. Statement Splitter
+  const statements = splitCareerStatements(`
+    • Re-architected multi-region Kafka ingestion pipeline in Go, sustaining 1.4M events/sec.
+    - Cut cross-AZ egress spend by 38% across 18 Kubernetes clusters.
+  `);
+  assert.equal(statements.length, 2);
+
+  // 3. Deterministic Skill Scanner & Achievement Mapper
+  const demoBank = createDemoBankSnapshot();
+  const matchedSkillIds = scanDeterministicSkillIds({
+    project: 'Telemetry Ingestion',
+    action:
+      'Built Kafka and Go telemetry pipeline on Kubernetes (k8s) backed by PostgreSQL',
+    technologies: ['Go', 'Kafka', 'Kubernetes', 'PostgreSQL'],
+    skills: demoBank.skills,
+  });
+  assert.ok(
+    matchedSkillIds.length >= 3,
+    'Deterministic skill scanner must match canonical skills and aliases',
+  );
+
+  const mappedAch = mapExtractedExperienceToAchievement({
+    extracted: {
+      company: 'Vanguard Telemetry',
+      role_context: 'Staff Platform Engineer',
+      timeframe: '2022 - Present',
+      project: 'Multi-Region Telemetry Pipeline',
+      action:
+        'Re-architected multi-region Kafka metric ingestion pipeline in Go',
+      technologies: ['Go', 'Kafka', 'Kubernetes'],
+      scale: '1.4M events/sec across 18 clusters',
+      impact: 'cutting cross-AZ egress spend by 38%',
+      domain: 'Distributed Systems',
+    },
+    experienceId: 'exp-1',
+    achievementId: 'ach-mlx-1',
+    skills: demoBank.skills,
+  });
+  assert.equal(mappedAch.id, 'ach-mlx-1');
+  assert.equal(mappedAch.experienceId, 'exp-1');
+  assert.ok(mappedAch.skillIds.length >= 2);
+  assert.ok(mappedAch.metric?.includes('1.4M events/sec'));
+
+  // 4. Entity Slicing for Tasks 2, 3, 4, 5
+  const expSlice = sliceExperienceRecordForMatching(
+    demoBank.achievements[0],
+    demoBank.experiences[0],
+    demoBank.skills,
+  );
+  assert.ok(expSlice.action.length > 0);
+  assert.ok(Array.isArray(expSlice.technologies));
+
+  const auditSlice = sliceSourceRecordForAudit(
+    demoBank.achievements[0],
+    demoBank.experiences[0],
+    demoBank.skills,
+  );
+  assert.equal(auditSlice.action, demoBank.achievements[0].action);
+
+  const evidenceWithMetric = sliceEvidenceForBulletRewrite(
+    demoBank.achievements[0],
+    demoBank.experiences[0],
+    demoBank.skills,
+  );
+  assert.ok(evidenceWithMetric.impact !== null);
+
+  const bankSummarySlice = sliceCandidateBankForSummary({
+    bank: demoBank,
+    parsedJob: null,
+    rawJd: 'Role: Staff Distributed Systems Engineer. Kubernetes, Go, Kafka.',
+  });
+  assert.ok(bankSummarySlice.matched_skills.length > 0);
+  assert.ok(bankSummarySlice.top_achievements.length > 0);
+});
+
+test('MlxFastApiAdapter executes all 5 CareerIntelligencePort tasks with exact TASK headers, Header A/B selection, and Mandatory Audit Sandwich', async () => {
+  const capturedRequests: Array<{
+    url: string;
+    body: {
+      messages: Array<{ role: string; content: string }>;
+      temperature: number;
+      max_tokens: number;
+    };
+  }> = [];
+
+  let summaryCallIndex = 0;
+
+  const mockFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/health')) {
+      return new Response(
+        JSON.stringify({ status: 'ok', model: './cevin-3b-4bit-fused' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    capturedRequests.push({ url, body });
+    const userPrompt: string = body.messages?.[1]?.content ?? '';
+
+    if (
+      userPrompt.startsWith(
+        'TASK: Extract a structured Experience Bank record',
+      )
+    ) {
+      return new Response(
+        JSON.stringify({
+          result: {
+            task: 'experience_extraction',
+            evidence_quote:
+              'Architected multi-region Kafka ingestion service in Go, sustaining 1.4M events/sec and cutting cross-AZ egress spend by 38%.',
+            domain: 'Distributed Systems',
+            company: 'Vanguard Telemetry',
+            role_context: 'Staff Infrastructure Engineer',
+            timeframe: '2022 - Present',
+            project: 'Multi-Region Telemetry Pipeline',
+            action: 'Architected multi-region Kafka ingestion service in Go',
+            technologies: ['Go', 'Kafka', 'Kubernetes'],
+            scale: '1.4M events/sec',
+            impact: 'cutting cross-AZ egress spend by 38%',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (
+      userPrompt.startsWith(
+        'TASK: Classify how well the Experience Bank record satisfies the Job Requirement.',
+      )
+    ) {
+      return new Response(
+        JSON.stringify({
+          result: {
+            task: 'experience_matching',
+            experience_id: 'ach-1',
+            direct_evidence:
+              'Operated multi-region Go services on Kubernetes at 1.4M events/sec.',
+            missing_evidence: 'None',
+            reasoning:
+              'Candidate directly operated Kubernetes and Go in production.',
+            confidence: 0.95,
+            match_level: 'strong',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (userPrompt.startsWith('TASK: Evaluate the draft resume bullet')) {
+      const isPartialHeader = userPrompt.includes(
+        'Do NOT invent missing metrics; surface follow-up questions instead.',
+      );
+      return new Response(
+        JSON.stringify({
+          result: {
+            task: 'bullet_evaluation_and_rewrite',
+            critique: isPartialHeader
+              ? 'Draft lacks quantified scale; rewrote qualitatively and surfaced follow-up question.'
+              : 'Strengthened opening verb and preserved 1.4M events/sec and 38% metrics.',
+            draft_scores: {
+              ownership: 4,
+              action: 5,
+              technical_depth: 4,
+              scope: isPartialHeader ? 2 : 5,
+              impact: isPartialHeader ? 3 : 5,
+              clarity: 5,
+            },
+            missing_evidence_questions: isPartialHeader
+              ? ['How many database clusters or tables did the migration cover?']
+              : [],
+            grounded_rewrite: isPartialHeader
+              ? 'Engineered distributed schema migration tooling in Go and PostgreSQL to streamline zero-downtime deployments.'
+              : 'Architected multi-region Kafka ingestion pipeline in Go, sustaining 1.4M events/sec while cutting cross-AZ egress spend by 38%.',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (
+      userPrompt.startsWith(
+        "TASK: Analyze the Job Description's underlying pain points",
+      )
+    ) {
+      summaryCallIndex++;
+      // First summary call injects an unverified number "99.999%" to trigger the Mandatory Audit Sandwich!
+      if (summaryCallIndex === 1) {
+        return new Response(
+          JSON.stringify({
+            result: {
+              task: 'executive_summary_synthesis',
+              jd_sentiment_and_pain_point:
+                'Needs high-throughput multi-region telemetry reliability.',
+              ideal_candidate_archetype: 'Staff Distributed Systems Engineer',
+              selected_skills: ['Go', 'Kubernetes', 'Kafka'],
+              omitted_jd_skills: ['Rust'],
+              verified_metrics_used: ['1.4M events/sec', '38%'],
+              tailored_summary:
+                'Staff Infrastructure Engineer specializing in Go and Kubernetes, achieving 99.999% global uptime and 38% lower egress spend.',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          result: {
+            task: 'executive_summary_synthesis',
+            jd_sentiment_and_pain_point:
+              'Needs high-throughput multi-region telemetry reliability.',
+            ideal_candidate_archetype: 'Staff Distributed Systems Engineer',
+            selected_skills: ['Go', 'Kubernetes', 'Kafka'],
+            omitted_jd_skills: ['Rust'],
+            verified_metrics_used: ['1.4M events/sec', '38%'],
+            tailored_summary:
+              'Staff Infrastructure Engineer specializing in Go and Kubernetes, sustaining 1.4M events/sec and cutting egress spend by 38%.',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (
+      userPrompt.startsWith(
+        'TASK: Audit the generated resume bullet against the source Experience Bank record',
+      )
+    ) {
+      const hasHallucinatedNine = userPrompt.includes('99.999%');
+      return new Response(
+        JSON.stringify({
+          result: {
+            task: 'hallucination_audit',
+            violations: hasHallucinatedNine
+              ? ['Unverified metric 99.999% not present in SOURCE_RECORD']
+              : [],
+            explanation: hasHallucinatedNine
+              ? '99.999% is not present in SOURCE_RECORD.'
+              : 'All claims match SOURCE_RECORD.',
+            factual_consistency_score: hasHallucinatedNine ? 0.4 : 1.0,
+            verdict: hasHallucinatedNine ? 'unsupported' : 'supported',
+            corrected_bullet:
+              'Staff Infrastructure Engineer specializing in Go and Kubernetes, sustaining 1.4M events/sec and cutting egress spend by 38%.',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response(JSON.stringify({ result: {} }), { status: 200 });
+  };
+
+  const adapter = createMlxCareerIntelligenceAdapter(
+    mlxFastApiProviderDescriptor.defaultConfig,
+    mockFetch,
+  );
+
+  // Task 1: experience_extraction (temp = 0.0)
+  const extracted = await adapter.extractExperienceRecord(
+    'Architected multi-region Kafka ingestion service in Go, sustaining 1.4M events/sec and cutting cross-AZ egress spend by 38%.',
+    '2022 - Present',
+  );
+  assert.equal(extracted.technologies.includes('Go'), true);
+  assert.equal(capturedRequests[0].body.temperature, 0.0);
+  assert.equal(
+    capturedRequests[0].body.messages[0].content,
+    CEVIN_MLX_SYSTEM_PROMPT,
+  );
+
+  // Task 2: experience_matching (temp = 0.0)
+  const matchRes = await adapter.classifyRequirementMatch(
+    '5+ years operating Kubernetes and Go microservices',
+    {
+      experience_id: 'ach-1',
+      project: 'Multi-Region Telemetry Pipeline',
+      role: 'Staff Infrastructure Engineer',
+      action: 'Architected multi-region Kafka ingestion service in Go',
+      technologies: ['Go', 'Kafka', 'Kubernetes'],
+      scale: '1.4M events/sec',
+      impact: '38% reduction in cross-AZ egress spend',
+      domain: 'Distributed Systems',
+    },
+    'Staff Distributed Systems Engineer',
+  );
+  assert.equal(matchRes.match_level, 'strong');
+  assert.equal(capturedRequests[1].body.temperature, 0.0);
+
+  // Task 4A: bullet_evaluation_and_rewrite with complete evidence -> Header A
+  const rewriteA = await adapter.evaluateAndRewriteBullet(
+    'Worked on Kafka pipeline in Go.',
+    {
+      project: 'Multi-Region Telemetry Pipeline',
+      action: 'Architected multi-region Kafka ingestion pipeline in Go',
+      technologies: ['Go', 'Kafka'],
+      scale: '1.4M events/sec',
+      impact: '38% reduction in cross-AZ egress spend',
+    },
+  );
+  assert.ok(rewriteA.grounded_rewrite.includes('38%'));
+  assert.equal(
+    capturedRequests[2].body.messages[1].content.includes(
+      'TASK: Evaluate the draft resume bullet and rewrite it using ONLY the provided Experience Bank evidence.',
+    ),
+    true,
+  );
+
+  // Task 4B: bullet_evaluation_and_rewrite with null scale/impact -> Header B
+  const rewriteB = await adapter.evaluateAndRewriteBullet(
+    'Helped with database migrations.',
+    {
+      project: 'Schema Migration Tooling',
+      action: 'Engineered distributed schema migration tooling',
+      technologies: ['Go', 'PostgreSQL'],
+      scale: null,
+      impact: null,
+    },
+  );
+  assert.equal(/\d/.test(rewriteB.grounded_rewrite), false);
+  assert.equal(
+    capturedRequests[3].body.messages[1].content.includes(
+      'Do NOT invent missing metrics; surface follow-up questions instead.',
+    ),
+    true,
+  );
+
+  // Task 5: executive_summary_synthesis (temp = 0.2) + Mandatory Audit Sandwich (Task 3 at temp = 0.0)
+  const candidateBank = {
+    profile: {
+      id: 'profile-main',
+      headline: 'Staff Infrastructure Engineer',
+    },
+    matched_skills: [
+      { id: 's-go', name: 'Go', category: 'Languages' as const },
+      { id: 's-k8s', name: 'Kubernetes', category: 'Infrastructure' as const },
+      { id: 's-kafka', name: 'Kafka', category: 'Infrastructure' as const },
+    ],
+    top_achievements: [
+      {
+        id: 'ach-1',
+        experienceId: 'exp-1',
+        action: 'Architected multi-region Kafka ingestion pipeline in Go',
+        result: 'cutting cross-AZ egress spend by 38%',
+        metric: '1.4M events/sec, 38%',
+        skillIds: ['s-go', 's-k8s', 's-kafka'],
+        tags: ['distributed-systems'],
+      },
+    ],
+  };
+  const summaryDto = await adapter.synthesizeExecutiveSummary(
+    'Role: Staff Distributed Systems Engineer. Must have Go, Kubernetes, Kafka.',
+    candidateBank,
+  );
+  // Because the first summary response contained "99.999%" (not in candidateBank),
+  // the adapter must have automatically invoked Task 3 (hallucination_audit at temp = 0.0)
+  // and returned corrected_bullet without "99.999%"!
+  assert.equal(summaryDto.tailored_summary.includes('99.999%'), false);
+  assert.equal(summaryDto.tailored_summary.includes('38%'), true);
+  assert.equal(capturedRequests[4].body.temperature, 0.2);
+  assert.equal(capturedRequests[5].body.temperature, 0.0);
+  assert.ok(
+    capturedRequests[5].body.messages[1].content.startsWith(
+      'TASK: Audit the generated resume bullet',
+    ),
+  );
+});
+
+test('cevin3bMlxProfile (disableRawPromptTrimming: true) bypasses LlmGateway raw string truncation so structured JSON payloads are never clipped mid-object', async () => {
+  const catalog = createModelProfileCatalog();
+  const resolved = catalog.resolveForModel('cevin-3b-4bit-fused');
+  assert.equal(resolved.id, 'cevin_3b_mlx');
+  assert.equal(resolved.numCtx, 1024);
+  assert.equal(resolved.disableRawPromptTrimming, true);
+  assert.equal(cevin3bMlxProfile.disableRawPromptTrimming, true);
+
+  let sentMessages: Array<{ role: string; content: string }> = [];
+  const fakeMlxProvider: LlmProvider = {
+    async listModels() {
+      return [{ id: 'cevin-3b-4bit-fused', name: 'cevin-3b-4bit-fused' }];
+    },
+    async *chat() {
+      yield '';
+    },
+    async chatJSON(_req, schema) {
+      return schema.parse({});
+    },
+    async complete(req) {
+      sentMessages = req.messages;
+      return {
+        text: 'Architected multi-region Kafka ingestion pipeline in Go, sustaining 1.4M events/sec while cutting egress spend by 38%.',
+        usage: { promptTokens: 420, completionTokens: 28 },
+      };
+    },
+  };
+
+  const gateway = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: fakeMlxProvider,
+      providerId: 'cevin-3b-mlx',
+      modelName: 'cevin-3b-4bit-fused',
+      profile: cevin3bMlxProfile,
+      parallelSlots: 1,
+    }),
+    resultCache: createInMemoryResultCache(100),
+    performanceLog: createInMemoryPerformanceLog(20),
+    clock: { nowIso: () => '2026-03-01T00:00:00.000Z' },
+    idGen: { nextId: (p = 'id') => `${p}-1` },
+  });
+
+  // Create a long briefText that pushes estimated tokens above 1024, and end action with a sentinel token
+  const longBrief = `ROLE: Staff Platform Engineer | DETAILS: ${'distributed systems architecture '.repeat(120)}`;
+  const sentinelEnd = 'SENTINEL_END_MARKER_DO_NOT_CLIP';
+
+  await gateway.executeTask(
+    rewriteBulletTask,
+    {
+      bulletId: 'b-mlx-no-clip',
+      action: `Architected multi-region Kafka ingestion pipeline in Go (${sentinelEnd})`,
+      result: 'sustaining 1.4M events/sec while cutting egress spend by 38%',
+      metric: '1.4M events/sec, 38%',
+      company: 'Vanguard Telemetry',
+      roleTitle: 'Staff Platform Engineer',
+      allowedTerms: ['Go', 'Kafka', 'Kubernetes'],
+      jdOnlyTerms: [],
+      briefText: longBrief,
+      briefHash: 'long-brief-hash',
+      voice: 'balanced',
+    },
+    { itemKey: 'b-mlx-no-clip', priority: 'interactive', bypassCache: true },
+  );
+
+  const lastMessageContent =
+    sentMessages[sentMessages.length - 1]?.content ?? '';
+  assert.ok(
+    lastMessageContent.includes(sentinelEnd),
+    'When disableRawPromptTrimming is true on cevin3bMlxProfile, LlmGateway must not slice the end of the user prompt',
+  );
+});
+
