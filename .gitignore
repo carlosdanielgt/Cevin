@@ -8,3 +8,7 @@ dist/
 !.env.example
 .playwright-cli/
 .aistudio/
+/.aistudio/
+artifacts/
+.tempmediaStorage/
+*.Artifact.json

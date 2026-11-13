@@ -45,6 +45,7 @@ import {
   Panel,
   PanelSection,
   PartialChip,
+  PreviewToolbar,
   ProspectBadge,
   ScoreChip,
   ScoreRing,
@@ -129,8 +130,8 @@ export function DesignSystemView() {
   return (
     <div className="space-y-8 pb-16">
       <PageHeader
-        title="Cevin Living Design System"
-        subtitle="Desk, paper and ink — True WYSIWYG PDF.js Preview, Scalable Job Facts Hierarchy, Calibrated 3-Score Hero Band, and Uncropped Studio Controls."
+        title="Design System"
+        subtitle="Tokens, typography, surfaces, and components."
       />
 
       {/* 01. Elevation & 4-Level Surface Ladder (Light & Dark Side-by-Side) */}
@@ -252,15 +253,15 @@ export function DesignSystemView() {
       {/* 03. Typography Scale */}
       <Card className="p-6 space-y-3">
         <h2 className="text-base font-display font-semibold text-ink">
-          03. Typography Scale (2+1 Font Rule — Embedded in PDF Engine)
+          03. Typography Scale
         </h2>
         <div className="space-y-3 border-t border-hairline pt-3">
           <div>
             <span className="text-xs font-mono text-ink-subtle">
-              --font-display (Fraunces Editorial Serif — Headings, Hero Numerals & Classic PDF Template)
+              --font-display (Fraunces — Headings, Numerals & Classic Template)
             </span>
             <p className="text-2xl font-display font-semibold text-ink">
-              Truthful by construction, tailored for human readers.
+              Grounded in your Experience Bank, written for human readers.
             </p>
           </div>
           <div>
@@ -273,10 +274,10 @@ export function DesignSystemView() {
           </div>
           <div>
             <span className="text-xs font-mono text-ink-subtle">
-              --font-mono (JetBrains Mono — Strictly for terminal commands & paths)
+              --font-mono (JetBrains Mono — Terminal commands & paths)
             </span>
             <p className="text-sm font-mono text-ink">
-              http://localhost:11434 · ollama pull llama3.1:8b
+              http://localhost:8000 · uvicorn mlx_server:app --host 127.0.0.1 --port 8000
             </p>
           </div>
         </div>
@@ -285,7 +286,7 @@ export function DesignSystemView() {
       {/* 04. Signature Components */}
       <Card className="p-6 space-y-6">
         <h2 className="text-base font-display font-semibold text-ink">
-          04. Signature Components & Scalable Job Facts Hierarchy
+          04. Signature Components
         </h2>
 
         {/* Studio Header Controls */}
@@ -328,8 +329,22 @@ export function DesignSystemView() {
           />
           <div className="space-y-3">
             <TakeawayCard
-              takeaway="Staff Platform Engineer · Vanguard Telemetry Systems · 2023–Present · Kubernetes, PostgreSQL, Go · p99 420→68 ms"
+              takeaway="Staff Platform Engineer · Vanguard Telemetry Systems · Feb 2023 – Present · Kubernetes, PostgreSQL, Go · p99 420→68 ms"
               targetRoleMatches={true}
+            />
+            <PreviewToolbar
+              templateId="classic"
+              onChangeTemplate={() => undefined}
+              textAlign="left"
+              onChangeTextAlign={() => undefined}
+              currentPage={1}
+              totalPages={1}
+              onChangePage={() => undefined}
+              zoom="md"
+              onChangeZoom={() => undefined}
+              skimMode={demoSkim}
+              onToggleSkimMode={() => setDemoSkim((s) => !s)}
+              byteSize={49152}
             />
             <div className="flex items-center justify-between p-3 rounded-lg bg-surface-sunken border border-hairline">
               <SkimToggle active={demoSkim} onToggle={setDemoSkim} />
@@ -428,11 +443,11 @@ export function DesignSystemView() {
           </div>
         </div>
 
-        {/* Real PDF.js PageThumbnails & TimelineRail */}
+        {/* Page Thumbnails & TimelineRail */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
           <div className="space-y-2">
             <div className="text-xs font-semibold text-ink">
-              Real PDF.js PageThumbnails (Classic, Modern, Compact)
+              Page Thumbnails (Classic, Modern, Compact)
             </div>
             <div className="flex items-center gap-4 p-4 rounded-lg bg-surface-sunken border border-hairline">
               <PageThumbnail templateId="classic" size="md" />
@@ -480,22 +495,24 @@ export function DesignSystemView() {
           <Button variant="outline-danger">Outline Danger</Button>
           <Button variant="danger">Danger</Button>
           <SplitButton
-            primaryLabel="Export PDF"
+            primaryLabel="Export Resume PDF"
             onPrimaryClick={() => undefined}
             items={[
               {
-                id: 'pdf',
-                label: 'Export PDF (.pdf)',
+                id: 'docx',
+                label: 'Word document (.docx)',
+                tooltip:
+                  'Editable Word file. Layout can differ slightly from the PDF.',
                 onSelect: () => undefined,
               },
               {
                 id: 'md',
-                label: 'Export Markdown (.md)',
+                label: 'Markdown (.md)',
                 onSelect: () => undefined,
               },
               {
                 id: 'txt',
-                label: 'Export plain text (.txt)',
+                label: 'Plain text (.txt)',
                 onSelect: () => undefined,
               },
             ]}

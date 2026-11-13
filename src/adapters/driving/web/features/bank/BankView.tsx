@@ -1,6 +1,5 @@
 import {
   Award,
-  Briefcase,
   Check,
   ChevronDown,
   ChevronRight,
@@ -8,14 +7,13 @@ import {
   Edit3,
   FolderGit2,
   GraduationCap,
+  Link2,
   MoreHorizontal,
   Plus,
   Search,
   Sparkles,
   Trash2,
   Upload,
-  User,
-  Wrench,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ParsedResumeCandidate } from '../../../../../core/application';
@@ -29,7 +27,12 @@ import {
   Skill,
   SkillCategory,
   assembleBulletText,
+  classifySkillCategory,
   formatCount,
+  formatDocumentDateRange,
+  isPlaceholderExperience,
+  normalizeBankSkill,
+  sortExperiencesChronologically,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
 import {
@@ -68,6 +71,7 @@ const SKILL_CATEGORIES: SkillCategory[] = [
   'Data & AI',
   'Practices',
   'Tools',
+  'Other',
 ];
 
 const EXTERNAL_LLM_PROMPT_TEMPLATE = `Please convert my attached CV / resume into the following JSON structure for the Cevin Experience Bank.
@@ -77,7 +81,7 @@ Return ONLY valid raw JSON with no markdown wrapping and no conversational prose
   "profile": {
     "name": "Full Name",
     "headline": "Professional Headline",
-    "email": "email@example.com",
+    "email": "name@example.com",
     "phone": "+1 (555) 000-0000",
     "location": "City, State",
     "links": [
@@ -106,7 +110,8 @@ Return ONLY valid raw JSON with no markdown wrapping and no conversational prose
     {
       "name": "Skill Name",
       "category": "Languages",
-      "aliases": ["Alias"]
+      "aliases": ["Strict Synonym"],
+      "related": ["Adjacent Tool"]
     }
   ],
   "educations": [
@@ -138,7 +143,7 @@ Return ONLY valid raw JSON with no markdown wrapping and no conversational prose
   ]
 }
 
-Valid categories for skills are ONLY: "Languages", "Frameworks", "Infrastructure", "Data & AI", "Practices", or "Tools".
+Valid categories for skills are ONLY: "Languages", "Frameworks", "Infrastructure", "Data & AI", "Practices", "Tools", or "Other".
 Make sure achievements describe quantifiable outcomes with past tense verbs.`;
 
 export function BankView() {
@@ -153,11 +158,37 @@ export function BankView() {
     Record<string, boolean>
   >({});
 
-  // Drawers & inline edit states
-  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  // Role Drawer state (supports both editing existing role and creating new role on confirm)
+  const [roleDraft, setRoleDraft] = useState<{
+    isNew: boolean;
+    experience: Experience;
+    initialAchievementAction?: string;
+    initialAchievementMetric?: string;
+    initialAchievementResult?: string;
+  } | null>(null);
+
   const [editingAchievementId, setEditingAchievementId] = useState<
     string | null
   >(null);
+
+  // Project, Education, Certification Drawer states (read-first cards, edit/create in drawer)
+  const [projectDraft, setProjectDraft] = useState<{
+    isNew: boolean;
+    project: Project;
+    highlightsText: string;
+  } | null>(null);
+
+  const [educationDraft, setEducationDraft] = useState<{
+    isNew: boolean;
+    education: Education;
+  } | null>(null);
+
+  const [certificationDraft, setCertificationDraft] = useState<{
+    isNew: boolean;
+    certification: Certification;
+  } | null>(null);
+
+  // Import Resume Drawer
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
   const [importMethod, setImportMethod] = useState<'upload' | 'llm-prompt'>(
     'upload',
@@ -176,15 +207,15 @@ export function BankView() {
   const [newSkillCategory, setNewSkillCategory] =
     useState<SkillCategory>('Languages');
   const [newSkillAliases, setNewSkillAliases] = useState('');
+  const [newSkillRelated, setNewSkillRelated] = useState('');
 
   const loadBank = useCallback(async () => {
     const loaded = await useCases.manageBank.getBank();
     setBank(loaded);
-    if (loaded.experiences[0]) {
+    const sorted = sortExperiencesChronologically(loaded.experiences);
+    if (sorted[0]) {
       setExpandedRoleIds((prev) =>
-        Object.keys(prev).length === 0
-          ? { [loaded.experiences[0].id]: true }
-          : prev,
+        Object.keys(prev).length === 0 ? { [sorted[0].id]: true } : prev,
       );
     }
   }, [useCases]);
@@ -211,6 +242,20 @@ export function BankView() {
       .sort((a, b) => b[1] - a[1]);
   }, [bank]);
 
+  const sortedExperiences = useMemo(() => {
+    if (!bank) return [];
+    return sortExperiencesChronologically(bank.experiences);
+  }, [bank]);
+
+  // Only the most recent current role gets the filled timeline dot
+  const mostRecentCurrentRoleId = useMemo(() => {
+    const firstPresent = sortedExperiences.find((e) =>
+      e.end.toLowerCase().includes('present') ||
+      e.end.toLowerCase().includes('current'),
+    );
+    return firstPresent?.id ?? null;
+  }, [sortedExperiences]);
+
   if (!bank) {
     return (
       <div className="p-8 text-sm text-ink-muted">
@@ -221,34 +266,88 @@ export function BankView() {
 
   const q = searchQuery.trim().toLowerCase();
 
-  const handleAddRole = async () => {
-    const newId = `exp-${Date.now()}`;
-    const newExp: Experience = {
-      id: newId,
-      company: 'New Company',
-      title: 'Senior Software Engineer',
-      location: 'Remote',
-      start: '2024',
-      end: 'Present',
+  // Open new role draft in drawer (saves only on confirm)
+  const handleOpenAddRoleDrawer = () => {
+    setRoleDraft({
+      isNew: true,
+      experience: {
+        id: `exp-${Date.now()}`,
+        company: '',
+        title: '',
+        location: '',
+        start: '2024-01',
+        end: 'Present',
+      },
+      initialAchievementAction: '',
+      initialAchievementMetric: '',
+      initialAchievementResult: '',
+    });
+  };
+
+  const handleOpenEditRoleDrawer = (exp: Experience) => {
+    setRoleDraft({
+      isNew: false,
+      experience: { ...exp },
+    });
+  };
+
+  const handleConfirmRoleDraft = async () => {
+    if (!roleDraft) return;
+    const { experience, isNew } = roleDraft;
+    const trimmedCompany = experience.company.trim();
+    const trimmedTitle = experience.title.trim();
+    if (!trimmedCompany || !trimmedTitle) {
+      addToast('Enter both a role title and a company name.', 'warning');
+      return;
+    }
+
+    const cleanExp: Experience = {
+      ...experience,
+      company: trimmedCompany,
+      title: trimmedTitle,
+      location: experience.location.trim() || 'Remote',
+      start: experience.start.trim() || '2024-01',
+      end: experience.end.trim() || 'Present',
     };
-    const newAch: Achievement = {
-      id: `ach-${Date.now()}`,
-      experienceId: newId,
-      action: 'Designed and shipped core production service',
-      result: 'improving reliability across customer workloads',
-      metric: 'by 30%',
-      skillIds: [],
-      tags: ['backend'],
-    };
-    const next: BankSnapshot = {
-      ...bank,
-      experiences: [newExp, ...bank.experiences],
-      achievements: [newAch, ...bank.achievements],
-    };
-    await persistBank(next);
-    setExpandedRoleIds((prev) => ({ ...prev, [newId]: true }));
-    setEditingRoleId(newId);
-    addToast('Added new role to your Experience Bank.', 'success');
+
+    if (isNew) {
+      const nextAchievements = [...bank.achievements];
+      if (
+        roleDraft.initialAchievementAction?.trim() &&
+        roleDraft.initialAchievementResult?.trim()
+      ) {
+        nextAchievements.push({
+          id: `ach-${Date.now()}`,
+          experienceId: cleanExp.id,
+          action: roleDraft.initialAchievementAction.trim(),
+          result: roleDraft.initialAchievementResult.trim(),
+          metric: roleDraft.initialAchievementMetric?.trim() || undefined,
+          skillIds: [],
+          tags: [],
+        });
+      }
+      const next: BankSnapshot = {
+        ...bank,
+        experiences: sortExperiencesChronologically([
+          cleanExp,
+          ...bank.experiences,
+        ]),
+        achievements: nextAchievements,
+      };
+      await persistBank(next);
+      setExpandedRoleIds((prev) => ({ ...prev, [cleanExp.id]: true }));
+      setRoleDraft(null);
+      addToast(`Added role at ${cleanExp.company}.`, 'success');
+    } else {
+      const nextExps = sortExperiencesChronologically(
+        bank.experiences.map((item) =>
+          item.id === cleanExp.id ? cleanExp : item,
+        ),
+      );
+      await persistBank({ ...bank, experiences: nextExps });
+      setRoleDraft(null);
+      addToast(`Updated role at ${cleanExp.company}.`, 'success');
+    }
   };
 
   const handleDeleteRoleWithUndo = async (exp: Experience) => {
@@ -258,7 +357,7 @@ export function BankView() {
       experiences: bank.experiences.filter((e) => e.id !== exp.id),
       achievements: bank.achievements.filter((a) => a.experienceId !== exp.id),
     };
-    setEditingRoleId(null);
+    setRoleDraft(null);
     await persistBank(next);
     addToast(`Deleted role at ${exp.company}`, {
       variant: 'info',
@@ -273,11 +372,11 @@ export function BankView() {
     const newAch: Achievement = {
       id: `ach-${Date.now()}`,
       experienceId,
-      action: 'Implemented key architectural improvement',
-      result: 'reducing operational overhead for the engineering team',
+      action: 'Implemented core system improvement',
+      result: 'reducing operational overhead across production services',
       metric: 'by 25%',
       skillIds: [],
-      tags: ['architecture'],
+      tags: ['engineering'],
     };
     await persistBank({
       ...bank,
@@ -304,21 +403,26 @@ export function BankView() {
 
   const handleAddSkill = async () => {
     if (!newSkillName.trim()) return;
-    const created: Skill = {
+    const created: Skill = normalizeBankSkill({
       id: `skill-${Date.now()}`,
       name: newSkillName.trim(),
-      category: newSkillCategory,
+      category: classifySkillCategory(newSkillName.trim(), newSkillCategory),
       aliases: newSkillAliases
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
-    };
+      related: newSkillRelated
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
     await persistBank({
       ...bank,
       skills: [...bank.skills, created],
     });
     setNewSkillName('');
     setNewSkillAliases('');
+    setNewSkillRelated('');
     addToast(`Added skill "${created.name}".`, 'success');
   };
 
@@ -329,6 +433,215 @@ export function BankView() {
       skills: bank.skills.filter((s) => s.id !== skill.id),
     });
     addToast(`Removed skill "${skill.name}".`, {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  // Project Drawer handlers
+  const handleOpenAddProject = () => {
+    setProjectDraft({
+      isNew: true,
+      project: {
+        id: `proj-${Date.now()}`,
+        name: '',
+        role: '',
+        description: '',
+        link: undefined,
+        skillIds: [],
+        highlights: [],
+      },
+      highlightsText: '',
+    });
+  };
+
+  const handleOpenEditProject = (proj: Project) => {
+    setProjectDraft({
+      isNew: false,
+      project: { ...proj },
+      highlightsText: (proj.highlights ?? []).join('\n'),
+    });
+  };
+
+  const handleConfirmProjectDraft = async () => {
+    if (!projectDraft) return;
+    const name = projectDraft.project.name.trim();
+    if (!name) {
+      addToast('Enter a project name.', 'warning');
+      return;
+    }
+    const highlights = projectDraft.highlightsText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const saved: Project = {
+      ...projectDraft.project,
+      name,
+      role: projectDraft.project.role.trim() || 'Maintainer',
+      description: projectDraft.project.description.trim(),
+      link: projectDraft.project.link?.trim() || undefined,
+      highlights,
+    };
+    const nextProjects = projectDraft.isNew
+      ? [...bank.projects, saved]
+      : bank.projects.map((p) => (p.id === saved.id ? saved : p));
+    await persistBank({ ...bank, projects: nextProjects });
+    setProjectDraft(null);
+    addToast(
+      projectDraft.isNew
+        ? `Added project "${saved.name}".`
+        : `Updated project "${saved.name}".`,
+      'success',
+    );
+  };
+
+  const handleDeleteProjectWithUndo = async (proj: Project) => {
+    const previousSnapshot = bank;
+    setProjectDraft(null);
+    await persistBank({
+      ...bank,
+      projects: bank.projects.filter((p) => p.id !== proj.id),
+    });
+    addToast(`Deleted project "${proj.name}"`, {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  // Education Drawer handlers
+  const handleOpenAddEducation = () => {
+    setEducationDraft({
+      isNew: true,
+      education: {
+        id: `edu-${Date.now()}`,
+        institution: '',
+        degree: '',
+        field: '',
+        location: '',
+        start: '',
+        end: '',
+        highlights: '',
+      },
+    });
+  };
+
+  const handleOpenEditEducation = (edu: Education) => {
+    setEducationDraft({
+      isNew: false,
+      education: { ...edu },
+    });
+  };
+
+  const handleConfirmEducationDraft = async () => {
+    if (!educationDraft) return;
+    const institution = educationDraft.education.institution.trim();
+    const degree = educationDraft.education.degree.trim();
+    if (!institution || !degree) {
+      addToast('Enter both institution and degree.', 'warning');
+      return;
+    }
+    const saved: Education = {
+      ...educationDraft.education,
+      institution,
+      degree,
+      field: educationDraft.education.field.trim(),
+      location: educationDraft.education.location.trim(),
+      start: educationDraft.education.start.trim(),
+      end: educationDraft.education.end.trim(),
+      highlights: educationDraft.education.highlights?.trim() || undefined,
+    };
+    const nextEducations = educationDraft.isNew
+      ? [...bank.educations, saved]
+      : bank.educations.map((e) => (e.id === saved.id ? saved : e));
+    await persistBank({ ...bank, educations: nextEducations });
+    setEducationDraft(null);
+    addToast(
+      educationDraft.isNew
+        ? `Added education at ${saved.institution}.`
+        : `Updated education at ${saved.institution}.`,
+      'success',
+    );
+  };
+
+  const handleDeleteEducationWithUndo = async (edu: Education) => {
+    const previousSnapshot = bank;
+    setEducationDraft(null);
+    await persistBank({
+      ...bank,
+      educations: bank.educations.filter((e) => e.id !== edu.id),
+    });
+    addToast(`Deleted education at ${edu.institution}`, {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void persistBank(previousSnapshot);
+      },
+    });
+  };
+
+  // Certification Drawer handlers
+  const handleOpenAddCertification = () => {
+    setCertificationDraft({
+      isNew: true,
+      certification: {
+        id: `cert-${Date.now()}`,
+        name: '',
+        issuer: '',
+        date: new Date().getFullYear().toString(),
+        credentialId: undefined,
+      },
+    });
+  };
+
+  const handleOpenEditCertification = (cert: Certification) => {
+    setCertificationDraft({
+      isNew: false,
+      certification: { ...cert },
+    });
+  };
+
+  const handleConfirmCertificationDraft = async () => {
+    if (!certificationDraft) return;
+    const name = certificationDraft.certification.name.trim();
+    if (!name) {
+      addToast('Enter a certification name.', 'warning');
+      return;
+    }
+    const saved: Certification = {
+      ...certificationDraft.certification,
+      name,
+      issuer: certificationDraft.certification.issuer.trim(),
+      date: certificationDraft.certification.date.trim(),
+      credentialId:
+        certificationDraft.certification.credentialId?.trim() || undefined,
+    };
+    const nextCerts = certificationDraft.isNew
+      ? [...bank.certifications, saved]
+      : bank.certifications.map((c) => (c.id === saved.id ? saved : c));
+    await persistBank({ ...bank, certifications: nextCerts });
+    setCertificationDraft(null);
+    addToast(
+      certificationDraft.isNew
+        ? `Added certification "${saved.name}".`
+        : `Updated certification "${saved.name}".`,
+      'success',
+    );
+  };
+
+  const handleDeleteCertificationWithUndo = async (cert: Certification) => {
+    const previousSnapshot = bank;
+    setCertificationDraft(null);
+    await persistBank({
+      ...bank,
+      certifications: bank.certifications.filter((c) => c.id !== cert.id),
+    });
+    addToast(`Deleted certification "${cert.name}"`, {
       variant: 'info',
       actionLabel: 'Undo',
       onAction: () => {
@@ -371,9 +684,6 @@ export function BankView() {
     }
   };
 
-  const editingRole =
-    bank.experiences.find((e) => e.id === editingRoleId) ?? null;
-
   const importFormats = useCases.listImportFormats.execute();
   const acceptedExts = [
     ...importFormats.flatMap((f) => f.extensions),
@@ -384,13 +694,49 @@ export function BankView() {
     'JSON backup or LLM export',
   ];
 
+  const tabItems: Array<{
+    value: BankSection;
+    label: string;
+    count?: number;
+  }> = [
+    {
+      value: 'experience',
+      label: 'Experience',
+      count: bank.experiences.length,
+    },
+    {
+      value: 'skills',
+      label: 'Skills',
+      count: bank.skills.length,
+    },
+    {
+      value: 'projects',
+      label: 'Projects',
+      count: bank.projects.length,
+    },
+    {
+      value: 'education',
+      label: 'Education',
+      count: bank.educations.length,
+    },
+    {
+      value: 'certifications',
+      label: 'Certifications',
+      count: bank.certifications.length,
+    },
+    {
+      value: 'profile',
+      label: 'Contact & Header',
+    },
+  ];
+
   return (
     <div className="space-y-6 pb-16">
       <PageHeader
         title="Experience Bank"
-        subtitle="Your central library of verified roles, quantified achievements, and skills. Cevin selects and rephrases from this Bank and never invents facts."
+        subtitle="Everything Cevin can use in your resumes and letters."
         actions={
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <Button
               variant="secondary"
               onClick={() => setImportDrawerOpen(true)}
@@ -399,56 +745,74 @@ export function BankView() {
               <span>Import resume</span>
             </Button>
             {activeSection === 'experience' && (
-              <Button variant="primary" onClick={() => void handleAddRole()}>
-                <Plus className="w-4 h-4" />
-                <span>Add role</span>
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    const res =
+                      await useCases.manageBank.mergeDuplicateExperiences();
+                    setBank(res.snapshot);
+                    addToast(
+                      res.mergedCount > 0
+                        ? `Merged ${formatCount(res.mergedCount, 'duplicate role')}.`
+                        : 'No duplicate roles found.',
+                      'info',
+                    );
+                  }}
+                >
+                  <span>Merge duplicates</span>
+                </Button>
+                <Button variant="primary" onClick={handleOpenAddRoleDrawer}>
+                  <Plus className="w-4 h-4" />
+                  <span>Add role</span>
+                </Button>
+              </>
             )}
           </div>
         }
       />
 
-      {/* Top Section Switcher & Search */}
-      <div className="bg-surface border border-border rounded-xl p-3 shadow-xs flex flex-wrap items-center justify-between gap-4">
-        <SegmentedControl<BankSection>
-          ariaLabel="Experience Bank sections"
-          value={activeSection}
-          onValueChange={setActiveSection}
-          options={[
-            {
-              value: 'experience',
-              label: 'Experience',
-              count: bank.experiences.length,
-            },
-            {
-              value: 'skills',
-              label: 'Skills',
-              count: bank.skills.length,
-            },
-            {
-              value: 'projects',
-              label: 'Projects',
-              count: bank.projects.length,
-            },
-            {
-              value: 'education',
-              label: 'Education',
-              count: bank.educations.length,
-            },
-            {
-              value: 'certifications',
-              label: 'Certifications',
-              count: bank.certifications.length,
-            },
-            {
-              value: 'profile',
-              label: 'Contact & Header',
-            },
-          ]}
-        />
+      {/* Underline Section Tabs with Right-Aligned Search & Tags (no outer card) */}
+      <div className="border-b border-hairline flex flex-wrap items-center justify-between gap-4 pb-0">
+        <div
+          role="tablist"
+          aria-label="Experience Bank sections"
+          className="flex flex-wrap items-center gap-1 -mb-px"
+        >
+          {tabItems.map((tab) => {
+            const active = activeSection === tab.value;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveSection(tab.value)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 border-b-2 text-xs font-medium transition-colors cursor-pointer ${
+                  active
+                    ? 'border-accent text-ink font-semibold'
+                    : 'border-transparent text-ink-muted hover:text-ink hover:border-border-strong'
+                }`}
+              >
+                <span>{tab.label}</span>
+                {tab.count !== undefined && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[11px] tabular-nums ${
+                      active
+                        ? 'bg-accent-50 text-accent-700 font-semibold'
+                        : 'bg-surface-sunken text-ink-muted'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
 
         {activeSection === 'experience' && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pb-2">
             {allTags.length > 0 && (
               <Popover>
                 <PopoverTrigger asChild>
@@ -517,8 +881,7 @@ export function BankView() {
       {/* SECTION 1: EXPERIENCE TIMELINE */}
       {activeSection === 'experience' && (
         <div className="space-y-4">
-
-          {bank.experiences.length === 0 ? (
+          {sortedExperiences.length === 0 ? (
             <EmptyState
               illustrationKind="bank"
               title="Your Experience Bank is empty"
@@ -526,11 +889,11 @@ export function BankView() {
               actionLabel="Import resume"
               onAction={() => setImportDrawerOpen(true)}
               secondaryActionLabel="Add role manually"
-              onSecondaryAction={() => void handleAddRole()}
+              onSecondaryAction={handleOpenAddRoleDrawer}
             />
           ) : (
             <div>
-              {bank.experiences.map((exp, idx) => {
+              {sortedExperiences.map((exp, idx) => {
                 const roleAchievements = bank.achievements.filter((a) => {
                   if (a.experienceId !== exp.id) return false;
                   const matchesTag =
@@ -547,17 +910,18 @@ export function BankView() {
                 });
 
                 const isExpanded = Boolean(expandedRoleIds[exp.id]);
-                const isCurrent = exp.end.toLowerCase().includes('present');
-                const isLast = idx === bank.experiences.length - 1;
+                const isMostRecentCurrent = exp.id === mostRecentCurrentRoleId;
+                const isLast = idx === sortedExperiences.length - 1;
+                const needsDetails = isPlaceholderExperience(exp);
 
                 return (
                   <TimelineRail
                     key={exp.id}
-                    isCurrent={isCurrent}
+                    isCurrent={isMostRecentCurrent}
                     isLast={isLast}
                   >
                     <div className="group/role bg-surface border border-border rounded-xl shadow-xs overflow-hidden">
-                      {/* Role Card Header: 36px Avatar, Role · Company, dates, count badge, hover/focus-within Edit role + Add achievement + ⋯ overflow menu, chevron */}
+                      {/* Role Card Header */}
                       <div className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-surface-sunken/40 transition-colors">
                         <button
                           type="button"
@@ -576,12 +940,16 @@ export function BankView() {
                                 {exp.title}
                               </span>
                               <span className="text-ink-subtle">·</span>
-                              <span className="text-sm font-medium text-ink-muted">
+                              <span className="text-sm font-medium text-ink">
                                 {exp.company}
                               </span>
+                              {needsDetails && (
+                                <Badge tone="warning">Needs details</Badge>
+                              )}
                             </div>
-                            <div className="text-xs text-ink-subtle tabular-nums mt-0.5">
-                              {exp.start} – {exp.end} · {exp.location}
+                            <div className="text-xs text-ink-muted tabular-nums mt-0.5">
+                              {formatDocumentDateRange(exp.start, exp.end)}
+                              {exp.location ? ` · ${exp.location}` : ''}
                             </div>
                           </div>
                         </button>
@@ -594,7 +962,7 @@ export function BankView() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => setEditingRoleId(exp.id)}
+                              onClick={() => handleOpenEditRoleDrawer(exp)}
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                               <span>Edit role</span>
@@ -621,7 +989,7 @@ export function BankView() {
                             <PopoverContent align="end" className="w-48 p-1">
                               <button
                                 type="button"
-                                onClick={() => setEditingRoleId(exp.id)}
+                                onClick={() => handleOpenEditRoleDrawer(exp)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
@@ -671,7 +1039,7 @@ export function BankView() {
                         </div>
                       </div>
 
-                      {/* Accordion Body: Clean Achievement Rows (no inline role metadata inputs) */}
+                      {/* Accordion Body: Clean Achievement Rows */}
                       {isExpanded && (
                         <div className="p-4 pt-3 border-t border-hairline space-y-2.5">
                           {roleAchievements.map((ach) => {
@@ -702,7 +1070,7 @@ export function BankView() {
                                       </div>
                                     </div>
 
-                                    {/* Hover Edit button + ⋯ menu (no red trash icon on row) */}
+                                    {/* Edit button + ⋯ menu (no trash icon on row) */}
                                     <div className="flex items-center gap-1 shrink-0">
                                       <Button
                                         variant="ghost"
@@ -884,7 +1252,7 @@ export function BankView() {
       {activeSection === 'skills' && (
         <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6">
           <div className="flex flex-wrap items-end justify-between gap-4 p-4 rounded-lg bg-surface-sunken border border-hairline">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 flex-1">
               <div>
                 <label className="block text-xs font-medium text-ink mb-1">
                   Skill name
@@ -911,12 +1279,22 @@ export function BankView() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink mb-1">
-                  Aliases (comma-separated)
+                  Synonyms / aliases
                 </label>
                 <Input
                   value={newSkillAliases}
                   onChange={(e) => setNewSkillAliases(e.target.value)}
-                  placeholder="OTel, OpenTelemetry Collector"
+                  placeholder="OTel"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Related skills (partial match)
+                </label>
+                <Input
+                  value={newSkillRelated}
+                  onChange={(e) => setNewSkillRelated(e.target.value)}
+                  placeholder="Prometheus, Grafana"
                 />
               </div>
             </div>
@@ -1023,7 +1401,7 @@ export function BankView() {
                           </div>
                           <div>
                             <label className="block text-xs text-ink-muted mb-1">
-                              Aliases (comma-separated)
+                              Synonyms / aliases (comma-separated)
                             </label>
                             <Input
                               value={skill.aliases.join(', ')}
@@ -1034,6 +1412,27 @@ export function BankView() {
                                   .filter(Boolean);
                                 const nextSkills = bank.skills.map((s) =>
                                   s.id === skill.id ? { ...s, aliases } : s,
+                                );
+                                void persistBank({
+                                  ...bank,
+                                  skills: nextSkills,
+                                });
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-ink-muted mb-1">
+                              Related skills (partial coverage)
+                            </label>
+                            <Input
+                              value={(skill.related ?? []).join(', ')}
+                              onChange={(e) => {
+                                const related = e.target.value
+                                  .split(',')
+                                  .map((a) => a.trim())
+                                  .filter(Boolean);
+                                const nextSkills = bank.skills.map((s) =>
+                                  s.id === skill.id ? { ...s, related } : s,
                                 );
                                 void persistBank({
                                   ...bank,
@@ -1065,481 +1464,114 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 3: PROJECTS */}
+      {/* SECTION 3: PROJECTS (Read-First Cards + Edit Drawer + ⋯ Delete) */}
       {activeSection === 'projects' && (
-        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-display font-semibold text-ink">
               Projects ({bank.projects.length})
             </h2>
             <Button
-              variant="secondary"
+              variant="primary"
               size="sm"
-              onClick={async () => {
-                const newProj: Project = {
-                  id: `proj-${Date.now()}`,
-                  name: 'New Project',
-                  role: 'Creator & Maintainer',
-                  description: 'High-performance open-source library or tool.',
-                  skillIds: [],
-                  highlights: [],
-                };
-                await persistBank({
-                  ...bank,
-                  projects: [...bank.projects, newProj],
-                });
-              }}
+              onClick={handleOpenAddProject}
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add project</span>
             </Button>
           </div>
-          <div className="space-y-3">
-            {bank.projects.length === 0 ? (
-              <div className="p-8 text-center border border-dashed border-hairline rounded-lg text-ink-muted text-sm">
-                No projects added yet. Click &quot;Add project&quot; above to add open source tools, libraries, or portfolio projects.
-              </div>
-            ) : (
-              bank.projects.map((proj) => (
-                <div
-                  key={proj.id}
-                  className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium text-sm text-ink flex items-center gap-2">
-                      <FolderGit2 className="w-4 h-4 text-accent" />
-                      <span>{proj.name || 'Untitled Project'}</span>
-                      {proj.role && (
-                        <span className="text-xs text-ink-muted">· {proj.role}</span>
-                      )}
-                    </div>
-                    <IconButton
-                      size="sm"
-                      label="Delete project"
-                      onClick={() => {
-                        const next = bank.projects.filter(
-                          (p) => p.id !== proj.id,
-                        );
-                        void persistBank({ ...bank, projects: next });
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-warning-700" />
-                    </IconButton>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                        Project name
-                      </label>
-                      <Input
-                        value={proj.name}
-                        onChange={(e) => {
-                          const next = bank.projects.map((p) =>
-                            p.id === proj.id ? { ...p, name: e.target.value } : p,
-                          );
-                          void persistBank({ ...bank, projects: next });
-                        }}
-                        placeholder="e.g. distributed-rate-limiter"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                        Role
-                      </label>
-                      <Input
-                        value={proj.role}
-                        onChange={(e) => {
-                          const next = bank.projects.map((p) =>
-                            p.id === proj.id ? { ...p, role: e.target.value } : p,
-                          );
-                          void persistBank({ ...bank, projects: next });
-                        }}
-                        placeholder="e.g. Creator & Maintainer"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Project link (optional)
-                    </label>
-                    <Input
-                      value={proj.link ?? ''}
-                      onChange={(e) => {
-                        const next = bank.projects.map((p) =>
-                          p.id === proj.id
-                            ? { ...p, link: e.target.value.trim() || undefined }
-                            : p,
-                        );
-                        void persistBank({ ...bank, projects: next });
-                      }}
-                      placeholder="https://github.com/user/repo — rendered in PROJECTS section"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Description
-                    </label>
-                    <Textarea
-                      rows={2}
-                      value={proj.description}
-                      onChange={(e) => {
-                        const next = bank.projects.map((p) =>
-                          p.id === proj.id
-                            ? { ...p, description: e.target.value }
-                            : p,
-                        );
-                        void persistBank({ ...bank, projects: next });
-                      }}
-                      placeholder="Brief 1-2 sentence overview of the project"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Key highlights / metrics (one bullet per line, optional)
-                    </label>
-                    <Textarea
-                      rows={2}
-                      value={(proj.highlights ?? []).join('\n')}
-                      onChange={(e) => {
-                        const lines = e.target.value
-                          .split('\n')
-                          .map((l) => l.trim())
-                          .filter(Boolean);
-                        const next = bank.projects.map((p) =>
-                          p.id === proj.id ? { ...p, highlights: lines } : p,
-                        );
-                        void persistBank({ ...bank, projects: next });
-                      }}
-                      placeholder="Leave blank if no extra bullet points are desired"
-                    />
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* SECTION 4: EDUCATION */}
-      {activeSection === 'education' && (
-        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-display font-semibold text-ink">
-              Education ({bank.educations.length})
-            </h2>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={async () => {
-                const newEdu: Education = {
-                  id: `edu-${Date.now()}`,
-                  institution: 'University Name',
-                  degree: 'B.S.',
-                  field: 'Computer Science',
-                  location: '',
-                  start: '2016',
-                  end: '2020',
-                };
-                await persistBank({
-                  ...bank,
-                  educations: [...bank.educations, newEdu],
-                });
-              }}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add education</span>
-            </Button>
-          </div>
-          <div className="space-y-3">
-            {bank.educations.map((edu) => (
-              <div
-                key={edu.id}
-                className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Institution
-                    </label>
-                    <Input
-                      value={edu.institution}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, institution: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. Concordia University"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Degree
-                    </label>
-                    <Input
-                      value={edu.degree}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, degree: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. Master"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Field of study
-                    </label>
-                    <Input
-                      value={edu.field}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, field: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. Applied Computer Science"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                  <div className="sm:col-span-5">
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Location (optional)
-                    </label>
-                    <Input
-                      value={edu.location}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, location: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. Montreal, QC (or leave blank)"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      Start year
-                    </label>
-                    <Input
-                      value={edu.start}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, start: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. 2014"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                      End year / Present
-                    </label>
-                    <Input
-                      value={edu.end}
-                      onChange={(e) => {
-                        const next = bank.educations.map((item) =>
-                          item.id === edu.id
-                            ? { ...item, end: e.target.value }
-                            : item,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                      placeholder="e.g. 2018"
-                    />
-                  </div>
-                  <div className="sm:col-span-1 flex justify-end">
-                    <IconButton
-                      label="Delete education"
-                      size="sm"
-                      onClick={() => {
-                        const next = bank.educations.filter(
-                          (item) => item.id !== edu.id,
-                        );
-                        void persistBank({ ...bank, educations: next });
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4 text-warning-700" />
-                    </IconButton>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                    Honors, GPA, or highlights (optional)
-                  </label>
-                  <Input
-                    value={edu.highlights ?? ''}
-                    onChange={(e) => {
-                      const next = bank.educations.map((item) =>
-                        item.id === edu.id
-                          ? { ...item, highlights: e.target.value }
-                          : item,
-                      );
-                      void persistBank({ ...bank, educations: next });
-                    }}
-                    placeholder="e.g. Cum Laude, Teaching Assistant (or leave blank)"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* SECTION 5: CERTIFICATIONS */}
-      {activeSection === 'certifications' && (
-        <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-display font-semibold text-ink">
-                Certifications ({bank.certifications.length})
-              </h2>
-              <p className="text-xs text-ink-muted mt-0.5">
-                Industry credentials and certifications displayed in your resume certifications section.
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={async () => {
-                const newCert: Certification = {
-                  id: `cert-${Date.now()}`,
-                  name: 'New Certification',
-                  issuer: 'Issuing Organization',
-                  date: new Date().getFullYear().toString(),
-                };
-                await persistBank({
-                  ...bank,
-                  certifications: [...bank.certifications, newCert],
-                });
-              }}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add certification</span>
-            </Button>
-          </div>
-
-          {bank.certifications.length === 0 ? (
-            <div className="p-8 text-center border border-dashed border-hairline rounded-lg text-ink-muted text-sm">
-              No certifications added yet. Click &quot;Add certification&quot; to include credentials like AWS, CKA, PMP, or Scrum certificates.
+          {bank.projects.length === 0 ? (
+            <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
+              No projects added yet. Click &quot;Add project&quot; to add open-source libraries, tools, or portfolio projects.
             </div>
           ) : (
             <div className="space-y-3">
-              {bank.certifications.map((cert) => (
+              {bank.projects.map((proj) => (
                 <div
-                  key={cert.id}
-                  className="p-4 rounded-lg bg-surface-sunken/60 border border-hairline space-y-3"
+                  key={proj.id}
+                  className="p-4 rounded-xl bg-surface border border-border shadow-xs flex items-start justify-between gap-4"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium text-sm text-ink flex items-center gap-2">
-                      <Award className="w-4 h-4 text-accent" />
-                      <span>{cert.name || 'Untitled Certification'}</span>
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FolderGit2 className="w-4 h-4 text-accent shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        {proj.name}
+                      </span>
+                      {proj.role && (
+                        <>
+                          <span className="text-ink-subtle">·</span>
+                          <span className="text-xs font-medium text-ink-muted">
+                            {proj.role}
+                          </span>
+                        </>
+                      )}
+                      {proj.link && (
+                        <a
+                          href={
+                            proj.link.startsWith('http')
+                              ? proj.link
+                              : `https://${proj.link}`
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                        >
+                          <Link2 className="w-3 h-3" />
+                          <span>{proj.link}</span>
+                        </a>
+                      )}
                     </div>
-                    <IconButton
-                      size="sm"
-                      label="Delete certification"
-                      onClick={() => {
-                        const next = bank.certifications.filter(
-                          (c) => c.id !== cert.id,
-                        );
-                        void persistBank({ ...bank, certifications: next });
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-warning-700" />
-                    </IconButton>
+                    {proj.description && (
+                      <p className="text-xs text-ink leading-relaxed">
+                        {proj.description}
+                      </p>
+                    )}
+                    {(proj.highlights ?? []).length > 0 && (
+                      <ul className="list-disc list-inside text-xs text-ink-muted space-y-0.5 pt-0.5">
+                        {(proj.highlights ?? []).map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium text-ink-muted mb-1">
-                        Certification Name
-                      </label>
-                      <Input
-                        value={cert.name}
-                        onChange={(e) => {
-                          const next = bank.certifications.map((c) =>
-                            c.id === cert.id
-                              ? { ...c, name: e.target.value }
-                              : c,
-                          );
-                          void persistBank({ ...bank, certifications: next });
-                        }}
-                        placeholder="e.g. Certified Kubernetes Administrator (CKA)"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink-muted mb-1">
-                        Date / Year
-                      </label>
-                      <Input
-                        value={cert.date}
-                        onChange={(e) => {
-                          const next = bank.certifications.map((c) =>
-                            c.id === cert.id
-                              ? { ...c, date: e.target.value }
-                              : c,
-                          );
-                          void persistBank({ ...bank, certifications: next });
-                        }}
-                        placeholder="e.g. 2024"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium text-ink-muted mb-1">
-                        Issuing Organization
-                      </label>
-                      <Input
-                        value={cert.issuer}
-                        onChange={(e) => {
-                          const next = bank.certifications.map((c) =>
-                            c.id === cert.id
-                              ? { ...c, issuer: e.target.value }
-                              : c,
-                          );
-                          void persistBank({ ...bank, certifications: next });
-                        }}
-                        placeholder="e.g. Cloud Native Computing Foundation"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink-muted mb-1">
-                        Credential reference or URL (optional)
-                      </label>
-                      <Input
-                        value={cert.credentialId ?? ''}
-                        onChange={(e) => {
-                          const next = bank.certifications.map((c) =>
-                            c.id === cert.id
-                              ? {
-                                  ...c,
-                                  credentialId:
-                                    e.target.value.trim() || undefined,
-                                }
-                              : c,
-                          );
-                          void persistBank({ ...bank, certifications: next });
-                        }}
-                        placeholder="e.g. CNCF-12345"
-                      />
-                    </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleOpenEditProject(proj)}
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </Button>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <IconButton
+                          label={`Project options for ${proj.name}`}
+                          size="sm"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </IconButton>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-44 p-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditProject(proj)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Edit project</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteProjectWithUndo(proj)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete project</span>
+                        </button>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
               ))}
@@ -1548,15 +1580,208 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 6: PROFILE & CONTACT */}
+      {/* SECTION 4: EDUCATION (Read-First Cards + Edit Drawer + ⋯ Delete) */}
+      {activeSection === 'education' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-display font-semibold text-ink">
+              Education ({bank.educations.length})
+            </h2>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleOpenAddEducation}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add education</span>
+            </Button>
+          </div>
+          {bank.educations.length === 0 ? (
+            <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
+              No education entries added yet. Click &quot;Add education&quot; to add degrees or academic credentials.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {bank.educations.map((edu) => (
+                <div
+                  key={edu.id}
+                  className="p-4 rounded-xl bg-surface border border-border shadow-xs flex items-start justify-between gap-4"
+                >
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-accent shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        {edu.degree}
+                        {edu.field ? ` in ${edu.field}` : ''}
+                      </span>
+                      <span className="text-ink-subtle">·</span>
+                      <span className="text-sm font-medium text-ink">
+                        {edu.institution}
+                      </span>
+                    </div>
+                    <div className="text-xs text-ink-muted tabular-nums">
+                      {formatDocumentDateRange(edu.start, edu.end)}
+                      {edu.location ? ` · ${edu.location}` : ''}
+                    </div>
+                    {edu.highlights && (
+                      <p className="text-xs text-ink-muted pt-0.5">
+                        {edu.highlights}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleOpenEditEducation(edu)}
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </Button>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <IconButton
+                          label={`Education options for ${edu.institution}`}
+                          size="sm"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </IconButton>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-44 p-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditEducation(edu)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Edit education</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDeleteEducationWithUndo(edu)
+                          }
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete education</span>
+                        </button>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 5: CERTIFICATIONS (Read-First Cards + Edit Drawer + ⋯ Delete) */}
+      {activeSection === 'certifications' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-display font-semibold text-ink">
+              Certifications ({bank.certifications.length})
+            </h2>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleOpenAddCertification}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add certification</span>
+            </Button>
+          </div>
+
+          {bank.certifications.length === 0 ? (
+            <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
+              No certifications added yet. Click &quot;Add certification&quot; to include credentials like CKA, AWS, or PMP.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {bank.certifications.map((cert) => (
+                <div
+                  key={cert.id}
+                  className="p-4 rounded-xl bg-surface border border-border shadow-xs flex items-start justify-between gap-4"
+                >
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Award className="w-4 h-4 text-accent shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        {cert.name}
+                      </span>
+                      {cert.issuer && (
+                        <>
+                          <span className="text-ink-subtle">·</span>
+                          <span className="text-xs font-medium text-ink-muted">
+                            {cert.issuer}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-xs text-ink-muted tabular-nums">
+                      {cert.date}
+                      {cert.credentialId ? ` · Code: ${cert.credentialId}` : ''}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleOpenEditCertification(cert)}
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </Button>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <IconButton
+                          label={`Certification options for ${cert.name}`}
+                          size="sm"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </IconButton>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-48 p-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditCertification(cert)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Edit certification</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDeleteCertificationWithUndo(cert)
+                          }
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete certification</span>
+                        </button>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 6: PROFILE & CONTACT (Neutral placeholders) */}
       {activeSection === 'profile' && (
         <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6 max-w-3xl">
           <div>
             <h2 className="text-base font-display font-semibold text-ink">
-              Candidate Contact & Default Header
+              Contact & Header
             </h2>
             <p className="text-xs text-ink-muted mt-1">
-              Your contact details and social links appear directly in your resume and cover letter headers.
+              Your contact details and links appear in your resume and cover letter headers.
             </p>
           </div>
 
@@ -1573,7 +1798,7 @@ export function BankView() {
                     profile: { ...bank.profile, name: e.target.value },
                   })
                 }
-                placeholder="e.g. Carlos Garcia"
+                placeholder="Full name"
               />
             </div>
             <div>
@@ -1588,7 +1813,7 @@ export function BankView() {
                     profile: { ...bank.profile, headline: e.target.value },
                   })
                 }
-                placeholder="e.g. Senior Software Developer"
+                placeholder="e.g. Staff Platform Engineer"
               />
             </div>
             <div>
@@ -1603,7 +1828,7 @@ export function BankView() {
                     profile: { ...bank.profile, email: e.target.value },
                   })
                 }
-                placeholder="e.g. carlosdan3@gmail.com"
+                placeholder="name@example.com"
               />
             </div>
             <div>
@@ -1618,7 +1843,7 @@ export function BankView() {
                     profile: { ...bank.profile, phone: e.target.value },
                   })
                 }
-                placeholder="e.g. +1 (438) 30-40025"
+                placeholder="+1 (555) 000-0000"
               />
             </div>
             <div className="sm:col-span-2">
@@ -1633,7 +1858,7 @@ export function BankView() {
                     profile: { ...bank.profile, location: e.target.value },
                   })
                 }
-                placeholder="e.g. Montreal, Quebec, Canada"
+                placeholder="City, Region, Country"
               />
             </div>
           </div>
@@ -1645,12 +1870,11 @@ export function BankView() {
                 Online Links & Profiles
               </h3>
               <p className="text-xs text-ink-muted mt-0.5">
-                These links appear in your resume header. Leave any field empty to exclude it.
+                Leave any field empty to exclude it from your header.
               </p>
             </div>
 
             {(() => {
-              // Purge legacy demo links like rostova.systems
               const cleanLinks = bank.profile.links.filter(
                 (l) =>
                   !l.url.includes('rostova.systems') &&
@@ -1705,7 +1929,7 @@ export function BankView() {
                       onChange={(e) =>
                         handleUpdateOnlineLinks(e.target.value, liVal, portVal)
                       }
-                      placeholder="e.g. github.com/CarlosDan"
+                      placeholder="github.com/username"
                     />
                   </div>
 
@@ -1718,7 +1942,7 @@ export function BankView() {
                       onChange={(e) =>
                         handleUpdateOnlineLinks(ghVal, e.target.value, portVal)
                       }
-                      placeholder="e.g. linkedin.com/in/carlos-garcia"
+                      placeholder="linkedin.com/in/username"
                     />
                   </div>
 
@@ -1731,7 +1955,7 @@ export function BankView() {
                       onChange={(e) =>
                         handleUpdateOnlineLinks(ghVal, liVal, e.target.value)
                       }
-                      placeholder="e.g. carlosgarcia.dev"
+                      placeholder="example.dev"
                     />
                   </div>
                 </div>
@@ -1741,31 +1965,37 @@ export function BankView() {
         </div>
       )}
 
-      {/* Role Metadata Editor Drawer */}
+      {/* Role Add / Edit Drawer (saves only on confirm) */}
       <Drawer
-        open={Boolean(editingRole)}
+        open={Boolean(roleDraft)}
         onOpenChange={(open) => {
-          if (!open) setEditingRoleId(null);
+          if (!open) setRoleDraft(null);
         }}
-        title={editingRole ? `Edit Role — ${editingRole.company}` : 'Edit Role'}
-        description="Update employer, role title, location, and dates."
+        title={
+          roleDraft?.isNew
+            ? 'Add Role'
+            : `Edit Role — ${roleDraft?.experience.company || 'Role'}`
+        }
+        description="Enter employer, role title, location, and dates. Changes are saved when you confirm."
       >
-        {editingRole && (
+        {roleDraft && (
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-ink mb-1">
                 Role title
               </label>
               <Input
-                value={editingRole.title}
-                onChange={(e) => {
-                  const nextExps = bank.experiences.map((item) =>
-                    item.id === editingRole.id
-                      ? { ...item, title: e.target.value }
-                      : item,
-                  );
-                  void persistBank({ ...bank, experiences: nextExps });
-                }}
+                value={roleDraft.experience.title}
+                onChange={(e) =>
+                  setRoleDraft({
+                    ...roleDraft,
+                    experience: {
+                      ...roleDraft.experience,
+                      title: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. Staff Platform Engineer"
               />
             </div>
             <div>
@@ -1773,48 +2003,54 @@ export function BankView() {
                 Company
               </label>
               <Input
-                value={editingRole.company}
-                onChange={(e) => {
-                  const nextExps = bank.experiences.map((item) =>
-                    item.id === editingRole.id
-                      ? { ...item, company: e.target.value }
-                      : item,
-                  );
-                  void persistBank({ ...bank, experiences: nextExps });
-                }}
+                value={roleDraft.experience.company}
+                onChange={(e) =>
+                  setRoleDraft({
+                    ...roleDraft,
+                    experience: {
+                      ...roleDraft.experience,
+                      company: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. Vanguard Telemetry"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-ink mb-1">
-                  Start date
+                  Start date (YYYY-MM)
                 </label>
                 <Input
-                  value={editingRole.start}
-                  onChange={(e) => {
-                    const nextExps = bank.experiences.map((item) =>
-                      item.id === editingRole.id
-                        ? { ...item, start: e.target.value }
-                        : item,
-                    );
-                    void persistBank({ ...bank, experiences: nextExps });
-                  }}
+                  value={roleDraft.experience.start}
+                  onChange={(e) =>
+                    setRoleDraft({
+                      ...roleDraft,
+                      experience: {
+                        ...roleDraft.experience,
+                        start: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="2023-02"
                 />
               </div>
               <div>
                 <label className="block text-xs font-medium text-ink mb-1">
-                  End date
+                  End date (YYYY-MM or Present)
                 </label>
                 <Input
-                  value={editingRole.end}
-                  onChange={(e) => {
-                    const nextExps = bank.experiences.map((item) =>
-                      item.id === editingRole.id
-                        ? { ...item, end: e.target.value }
-                        : item,
-                    );
-                    void persistBank({ ...bank, experiences: nextExps });
-                  }}
+                  value={roleDraft.experience.end}
+                  onChange={(e) =>
+                    setRoleDraft({
+                      ...roleDraft,
+                      experience: {
+                        ...roleDraft.experience,
+                        end: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="Present"
                 />
               </div>
             </div>
@@ -1823,29 +2059,491 @@ export function BankView() {
                 Location
               </label>
               <Input
-                value={editingRole.location}
-                onChange={(e) => {
-                  const nextExps = bank.experiences.map((item) =>
-                    item.id === editingRole.id
-                      ? { ...item, location: e.target.value }
-                      : item,
-                  );
-                  void persistBank({ ...bank, experiences: nextExps });
-                }}
+                value={roleDraft.experience.location}
+                onChange={(e) =>
+                  setRoleDraft({
+                    ...roleDraft,
+                    experience: {
+                      ...roleDraft.experience,
+                      location: e.target.value,
+                    },
+                  })
+                }
+                placeholder="San Francisco, CA / Remote"
               />
             </div>
 
+            {roleDraft.isNew && (
+              <div className="pt-3 border-t border-hairline space-y-3">
+                <div className="text-xs font-semibold text-ink">
+                  First achievement (optional)
+                </div>
+                <div>
+                  <label className="block text-xs text-ink-muted mb-1">
+                    Action (what you built or led)
+                  </label>
+                  <Input
+                    value={roleDraft.initialAchievementAction ?? ''}
+                    onChange={(e) =>
+                      setRoleDraft({
+                        ...roleDraft,
+                        initialAchievementAction: e.target.value,
+                      })
+                    }
+                    placeholder="e.g. Engineered multi-region ingestion pipeline"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-ink-muted mb-1">
+                      Metric / number
+                    </label>
+                    <Input
+                      value={roleDraft.initialAchievementMetric ?? ''}
+                      onChange={(e) =>
+                        setRoleDraft({
+                          ...roleDraft,
+                          initialAchievementMetric: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. by 38%"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-ink-muted mb-1">
+                      Result / impact
+                    </label>
+                    <Input
+                      value={roleDraft.initialAchievementResult ?? ''}
+                      onChange={(e) =>
+                        setRoleDraft({
+                          ...roleDraft,
+                          initialAchievementResult: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. cutting cross-AZ spend"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="pt-4 border-t border-hairline flex items-center justify-between">
+              {!roleDraft.isNew ? (
+                <Button
+                  variant="outline-danger"
+                  size="sm"
+                  onClick={() =>
+                    void handleDeleteRoleWithUndo(roleDraft.experience)
+                  }
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete role</span>
+                </Button>
+              ) : (
+                <div />
+              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setRoleDraft(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleConfirmRoleDraft()}
+                >
+                  {roleDraft.isNew ? 'Add role' : 'Save role'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Project Add / Edit Drawer */}
+      <Drawer
+        open={Boolean(projectDraft)}
+        onOpenChange={(open) => {
+          if (!open) setProjectDraft(null);
+        }}
+        title={
+          projectDraft?.isNew
+            ? 'Add Project'
+            : `Edit Project — ${projectDraft?.project.name || 'Project'}`
+        }
+        description="Update project name, role, link, description, and key highlights."
+      >
+        {projectDraft && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Project name
+              </label>
+              <Input
+                value={projectDraft.project.name}
+                onChange={(e) =>
+                  setProjectDraft({
+                    ...projectDraft,
+                    project: { ...projectDraft.project, name: e.target.value },
+                  })
+                }
+                placeholder="e.g. kube-cost-lens"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Role
+              </label>
+              <Input
+                value={projectDraft.project.role}
+                onChange={(e) =>
+                  setProjectDraft({
+                    ...projectDraft,
+                    project: { ...projectDraft.project, role: e.target.value },
+                  })
+                }
+                placeholder="e.g. Creator & Maintainer"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Project link (optional)
+              </label>
+              <Input
+                value={projectDraft.project.link ?? ''}
+                onChange={(e) =>
+                  setProjectDraft({
+                    ...projectDraft,
+                    project: {
+                      ...projectDraft.project,
+                      link: e.target.value,
+                    },
+                  })
+                }
+                placeholder="https://github.com/username/project"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Description
+              </label>
+              <Textarea
+                rows={3}
+                value={projectDraft.project.description}
+                onChange={(e) =>
+                  setProjectDraft({
+                    ...projectDraft,
+                    project: {
+                      ...projectDraft.project,
+                      description: e.target.value,
+                    },
+                  })
+                }
+                placeholder="Short summary of what the project does"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Highlights (one per line, optional)
+              </label>
+              <Textarea
+                rows={3}
+                value={projectDraft.highlightsText}
+                onChange={(e) =>
+                  setProjectDraft({
+                    ...projectDraft,
+                    highlightsText: e.target.value,
+                  })
+                }
+                placeholder="Measurable outcomes or technical highlights"
+              />
+            </div>
+            <div className="pt-4 border-t border-hairline flex items-center justify-end gap-2">
               <Button
-                variant="outline-danger"
-                size="sm"
-                onClick={() => void handleDeleteRoleWithUndo(editingRole)}
+                variant="secondary"
+                onClick={() => setProjectDraft(null)}
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Delete role</span>
+                Cancel
               </Button>
-              <Button variant="primary" onClick={() => setEditingRoleId(null)}>
-                Done
+              <Button
+                variant="primary"
+                onClick={() => void handleConfirmProjectDraft()}
+              >
+                {projectDraft.isNew ? 'Add project' : 'Save project'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Education Add / Edit Drawer */}
+      <Drawer
+        open={Boolean(educationDraft)}
+        onOpenChange={(open) => {
+          if (!open) setEducationDraft(null);
+        }}
+        title={
+          educationDraft?.isNew
+            ? 'Add Education'
+            : `Edit Education — ${educationDraft?.education.institution || 'Education'}`
+        }
+        description="Update institution, degree, field of study, and dates."
+      >
+        {educationDraft && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Institution
+              </label>
+              <Input
+                value={educationDraft.education.institution}
+                onChange={(e) =>
+                  setEducationDraft({
+                    ...educationDraft,
+                    education: {
+                      ...educationDraft.education,
+                      institution: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. University of Waterloo"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Degree
+                </label>
+                <Input
+                  value={educationDraft.education.degree}
+                  onChange={(e) =>
+                    setEducationDraft({
+                      ...educationDraft,
+                      education: {
+                        ...educationDraft.education,
+                        degree: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="e.g. B.S."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Field of study
+                </label>
+                <Input
+                  value={educationDraft.education.field}
+                  onChange={(e) =>
+                    setEducationDraft({
+                      ...educationDraft,
+                      education: {
+                        ...educationDraft.education,
+                        field: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="e.g. Computer Science"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Start date
+                </label>
+                <Input
+                  value={educationDraft.education.start}
+                  onChange={(e) =>
+                    setEducationDraft({
+                      ...educationDraft,
+                      education: {
+                        ...educationDraft.education,
+                        start: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="2014"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  End date
+                </label>
+                <Input
+                  value={educationDraft.education.end}
+                  onChange={(e) =>
+                    setEducationDraft({
+                      ...educationDraft,
+                      education: {
+                        ...educationDraft.education,
+                        end: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="2018"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Location (optional)
+              </label>
+              <Input
+                value={educationDraft.education.location}
+                onChange={(e) =>
+                  setEducationDraft({
+                    ...educationDraft,
+                    education: {
+                      ...educationDraft.education,
+                      location: e.target.value,
+                    },
+                  })
+                }
+                placeholder="City, Region"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Honors or coursework (optional)
+              </label>
+              <Input
+                value={educationDraft.education.highlights ?? ''}
+                onChange={(e) =>
+                  setEducationDraft({
+                    ...educationDraft,
+                    education: {
+                      ...educationDraft.education,
+                      highlights: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. Honors, Distributed Systems Lab"
+              />
+            </div>
+            <div className="pt-4 border-t border-hairline flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setEducationDraft(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleConfirmEducationDraft()}
+              >
+                {educationDraft.isNew ? 'Add education' : 'Save education'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Certification Add / Edit Drawer */}
+      <Drawer
+        open={Boolean(certificationDraft)}
+        onOpenChange={(open) => {
+          if (!open) setCertificationDraft(null);
+        }}
+        title={
+          certificationDraft?.isNew
+            ? 'Add Certification'
+            : `Edit Certification — ${certificationDraft?.certification.name || 'Certification'}`
+        }
+        description="Update certification name, issuing organization, and year."
+      >
+        {certificationDraft && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Certification name
+              </label>
+              <Input
+                value={certificationDraft.certification.name}
+                onChange={(e) =>
+                  setCertificationDraft({
+                    ...certificationDraft,
+                    certification: {
+                      ...certificationDraft.certification,
+                      name: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. Certified Kubernetes Administrator (CKA)"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink mb-1">
+                Issuing organization
+              </label>
+              <Input
+                value={certificationDraft.certification.issuer}
+                onChange={(e) =>
+                  setCertificationDraft({
+                    ...certificationDraft,
+                    certification: {
+                      ...certificationDraft.certification,
+                      issuer: e.target.value,
+                    },
+                  })
+                }
+                placeholder="e.g. Cloud Native Computing Foundation"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Date / year
+                </label>
+                <Input
+                  value={certificationDraft.certification.date}
+                  onChange={(e) =>
+                    setCertificationDraft({
+                      ...certificationDraft,
+                      certification: {
+                        ...certificationDraft.certification,
+                        date: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="2024"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-ink mb-1">
+                  Credential code (optional)
+                </label>
+                <Input
+                  value={certificationDraft.certification.credentialId ?? ''}
+                  onChange={(e) =>
+                    setCertificationDraft({
+                      ...certificationDraft,
+                      certification: {
+                        ...certificationDraft.certification,
+                        credentialId: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="CNCF-12345"
+                />
+              </div>
+            </div>
+            <div className="pt-4 border-t border-hairline flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setCertificationDraft(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleConfirmCertificationDraft()}
+              >
+                {certificationDraft.isNew
+                  ? 'Add certification'
+                  : 'Save certification'}
               </Button>
             </div>
           </div>
@@ -1863,7 +2561,7 @@ export function BankView() {
           }
         }}
         title="Import Resume into Experience Bank"
-        description="Upload a resume file (PDF, Markdown, JSON) or copy our prompt to parse your CV with Claude, ChatGPT, or Gemini."
+        description="Upload a resume file (PDF, Markdown, JSON) or copy a prompt to structure your CV as JSON."
       >
         <div className="space-y-4">
           <SegmentedControl<'upload' | 'llm-prompt'>
@@ -1875,7 +2573,7 @@ export function BankView() {
             }}
             options={[
               { value: 'upload', label: 'Upload file (PDF, MD, JSON)' },
-              { value: 'llm-prompt', label: 'External LLM prompt & paste' },
+              { value: 'llm-prompt', label: 'JSON prompt & paste' },
             ]}
           />
 
@@ -1888,7 +2586,7 @@ export function BankView() {
                 onFileSelected={(file) => void handleFileUpload(file)}
               />
               <div className="flex items-center justify-between text-xs text-ink-muted px-1">
-                <span>Want to map your CV using Claude, ChatGPT, or Gemini?</span>
+                <span>Prefer to structure your resume using a JSON prompt?</span>
                 <button
                   type="button"
                   onClick={() => setImportMethod('llm-prompt')}
@@ -1905,7 +2603,7 @@ export function BankView() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-ink inline-flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-accent" />
-                    <span>Step 1: Copy prompt for Claude / ChatGPT / Gemini</span>
+                    <span>Step 1: Copy JSON format prompt</span>
                   </span>
                   <Button
                     variant="secondary"
@@ -1916,7 +2614,7 @@ export function BankView() {
                       );
                       setCopiedPrompt(true);
                       setTimeout(() => setCopiedPrompt(false), 2000);
-                      addToast('Copied LLM prompt to clipboard.', 'success');
+                      addToast('Copied prompt to clipboard.', 'success');
                     }}
                   >
                     {copiedPrompt ? (
@@ -1933,9 +2631,7 @@ export function BankView() {
                   </Button>
                 </div>
                 <p className="text-ink-muted text-[11px] leading-relaxed">
-                  Paste this prompt along with your CV or markdown file into
-                  your preferred LLM. It maps your profile, roles, achievements,
-                  and skills directly to Cevin’s structure.
+                  Paste this prompt along with your resume text into an LLM to format your profile, roles, achievements, and skills as JSON.
                 </p>
                 <div className="relative rounded-md bg-canvas border border-border p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] text-ink-muted leading-relaxed">
                   {EXTERNAL_LLM_PROMPT_TEMPLATE}
@@ -1944,7 +2640,7 @@ export function BankView() {
 
               <div className="space-y-2">
                 <label className="block font-semibold text-ink">
-                  Step 2: Paste the JSON returned by your LLM
+                  Step 2: Paste the JSON output
                 </label>
                 <textarea
                   value={pastedJson}
@@ -1963,7 +2659,7 @@ export function BankView() {
                       const res =
                         await useCases.importResumeFile.parseJsonAndPropose(
                           pastedJson,
-                          'External LLM',
+                          'JSON Import',
                         );
                       setIsParsingFile(false);
                       if (res.ok) {

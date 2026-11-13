@@ -1,33 +1,16 @@
-import { DocumentExporter, ExportOptions } from '../../../core/application';
 import {
   ExportableDocument,
-  readStoredZipEntryText,
+  extractTextFromDocxBlob,
   renderDocumentToDocxBytes,
-  renderDocumentToGoogleDocsHtml,
 } from '../../../core/domain';
-
-export { renderDocumentToDocxBytes, renderDocumentToGoogleDocsHtml };
-
-export async function extractTextFromDocxBlob(blob: Blob): Promise<string> {
-  const buf = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  const xml = readStoredZipEntryText(bytes, 'word/document.xml') ?? '';
-  if (!xml) return '';
-  return xml
-    .replace(/<w:tab\/>/g, ' — ')
-    .replace(/<\/w:p>/g, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .trim();
-}
+import {
+  DocumentExporter,
+  ExportOptions,
+} from '../../../core/application/ports/outbound';
 
 export const docxDocumentExporter: DocumentExporter = {
   id: 'docx',
-  label: 'Google Docs / Word (.docx)',
+  label: 'Word document (.docx)',
   fileExtension: 'docx',
   mimeType:
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -35,13 +18,15 @@ export const docxDocumentExporter: DocumentExporter = {
   capabilities: {
     templates: true,
     atsRoundTrip: true,
-    previewable: false,
   },
   async export(
     doc: ExportableDocument,
     options: ExportOptions,
   ): Promise<Blob> {
-    const bytes = renderDocumentToDocxBytes(doc, options);
+    const bytes = renderDocumentToDocxBytes(doc, {
+      templateId: options.templateId,
+      pageSize: options.pageSize,
+    });
     return new Blob([new Uint8Array(bytes)], {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     });

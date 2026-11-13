@@ -201,29 +201,14 @@ function computeAlignedRunMetrics(params: {
   isLastLine: boolean;
 }): { xPt: number; widthPt: number; wordSpacingPt?: number } {
   const { text, baseLeftX, maxWidthPt, rawWidthPt, align, isLastLine } = params;
-  if (align === 'right') {
-    const shift = Math.max(0, maxWidthPt - rawWidthPt);
-    return {
-      xPt: Number((baseLeftX + shift).toFixed(2)),
-      widthPt: rawWidthPt,
-    };
-  }
-  if (align === 'justify') {
+  if (align === 'justify' && !isLastLine) {
     const spaceCount = (text.match(/ /g) ?? []).length;
     if (spaceCount > 0 && rawWidthPt < maxWidthPt) {
       const fillRatio = rawWidthPt / Math.max(1, maxWidthPt);
-      if (!isLastLine && fillRatio >= 0.55) {
+      if (fillRatio >= 0.7) {
         const ws = (maxWidthPt - rawWidthPt) / spaceCount;
-        if (ws <= 8) {
-          return {
-            xPt: baseLeftX,
-            widthPt: maxWidthPt,
-            wordSpacingPt: Number(ws.toFixed(3)),
-          };
-        }
-      } else if (isLastLine && fillRatio >= 0.85 && spaceCount >= 3) {
-        const ws = (maxWidthPt - rawWidthPt) / spaceCount;
-        if (ws <= 2.4) {
+        // Cap word spacing at 4.2pt; fall back to left-aligned normal spacing when gaps would be wide
+        if (ws <= 4.2) {
           return {
             xPt: baseLeftX,
             widthPt: maxWidthPt,
@@ -645,37 +630,71 @@ function buildLayoutLines(
   if (doc.experiences.length > 0) {
     addSectionHeading('EXPERIENCE');
     doc.experiences.forEach((exp, expIdx) => {
-      const roleLeft = `${exp.title}, ${exp.company}${exp.location ? ` · ${exp.location}` : ''}`;
+      const titlePart = `${exp.title.trim()},`;
+      const companyPart = ` ${exp.company.trim()}`;
+      const locPart = exp.location.trim() ? ` · ${exp.location.trim()}` : '';
       const dateStr = exp.dateRange.trim();
-      const leftW = measureTextWidthPt(
-        roleLeft,
+
+      const titleW = measureTextWidthPt(
+        titlePart,
         boldFontKey,
         spec.sizes.roleTitlePt,
       );
+      const companyW = measureTextWidthPt(
+        companyPart,
+        bodyFontKey,
+        spec.sizes.roleTitlePt,
+      );
+      const locW = locPart
+        ? measureTextWidthPt(locPart, bodyFontKey, spec.sizes.roleTitlePt)
+        : 0;
+      const leftW = titleW + companyW + locW;
       const dateW = measureTextWidthPt(dateStr, bodyFontKey, spec.sizes.metaPt);
 
       if (leftW + 12 + dateW <= contentWidthPt) {
+        const headerRuns: TextRun[] = [
+          {
+            text: titlePart,
+            xPt: leftX,
+            widthPt: titleW,
+            fontKey: boldFontKey,
+            fontSizePt: spec.sizes.roleTitlePt,
+            bold: true,
+            colorRgb: INK_PRIMARY,
+          },
+          {
+            text: companyPart,
+            xPt: leftX + titleW,
+            widthPt: companyW,
+            fontKey: bodyFontKey,
+            fontSizePt: spec.sizes.roleTitlePt,
+            bold: false,
+            colorRgb: INK_PRIMARY,
+          },
+        ];
+        if (locPart) {
+          headerRuns.push({
+            text: locPart,
+            xPt: leftX + titleW + companyW,
+            widthPt: locW,
+            fontKey: bodyFontKey,
+            fontSizePt: spec.sizes.roleTitlePt,
+            bold: false,
+            colorRgb: INK_MUTED,
+          });
+        }
+        headerRuns.push({
+          text: dateStr,
+          xPt: Math.max(leftX + leftW + 12, rightX - dateW),
+          widthPt: dateW,
+          fontKey: bodyFontKey,
+          fontSizePt: spec.sizes.metaPt,
+          bold: false,
+          colorRgb: INK_MUTED,
+        });
+
         lines.push({
-          runs: [
-            {
-              text: roleLeft,
-              xPt: leftX,
-              widthPt: leftW,
-              fontKey: boldFontKey,
-              fontSizePt: spec.sizes.roleTitlePt,
-              bold: true,
-              colorRgb: INK_PRIMARY,
-            },
-            {
-              text: dateStr,
-              xPt: Math.max(leftX + leftW + 12, rightX - dateW),
-              widthPt: dateW,
-              fontKey: bodyFontKey,
-              fontSizePt: spec.sizes.metaPt,
-              bold: false,
-              colorRgb: INK_MUTED,
-            },
-          ],
+          runs: headerRuns,
           heightPt: spec.sizes.roleTitlePt * spec.lineHeights.heading,
           spaceBeforePt:
             expIdx > 0 ? scaleSpace(spec.sectionSpacingPt.betweenRoles) : 0,
@@ -683,29 +702,58 @@ function buildLayoutLines(
           keepWithNext: true,
         });
       } else {
+        const roleLeft = `${titlePart}${companyPart}${locPart}`;
         const wrappedLeft = wrapTextByPoints(
           roleLeft,
-          boldFontKey,
+          bodyFontKey,
           spec.sizes.roleTitlePt,
           contentWidthPt - dateW - 14,
         );
         wrappedLeft.forEach((wl, wIdx) => {
-          const wlW = measureTextWidthPt(
-            wl,
-            boldFontKey,
-            spec.sizes.roleTitlePt,
-          );
-          const runs: TextRun[] = [
-            {
-              text: wl,
+          const runs: TextRun[] = [];
+          if (wIdx === 0 && wl.startsWith(titlePart)) {
+            const rem = wl.slice(titlePart.length);
+            runs.push({
+              text: titlePart,
               xPt: leftX,
-              widthPt: wlW,
+              widthPt: titleW,
               fontKey: boldFontKey,
               fontSizePt: spec.sizes.roleTitlePt,
               bold: true,
               colorRgb: INK_PRIMARY,
-            },
-          ];
+            });
+            if (rem) {
+              const remW = measureTextWidthPt(
+                rem,
+                bodyFontKey,
+                spec.sizes.roleTitlePt,
+              );
+              runs.push({
+                text: rem,
+                xPt: leftX + titleW,
+                widthPt: remW,
+                fontKey: bodyFontKey,
+                fontSizePt: spec.sizes.roleTitlePt,
+                bold: false,
+                colorRgb: INK_PRIMARY,
+              });
+            }
+          } else {
+            const wlW = measureTextWidthPt(
+              wl,
+              bodyFontKey,
+              spec.sizes.roleTitlePt,
+            );
+            runs.push({
+              text: wl,
+              xPt: leftX,
+              widthPt: wlW,
+              fontKey: bodyFontKey,
+              fontSizePt: spec.sizes.roleTitlePt,
+              bold: false,
+              colorRgb: INK_MUTED,
+            });
+          }
           if (wIdx === wrappedLeft.length - 1) {
             runs.push({
               text: dateStr,
@@ -769,10 +817,7 @@ function buildLayoutLines(
           });
           const runs: TextRun[] = [];
           if (lineIdx === 0) {
-            const dotX =
-              textAlign === 'right'
-                ? Math.max(glyphX, aligned.xPt - (bulletTextX - glyphX))
-                : glyphX;
+            const dotX = glyphX;
             runs.push({
               text: glyphStr,
               xPt: dotX,
@@ -925,10 +970,7 @@ function buildLayoutLines(
           });
           const runs: TextRun[] = [];
           if (lIdx === 0) {
-            const dotX =
-              textAlign === 'right'
-                ? Math.max(glyphX, aligned.xPt - (bulletTextX - glyphX))
-                : glyphX;
+            const dotX = glyphX;
             runs.push({
               text: glyphStr,
               xPt: dotX,
@@ -985,23 +1027,19 @@ function buildLayoutLines(
             bodyFontKey,
             spec.sizes.bodyPt,
           );
-          const rightShift =
-            textAlign === 'right'
-              ? Math.max(0, contentWidthPt - (catW + remW))
-              : 0;
           const remAligned = computeAlignedRunMetrics({
             text: remainder,
-            baseLeftX: leftX + rightShift + catW,
+            baseLeftX: leftX + catW,
             maxWidthPt: Math.max(10, contentWidthPt - catW),
             rawWidthPt: remW,
-            align: textAlign === 'right' ? 'left' : textAlign,
+            align: textAlign,
             isLastLine: isLastSkillLine,
           });
           lines.push({
             runs: [
               {
                 text: catLabel,
-                xPt: Number((leftX + rightShift).toFixed(2)),
+                xPt: Number(leftX.toFixed(2)),
                 widthPt: catW,
                 fontKey: boldFontKey,
                 fontSizePt: spec.sizes.bodyPt,

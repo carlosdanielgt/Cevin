@@ -255,15 +255,15 @@ export function DeltaChip({
 
   return (
     <span
-      title={`vs ${referenceLabel} (${sign} pts)`}
-      aria-label={`${sign} points vs ${referenceLabel}`}
+      title={`vs ${referenceLabel} (${sign})`}
+      aria-label={`${sign} vs ${referenceLabel}`}
       className={cn(
         'inline-flex items-center px-2 py-0.5 text-xs font-sans font-semibold tabular-nums rounded-sm border whitespace-nowrap shrink-0 cursor-help',
         toneClass,
         className,
       )}
     >
-      {sign} pts
+      {sign}
     </span>
   );
 }
@@ -1487,7 +1487,12 @@ export function SplitButton({
   primaryLabel: string;
   primaryIcon?: React.ReactNode;
   onPrimaryClick: () => void;
-  items: Array<{ id: string; label: string; onSelect: () => void }>;
+  items: Array<{
+    id: string;
+    label: string;
+    tooltip?: string;
+    onSelect: () => void;
+  }>;
   disabled?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -1518,20 +1523,30 @@ export function SplitButton({
         </PopoverTrigger>
         <PopoverContent align="end" className="w-60 p-1">
           <div role="menu" aria-label="Export formats">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  item.onSelect();
-                }}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
-              >
-                <span>{item.label}</span>
-              </button>
-            ))}
+            {items.map((item) => {
+              const btn = (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="menuitem"
+                  title={item.tooltip}
+                  onClick={() => {
+                    setOpen(false);
+                    item.onSelect();
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                >
+                  <span>{item.label}</span>
+                </button>
+              );
+              return item.tooltip ? (
+                <Tooltip key={item.id} content={item.tooltip}>
+                  {btn}
+                </Tooltip>
+              ) : (
+                btn
+              );
+            })}
           </div>
         </PopoverContent>
       </Popover>
@@ -2049,7 +2064,7 @@ export function Logo({
 }
 
 /**
- * Backwards-compatible CevinLogo wrapper for legacy call sites.
+ * Convenience CevinLogo wrapper around Logo.
  */
 export function CevinLogo({
   scheme = 'color',

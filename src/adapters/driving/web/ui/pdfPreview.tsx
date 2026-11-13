@@ -432,10 +432,98 @@ export interface PdfPreviewArtifactInfo {
   positionedText: PositionedText[];
 }
 
+function drawVectorPageToCanvas(params: {
+  canvas: HTMLCanvasElement;
+  doc: ExportableDocument;
+  positionedText: PositionedText[];
+  pageNumber: number;
+  scale: number;
+  spec: { widthPt: number; heightPt: number };
+}) {
+  const { canvas, doc, positionedText, pageNumber, scale, spec } = params;
+  const targetWidth = Math.round(spec.widthPt * scale);
+  const targetHeight = Math.round(spec.heightPt * scale);
+  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+  }
+  const visibleCtx = canvas.getContext('2d');
+  if (!visibleCtx) return;
+
+  visibleCtx.fillStyle = '#FFFFFF';
+  visibleCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const pageTexts = positionedText.filter((pt) => pt.page === pageNumber);
+
+  // Draw hairline rules for section headers
+  visibleCtx.strokeStyle = '#E2E8F0';
+  visibleCtx.lineWidth = Math.max(0.5, 0.5 * (scale / 1.5));
+  const marginPt = 36;
+  const leftX = marginPt * scale;
+  const rightX = (spec.widthPt - marginPt) * scale;
+
+  const sectionHeaders = pageTexts.filter(
+    (pt) =>
+      pt.bold &&
+      /^(EXPERIENCE|PROJECTS|SKILLS|EDUCATION|CERTIFICATIONS|SUMMARY)$/i.test(
+        pt.text.trim(),
+      ),
+  );
+  for (const sh of sectionHeaders) {
+    const ruleY = Math.round((sh.y + 3) * scale) + 0.5;
+    visibleCtx.beginPath();
+    visibleCtx.moveTo(leftX, ruleY);
+    visibleCtx.lineTo(rightX, ruleY);
+    visibleCtx.stroke();
+  }
+
+  // Draw header divider rule on page 1
+  if (pageNumber === 1) {
+    const summaryHeading = pageTexts.find((pt) =>
+      /^(SUMMARY|EXPERIENCE|PROJECTS|SKILLS)$/i.test(pt.text.trim()),
+    );
+    const cutoffY = summaryHeading ? summaryHeading.y : 120;
+    const contactItems = pageTexts.filter(
+      (pt) => pt.y < cutoffY && (pt.fontSize ?? 10) <= 9.75 && pt.y > 35,
+    );
+    const lastContact = contactItems.reduce(
+      (max, pt) => (pt.y > (max?.y ?? 0) ? pt : max),
+      undefined as PositionedText | undefined,
+    );
+    if (lastContact) {
+      const headerRuleY = Math.round((lastContact.y + 6) * scale) + 0.5;
+      visibleCtx.strokeStyle =
+        doc.meta.templateId === 'modern' ? '#1D4ED8' : '#D1D5DB';
+      visibleCtx.lineWidth = Math.max(0.6, 0.6 * (scale / 1.5));
+      visibleCtx.beginPath();
+      visibleCtx.moveTo(leftX, headerRuleY);
+      visibleCtx.lineTo(rightX, headerRuleY);
+      visibleCtx.stroke();
+    }
+  }
+
+  for (const item of pageTexts) {
+    const isHeadingFont =
+      doc.meta.templateId === 'classic' &&
+      (item.fontSize ?? 10) >= 10.5 &&
+      item.bold;
+    const fontFamilies = isHeadingFont
+      ? 'Fraunces, Georgia, serif'
+      : 'Plus Jakarta Sans, -apple-system, sans-serif';
+    const weight = item.bold ? '600 ' : '400 ';
+    const pxSize = Math.max(2.5, (item.fontSize ?? 10) * scale);
+    visibleCtx.font = `${weight}${pxSize}px ${fontFamilies}`;
+    visibleCtx.fillStyle =
+      (item.fontSize ?? 10) <= 9.2 && !item.bold ? '#525B6B' : '#151A22';
+    visibleCtx.textBaseline = 'alphabetic';
+    visibleCtx.fillText(item.text, item.x * scale, item.y * scale);
+  }
+}
+
 /**
  * SinglePagePdfCanvas renders a single page of a loaded PDF document onto a `<canvas>`
- * and pairs it with `PreviewOverlay`. Keeps the previous bitmap visible while re-rendering
- * so zooming or editing never flashes blank.
+ * and pairs it with `PreviewOverlay`. Draws the synchronous vector preview immediately
+ * so the page is never blank, then upgrades via `pdfjs-dist` when ready.
  */
 function SinglePagePdfCanvas({
   pdfBytes,
@@ -482,25 +570,22 @@ function SinglePagePdfCanvas({
           ? Math.min(2, window.devicePixelRatio || 1.5)
           : 1.5;
       const scale = ZOOM_RENDER_SCALES[zoom] * dpr;
-      const defaultWidth = Math.round(spec.widthPt * scale);
-      const defaultHeight = Math.round(spec.heightPt * scale);
 
-      // Pre-size the canvas immediately to prevent collapsed 300x150 default aspect ratio
-      if (canvas.width !== defaultWidth || canvas.height !== defaultHeight) {
-        canvas.width = defaultWidth;
-        canvas.height = defaultHeight;
-        const initialCtx = canvas.getContext('2d');
-        if (initialCtx) {
-          initialCtx.fillStyle = '#FFFFFF';
-          initialCtx.fillRect(0, 0, defaultWidth, defaultHeight);
-        }
-      }
+      // Immediately draw crisp vector page from positionedText so canvas is never blank
+      drawVectorPageToCanvas({
+        canvas,
+        doc,
+        positionedText,
+        pageNumber,
+        scale,
+        spec,
+      });
+      onRenderDoneRef.current?.();
 
       try {
         const pdfjs = await loadPdfJs();
         if (cancelled) return;
 
-        // Pass a fresh copy of Uint8Array so pdfjs worker transfer doesn't detach the caller's buffer
         const dataCopy = new Uint8Array(pdfBytes);
         const loadingTask = pdfjs.getDocument({
           data: dataCopy,
@@ -515,7 +600,6 @@ function SinglePagePdfCanvas({
 
         const viewport = pdfPage.getViewport({ scale });
 
-        // Render onto an offscreen canvas first so the visible canvas never flickers blank
         const offscreen = window.document.createElement('canvas');
         offscreen.width = Math.round(viewport.width);
         offscreen.height = Math.round(viewport.height);
@@ -550,86 +634,8 @@ function SinglePagePdfCanvas({
           visibleCtx.drawImage(offscreen, 0, 0);
         }
         onRenderDoneRef.current?.();
-      } catch (err) {
-        console.warn(
-          'PDF.js canvas render encountered an issue, drawing vector preview directly:',
-          err,
-        );
-        if (cancelled) return;
-        const visibleCtx = canvas.getContext('2d');
-        if (visibleCtx) {
-          visibleCtx.fillStyle = '#FFFFFF';
-          visibleCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-          // Fallback vector rendering from positionedText with hairline rules
-          const pageTexts = positionedText.filter(
-            (pt) => pt.page === pageNumber,
-          );
-
-          // Draw hairline rules for section headers
-          visibleCtx.strokeStyle = '#E2E8F0';
-          visibleCtx.lineWidth = 0.5;
-          const marginPt = 36;
-          const leftX = marginPt * scale;
-          const rightX = (spec.widthPt - marginPt) * scale;
-
-          const sectionHeaders = pageTexts.filter(
-            (pt) =>
-              pt.bold &&
-              /^(EXPERIENCE|PROJECTS|SKILLS|EDUCATION|CERTIFICATIONS|SUMMARY)$/i.test(
-                pt.text.trim(),
-              ),
-          );
-          for (const sh of sectionHeaders) {
-            const ruleY = Math.round((sh.y + 3) * scale) + 0.5;
-            visibleCtx.beginPath();
-            visibleCtx.moveTo(leftX, ruleY);
-            visibleCtx.lineTo(rightX, ruleY);
-            visibleCtx.stroke();
-          }
-
-          // In Compact and Classic templates, draw header divider rule on page 1
-          if (pageNumber === 1 && doc.kind === 'resume') {
-            const summaryHeading = pageTexts.find((pt) =>
-              /^(SUMMARY|EXPERIENCE|PROJECTS|SKILLS)$/i.test(pt.text.trim()),
-            );
-            const cutoffY = summaryHeading ? summaryHeading.y : 130;
-            const contactItems = pageTexts.filter(
-              (pt) => pt.y < cutoffY && (pt.fontSize ?? 10) <= 9.75 && pt.y > 35,
-            );
-            const lastContact = contactItems.reduce(
-              (max, pt) => (pt.y > (max?.y ?? 0) ? pt : max),
-              undefined as PositionedText | undefined,
-            );
-            if (lastContact) {
-              const headerRuleY = Math.round((lastContact.y + 4) * scale) + 0.5;
-              visibleCtx.strokeStyle = '#D1D5DB';
-              visibleCtx.lineWidth = 0.6;
-              visibleCtx.beginPath();
-              visibleCtx.moveTo(leftX, headerRuleY);
-              visibleCtx.lineTo(rightX, headerRuleY);
-              visibleCtx.stroke();
-            }
-          }
-
-          for (const item of pageTexts) {
-            const fontFamilies =
-              doc.meta.templateId === 'modern'
-                ? 'Plus Jakarta Sans, -apple-system, sans-serif'
-                : doc.meta.templateId === 'compact'
-                  ? 'Plus Jakarta Sans, -apple-system, sans-serif'
-                  : 'Fraunces, Georgia, serif';
-            const weight = item.bold ? '600 ' : '400 ';
-            const pxSize = Math.max(7, (item.fontSize ?? 10) * scale);
-            visibleCtx.font = `${weight}${pxSize}px ${fontFamilies}`;
-            visibleCtx.fillStyle = '#111827';
-            // PositionedText y coordinate is the alphabetic baseline from the top of the page.
-            // Using 'alphabetic' aligns inline elements (like Name and Title) on their shared baseline.
-            visibleCtx.textBaseline = 'alphabetic';
-            visibleCtx.fillText(item.text, item.x * scale, item.y * scale);
-          }
-        }
-        onRenderDoneRef.current?.();
+      } catch {
+        // Synchronous vector render is already displayed on canvas
       }
     }
 
@@ -645,7 +651,7 @@ function SinglePagePdfCanvas({
         }
       }
     };
-  }, [pdfBytes, pageNumber, zoom]);
+  }, [pdfBytes, pageNumber, zoom, pageSize, doc, positionedText]);
 
   return (
     <div
@@ -822,8 +828,8 @@ const THUMBNAIL_SCALES = {
 
 /**
  * `PdfThumbnail` (also aliased as `PageThumbnail`):
- * Renders Page 1 of the actual PDF bytes via `pdfjs-dist` at a compact thumbnail scale
- * onto a `<canvas>` for template cards in Settings, the Studio template switcher, and VersionCards.
+ * Renders Page 1 of the actual PDF bytes onto a `<canvas>` for template cards in Settings,
+ * the Studio template switcher, and VersionCards.
  */
 export function PdfThumbnail({
   pdfBytes,
@@ -844,6 +850,34 @@ export function PdfThumbnail({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  const thumbTargetDoc: ExportableDocument = useMemo(() => {
+    if (coverLetterDoc) {
+      return {
+        ...coverLetterDoc,
+        meta: { ...coverLetterDoc.meta, templateId },
+      };
+    }
+    if (resumeDoc) {
+      return {
+        ...resumeDoc,
+        meta: { ...resumeDoc.meta, templateId },
+      };
+    }
+    return {
+      ...SAMPLE_THUMBNAIL_RESUME,
+      meta: { ...SAMPLE_THUMBNAIL_RESUME.meta, templateId },
+    };
+  }, [coverLetterDoc, resumeDoc, templateId]);
+
+  const thumbArtifact = useMemo(
+    () =>
+      renderDocumentToPdfArtifact(thumbTargetDoc, {
+        templateId,
+        pageSize: 'letter',
+      }),
+    [thumbTargetDoc, templateId],
+  );
+
   const effectiveBytes = useMemo(() => {
     if (pdfBytes && pdfBytes.byteLength > 0) {
       return pdfBytes;
@@ -860,25 +894,8 @@ export function PdfThumbnail({
         // Fallback to rendering document
       }
     }
-    const targetDoc: ExportableDocument = coverLetterDoc
-      ? {
-          ...coverLetterDoc,
-          meta: { ...coverLetterDoc.meta, templateId },
-        }
-      : resumeDoc
-        ? {
-            ...resumeDoc,
-            meta: { ...resumeDoc.meta, templateId },
-          }
-        : {
-            ...SAMPLE_THUMBNAIL_RESUME,
-            meta: { ...SAMPLE_THUMBNAIL_RESUME.meta, templateId },
-          };
-    return renderDocumentToPdfArtifact(targetDoc, {
-      templateId,
-      pageSize: 'letter',
-    }).bytes;
-  }, [pdfBytes, pdfBytesBase64, resumeDoc, coverLetterDoc, templateId]);
+    return thumbArtifact.bytes;
+  }, [pdfBytes, pdfBytesBase64, thumbArtifact.bytes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -886,6 +903,17 @@ export function PdfThumbnail({
     async function drawThumb() {
       const canvas = canvasRef.current;
       if (!canvas) return;
+
+      // Immediately draw vector thumbnail so it is never blank
+      drawVectorPageToCanvas({
+        canvas,
+        doc: thumbTargetDoc,
+        positionedText: thumbArtifact.positionedText,
+        pageNumber: 1,
+        scale: THUMBNAIL_SCALES[size] * 2,
+        spec: PAGE_SIZES.letter,
+      });
+
       try {
         const pdfjs = await loadPdfJs();
         if (cancelled) return;
@@ -897,7 +925,7 @@ export function PdfThumbnail({
         if (cancelled) return;
         const page1 = await pdfDoc.getPage(1);
         if (cancelled) return;
-        const viewport = page1.getViewport({ scale: THUMBNAIL_SCALES[size] });
+        const viewport = page1.getViewport({ scale: THUMBNAIL_SCALES[size] * 2 });
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
         const ctx = canvas.getContext('2d');
@@ -906,7 +934,7 @@ export function PdfThumbnail({
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         await page1.render({ canvasContext: ctx, viewport, canvas }).promise;
       } catch {
-        // Ignore cancelled thumbnail render
+        // Vector thumbnail is already rendered
       }
     }
 
@@ -914,7 +942,7 @@ export function PdfThumbnail({
     return () => {
       cancelled = true;
     };
-  }, [effectiveBytes, size]);
+  }, [effectiveBytes, size, thumbTargetDoc, thumbArtifact.positionedText]);
 
   return (
     <div

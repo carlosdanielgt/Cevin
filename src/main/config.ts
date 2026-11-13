@@ -9,15 +9,8 @@ export const APP_CONFIG = {
   mlxDefaults: {
     baseUrl: 'http://localhost:8000',
     recommendedGenerationModel: 'cevin-3b-4bit-fused',
-    defaultNumCtx: 1024,
-  },
-  ollamaDefaults: {
-    baseUrl: 'http://localhost:11434',
-    recommendedGenerationModel: 'llama3.1:8b',
-    recommendedEmbeddingModel: 'nomic-embed-text',
-    defaultNumCtx: 8192,
+    defaultMaxSeqLength: 1024,
   },
   storageDbName: 'cevin_local_studio_db',
   minSupportedViewportWidthPx: 1024,
 } as const;
-

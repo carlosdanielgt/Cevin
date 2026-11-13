@@ -5,15 +5,19 @@ import {
 } from '../src/core/application';
 import {
   TemplateId,
+  TextAlign,
   VOICE_LEVEL_ORDER,
   computeDocumentContentHash,
   documentToPlainText,
+  extractTextFromDocxBlob,
   locateBlocks,
   mapApplicationToCoverLetterDocument,
   mapApplicationToResumeDocument,
   normalizeWhitespaceForParity,
   stripMarkdownFormatting,
 } from '../src/core/domain';
+import { docxDocumentExporter } from '../src/adapters/driven/exporters/docx';
+import { renderDocumentToMarkdown } from '../src/adapters/driven/exporters/markdown';
 import {
   extractPositionedTextFromPdfBlob,
   extractTextFromPdfBlob,
@@ -21,9 +25,9 @@ import {
   renderDocumentToPdfArtifact,
 } from '../src/adapters/driven/exporters/pdf';
 import { renderDocumentToText } from '../src/adapters/driven/exporters/text';
-import { renderDocumentToMarkdown } from '../src/adapters/driven/exporters/markdown';
 
 const TEMPLATES: TemplateId[] = ['classic', 'modern', 'compact'];
+const ALIGNMENTS: TextAlign[] = ['left', 'justify'];
 
 async function runParitySuite() {
   console.log('Running WYSIWYG Content, Byte & Exporter Parity Suite...');
@@ -33,94 +37,127 @@ async function runParitySuite() {
 
   for (const app of demoApps) {
     for (const templateId of TEMPLATES) {
-      for (const voice of VOICE_LEVEL_ORDER.slice(0, 3)) {
-        const modifiedApp = {
-          ...app,
-          templateId,
-          voice,
-        };
-
-        const resumeDoc = mapApplicationToResumeDocument(modifiedApp, bank);
-        const letterDoc = mapApplicationToCoverLetterDocument(
-          modifiedApp,
-          bank,
-        );
-
-        for (const doc of [resumeDoc, letterDoc]) {
-          // 1. Deterministic contentHash
-          const hash1 = computeDocumentContentHash(doc);
-          const hash2 = computeDocumentContentHash(doc);
-          assert.equal(hash1, hash2, 'contentHash must be deterministic');
-          assert.equal(
-            doc.contentHash,
-            hash1,
-            'mapped document must carry matching contentHash',
-          );
-
-          // 2. Render preview artifact vs exported Blob byte-for-byte parity
-          const previewArtifact = renderDocumentToPdfArtifact(doc, {
+      for (const textAlign of ALIGNMENTS) {
+        for (const voice of VOICE_LEVEL_ORDER.slice(0, 2)) {
+          const modifiedApp = {
+            ...app,
             templateId,
-            pageSize: 'letter',
-          });
-          const exportedBlob = await pdfResumeExporter.export(doc, {
-            templateId,
-            pageSize: 'letter',
-          });
-          const exportedBytes = new Uint8Array(
-            await exportedBlob.arrayBuffer(),
+            voice,
+            workingDraft: {
+              ...app.workingDraft,
+              textAlign,
+            },
+            coverLetterDraft: app.coverLetterDraft
+              ? {
+                  ...app.coverLetterDraft,
+                  textAlign,
+                }
+              : undefined,
+          };
+
+          const resumeDoc = mapApplicationToResumeDocument(modifiedApp, bank);
+          const letterDoc = mapApplicationToCoverLetterDocument(
+            modifiedApp,
+            bank,
           );
 
-          assert.equal(
-            previewArtifact.bytes.byteLength,
-            exportedBytes.byteLength,
-            `Preview bytes length must equal exported PDF bytes length (${doc.kind}, ${templateId})`,
-          );
-          assert.deepEqual(
-            previewArtifact.bytes,
-            exportedBytes,
-            `Preview PDF bytes must be byte-for-byte identical to exported PDF bytes (${doc.kind}, ${templateId})`,
-          );
+          for (const doc of [resumeDoc, letterDoc]) {
+            assert.equal(
+              doc.meta.textAlign,
+              textAlign,
+              `mapped document must preserve textAlign=${textAlign}`,
+            );
 
-          // 3. Extracted PDF text via pdfjs-dist === documentToPlainText(doc) (whitespace-normalized)
-          const canonicalPlain = normalizeWhitespaceForParity(
-            documentToPlainText(doc),
-          );
-          const extractedPdfText = normalizeWhitespaceForParity(
-            await extractTextFromPdfBlob(exportedBlob),
-          );
-          assert.equal(
-            extractedPdfText,
-            canonicalPlain,
-            `PDF extracted text must match documentToPlainText (${app.company} / ${doc.kind} / ${templateId})`,
-          );
+            // 1. Deterministic contentHash
+            const hash1 = computeDocumentContentHash(doc);
+            const hash2 = computeDocumentContentHash(doc);
+            assert.equal(hash1, hash2, 'contentHash must be deterministic');
+            assert.equal(
+              doc.contentHash,
+              hash1,
+              'mapped document must carry matching contentHash',
+            );
 
-          // 4. Plain Text & Markdown exporter parity with documentToPlainText(doc)
-          const txtOut = normalizeWhitespaceForParity(renderDocumentToText(doc));
-          const mdOut = normalizeWhitespaceForParity(
-            stripMarkdownFormatting(renderDocumentToMarkdown(doc)),
-          );
-          assert.equal(
-            txtOut,
-            canonicalPlain,
-            `Plain text exporter must match documentToPlainText (${doc.kind})`,
-          );
-          assert.equal(
-            mdOut,
-            canonicalPlain,
-            `Markdown exporter (stripped) must match documentToPlainText (${doc.kind})`,
-          );
+            // 2. Render preview artifact vs exported Blob byte-for-byte parity
+            const previewArtifact = renderDocumentToPdfArtifact(doc, {
+              templateId,
+              pageSize: 'letter',
+            });
+            const exportedBlob = await pdfResumeExporter.export(doc, {
+              templateId,
+              pageSize: 'letter',
+            });
+            const exportedBytes = new Uint8Array(
+              await exportedBlob.arrayBuffer(),
+            );
 
-          // 5. Block location mapping for overlays
-          const blockLocations = locateBlocks(
-            doc,
-            previewArtifact.positionedText,
-          );
-          assert.ok(
-            blockLocations.length > 0,
-            `locateBlocks must return bounding boxes (${doc.kind})`,
-          );
+            assert.equal(
+              previewArtifact.bytes.byteLength,
+              exportedBytes.byteLength,
+              `Preview bytes length must equal exported PDF bytes length (${doc.kind}, ${templateId}, ${textAlign})`,
+            );
+            assert.deepEqual(
+              previewArtifact.bytes,
+              exportedBytes,
+              `Preview PDF bytes must be byte-for-byte identical to exported PDF bytes (${doc.kind}, ${templateId}, ${textAlign})`,
+            );
 
-          totalChecks += 5;
+            // 3. Extracted PDF text via pdfjs-dist === documentToPlainText(doc) (whitespace-normalized)
+            const canonicalPlain = normalizeWhitespaceForParity(
+              documentToPlainText(doc),
+            );
+            const extractedPdfText = normalizeWhitespaceForParity(
+              await extractTextFromPdfBlob(exportedBlob),
+            );
+            assert.equal(
+              extractedPdfText,
+              canonicalPlain,
+              `PDF extracted text must match documentToPlainText (${app.company} / ${doc.kind} / ${templateId} / ${textAlign})`,
+            );
+
+            // 4. Word (.docx), Plain Text & Markdown exporter parity with documentToPlainText(doc)
+            const docxBlob = await docxDocumentExporter.export(doc, {
+              templateId,
+              pageSize: 'letter',
+            });
+            const docxOut = normalizeWhitespaceForParity(
+              await extractTextFromDocxBlob(docxBlob),
+            );
+            assert.equal(
+              docxOut,
+              canonicalPlain,
+              `Word (.docx) exporter must match documentToPlainText (${doc.kind}, ${templateId}, ${textAlign})`,
+            );
+
+            const txtOut = normalizeWhitespaceForParity(
+              renderDocumentToText(doc),
+            );
+            const mdOut = normalizeWhitespaceForParity(
+              stripMarkdownFormatting(renderDocumentToMarkdown(doc)),
+            );
+            assert.equal(
+              txtOut,
+              canonicalPlain,
+              `Plain text exporter must match documentToPlainText (${doc.kind})`,
+            );
+            assert.equal(
+              mdOut,
+              canonicalPlain,
+              `Markdown exporter (stripped) must match documentToPlainText (${doc.kind})`,
+            );
+
+            // 5. Block location mapping for overlays
+            const blockLocations = locateBlocks(
+              doc,
+              previewArtifact.positionedText,
+            );
+            assert.ok(
+              blockLocations.length > 0,
+              `locateBlocks must return bounding boxes (${doc.kind}, ${textAlign})`,
+            );
+
+            totalChecks += 6;
+          }
         }
       }
     }
@@ -186,7 +223,7 @@ async function runParitySuite() {
   );
 
   console.log(
-    `✓ All ${totalChecks + 6} WYSIWYG parity, byte-identity, and glyph checks passed.`,
+    `✓ All ${totalChecks + 6} WYSIWYG parity, Word (.docx), byte-identity, and glyph checks passed.`,
   );
 }
 

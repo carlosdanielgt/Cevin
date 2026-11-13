@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  createMlxFastApiProvider,
   createModelProfileCatalog,
-  createOllamaProvider,
 } from '../src/adapters/driven/llm';
 import {
   createInMemoryPerformanceLog,
@@ -18,24 +18,22 @@ import {
 } from '../src/core/application';
 import { validateBulletGrounding } from '../src/core/domain';
 
-const OLLAMA_ENDPOINT = process.env.OLLAMA_ENDPOINT || 'http://localhost:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
+const MLX_ENDPOINT = process.env.CEVIN_MLX_URL || 'http://localhost:8000';
+const MLX_MODEL = process.env.CEVIN_MLX_MODEL || 'cevin-3b-4bit-fused';
 const RECORD_MODE = process.argv.includes('--record');
 const FIXTURE_PATH = path.resolve(
   process.cwd(),
-  'src/tests/fixtures/llama3_1_real_outputs.json',
+  'src/tests/fixtures/cevin_3b_real_outputs.json',
 );
 
 async function main() {
   console.log(
-    `[Tier 3 Live LLM Runner] Checking Ollama at ${OLLAMA_ENDPOINT} (model: ${OLLAMA_MODEL})...`,
+    `[Tier 3 Live LLM Runner] Checking Cevin MLX service at ${MLX_ENDPOINT} (model: ${MLX_MODEL})...`,
   );
 
-  const provider = createOllamaProvider({
-    baseUrl: OLLAMA_ENDPOINT,
-    model: OLLAMA_MODEL,
-    embeddingModel: '',
-    numCtx: 4096,
+  const provider = createMlxFastApiProvider({
+    baseUrl: MLX_ENDPOINT,
+    model: MLX_MODEL,
   });
 
   let models;
@@ -44,20 +42,20 @@ async function main() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(
-      `[Tier 3 Live LLM Runner] SKIPPED — Local Ollama is not reachable at ${OLLAMA_ENDPOINT} (${msg}).`,
+      `[Tier 3 Live LLM Runner] SKIPPED — Local Cevin MLX service is not reachable at ${MLX_ENDPOINT} (${msg}).`,
     );
     console.log(
-      `[Tier 3 Live LLM Runner] Tip: On your machine with Ollama running, run "npm run test:live-llm" (or "npm run test:live-llm -- --record" to update golden snapshots).`,
+      `[Tier 3 Live LLM Runner] Tip: On your Mac with the MLX service running, run "npm run test:live-llm" (or "npm run test:live-llm -- --record" to update golden snapshots).`,
     );
     process.exit(0);
   }
 
   const hasModel = models.some(
-    (m) => m.id === OLLAMA_MODEL || m.id.startsWith(OLLAMA_MODEL.split(':')[0]),
+    (m) => m.id === MLX_MODEL || m.id.startsWith(MLX_MODEL.split(':')[0]),
   );
   if (!hasModel) {
     console.log(
-      `[Tier 3 Live LLM Runner] SKIPPED — Connected to Ollama, but model "${OLLAMA_MODEL}" is not pulled. Available: ${models.map((m) => m.id).join(', ') || 'none'}.`,
+      `[Tier 3 Live LLM Runner] SKIPPED — Connected to MLX service, but model "${MLX_MODEL}" is not loaded. Available: ${models.map((m) => m.id).join(', ') || 'none'}.`,
     );
     process.exit(0);
   }
@@ -70,9 +68,9 @@ async function main() {
   const gateway = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider,
-      providerId: 'ollama',
-      modelName: OLLAMA_MODEL,
-      profile: profileCatalog.resolveForModel(OLLAMA_MODEL),
+      providerId: 'mlx-fastapi',
+      modelName: MLX_MODEL,
+      profile: profileCatalog.resolveForModel(MLX_MODEL),
       parallelSlots: 1,
     }),
     resultCache,
@@ -169,7 +167,7 @@ async function main() {
   if (RECORD_MODE && fs.existsSync(FIXTURE_PATH)) {
     const existing = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
     existing.recordedAt = new Date().toISOString();
-    existing.model = OLLAMA_MODEL;
+    existing.model = MLX_MODEL;
     existing.cases.bullet_rewrite_with_preamble.rawCompletion = bulletRes.text;
     existing.cases.bullet_rewrite_with_preamble.expectedCleanText =
       bulletRes.text;

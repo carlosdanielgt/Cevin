@@ -18,7 +18,7 @@ export * from './quickcheck';
 export * from './templateSpec';
 export * from './embeddedFonts';
 export * from './pdfEngine';
-export * from './googleDocsEngine';
+export * from './docxEngine';
 export * from './cevinLogoGeometry';
 export * from './cevinMarkTiming';
 export * from './preprocessors';

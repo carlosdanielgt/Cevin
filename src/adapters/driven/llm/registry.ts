@@ -4,20 +4,14 @@ import {
 } from '../../../core/application';
 import { mlxFastApiProviderDescriptor } from './mlxFastApi';
 import { mockProviderDescriptor } from './mock';
-import {
-  ollamaLlama31ProviderDescriptor,
-  ollamaProviderDescriptor,
-} from './ollama';
 
 /**
  * Registry of LLM provider descriptors.
- * `cevin-3b-mlx` (Cevin 3B Fine-Tuned — MLX FastAPI) is the primary default inference backend,
- * with `ollama-llama3.1` (`ollama` alias) retained as the legacy fallback and `mock` for demo mode.
+ * `mlx-fastapi` (Cevin model on this Mac) is the default inference backend,
+ * with `mock` for Demo mode.
  */
 const REGISTERED_PROVIDERS: LlmProviderDescriptor[] = [
   mlxFastApiProviderDescriptor as unknown as LlmProviderDescriptor,
-  ollamaLlama31ProviderDescriptor as unknown as LlmProviderDescriptor,
-  ollamaProviderDescriptor as unknown as LlmProviderDescriptor,
   mockProviderDescriptor as unknown as LlmProviderDescriptor,
 ];
 
@@ -27,8 +21,10 @@ export function createLlmProviderCatalog(): LlmProviderCatalog {
       return [...REGISTERED_PROVIDERS];
     },
     getById(id: string) {
+      if (id === 'cevin-3b-mlx') {
+        return REGISTERED_PROVIDERS.find((p) => p.id === 'mlx-fastapi');
+      }
       return REGISTERED_PROVIDERS.find((p) => p.id === id);
     },
   };
 }
-

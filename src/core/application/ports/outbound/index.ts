@@ -39,13 +39,12 @@ export interface LlmMessage {
 }
 
 export interface LlmRequestOptions {
-  numCtx: number;
+  maxSeqLength: number;
   temperature: number;
   topP: number;
   seed?: number;
   numPredict?: number;
   stop?: string[];
-  keepAlive?: string;
 }
 
 export interface LlmUsageMetrics {
@@ -95,7 +94,7 @@ export interface LlmChatRequest {
 }
 
 /**
- * Outbound port for talking to an LLM provider (local Ollama, mock, or future remote adapters).
+ * Outbound port for talking to an LLM provider (local MLX FastAPI, mock, or future remote adapters).
  */
 export interface LlmProvider {
   /** Lists models available on the configured endpoint. */
@@ -108,24 +107,23 @@ export interface LlmProvider {
   embed?(texts: string[], model?: string): Promise<number[][]>;
   /**
    * High-efficiency harness completion call with message-array prefix caching,
-   * constant `numCtx`, token caps, stop sequences, and timing metrics.
+   * constant `maxSeqLength`, token caps, stop sequences, and timing metrics.
    */
   complete?(req: LlmCompletionRequest): Promise<LlmCompletionResponse>;
   /**
-   * Warms the model weights and static system/few-shot prefix in KV cache (`num_predict: 0`).
+   * Warms the model weights and static system/few-shot prefix.
    */
   warm?(req: {
     prefixMessages: LlmMessage[];
-    numCtx: number;
-    keepAlive: string;
+    maxSeqLength: number;
     signal?: AbortSignal;
   }): Promise<LlmUsageMetrics>;
   /**
-   * Queries currently loaded models and VRAM/CPU placement (e.g., via Ollama `/api/ps`).
+   * Queries currently loaded models and GPU memory status.
    */
   getRuntimeStatus?(): Promise<LlmRuntimeStatus>;
   /**
-   * Releases model weights from memory immediately (e.g., `keep_alive: 0`).
+   * Releases model weights from memory immediately.
    */
   unload?(model?: string): Promise<void>;
   /**
@@ -148,7 +146,6 @@ export interface LlmProviderDescriptor<TConfig = Record<string, unknown>> {
     jsonSchema: boolean;
     embeddings: boolean;
     reportsTimings?: boolean;
-    keepAlive?: boolean;
     runtimeStatus?: boolean;
     parallel?: boolean;
   };
@@ -159,15 +156,15 @@ export interface LlmProviderDescriptor<TConfig = Record<string, unknown>> {
 }
 
 /**
- * Tuned parameter profile for a specific local model family (e.g., `llama3.1:8b` on M1 16GB).
+ * Tuned parameter profile for a local model family (e.g., `cevin-3b-4bit-fused` on Apple Silicon).
  */
 export interface ModelProfile {
   id: string;
   label: string;
   isRecommendedDefault: boolean;
   matches(modelName: string): boolean;
-  /** Constant across every call per slot so Ollama never reallocates the KV cache. */
-  numCtx: number;
+  /** Maximum sequence length supported per call. */
+  maxSeqLength: number;
   parallelRecommended: number;
   temperatures: {
     classify: number;
@@ -186,7 +183,6 @@ export interface ModelProfile {
     jobFact?: number;
   };
   stop: string[];
-  keepAlive: string;
   fewShotStyle: 'chat-turns' | 'inline';
   serverEnv: string[];
   /**
@@ -396,7 +392,6 @@ export interface AppSettings {
   hidePracticalConflicts?: boolean;
   remoteProviderConfirmed: Record<string, boolean>;
   smarterMatchingEnabled?: boolean;
-  keepModelWarm?: boolean;
   parallelSlots?: number;
   performanceProfile?: PerformanceProfile;
 }

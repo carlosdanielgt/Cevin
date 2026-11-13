@@ -30,6 +30,8 @@ import {
   createDefaultCoverLetterDraft,
   evaluateCoverLetterChecks,
   extractJobFactsByRules,
+  isPlaceholderExperience,
+  normalizeBankSkill,
 } from '../../../core/domain';
 
 /**
@@ -206,6 +208,128 @@ export function migrateV4ToV5Records(params: {
   };
 }
 
+/**
+ * Pure migration helper upgrading v5 records to v6:
+ * - Migrates persisted settings with legacy provider IDs (`ollama`, `ollama-llama3.1`, `cevin-3b-mlx`)
+ *   to `mlx-fastapi` and model IDs (`llama3.1:8b`) to `cevin-3b-4bit-fused`.
+ * - Migrates version `modelId` values (`llama3.1:8b`) to `cevin-3b-4bit-fused`.
+ * - Normalizes Bank skills (categories and synonyms vs related skills) and deduplicates placeholder roles.
+ * - Normalizes document `textAlign` so `'right'` becomes `'left'`.
+ */
+export function migrateV5ToV6Records(params: {
+  settings?: Partial<AppSettings> | null;
+  applications?: Application[];
+  versions?: DocumentVersion[];
+  bank?: BankSnapshot;
+}): {
+  settings: AppSettings;
+  applications: Application[];
+  versions: DocumentVersion[];
+  bank: BankSnapshot;
+} {
+  const rawSettings = params.settings ?? {};
+  const rawActiveId = rawSettings.activeProviderId ?? 'mlx-fastapi';
+  const activeProviderId =
+    rawActiveId === 'mock' ? 'mock' : 'mlx-fastapi';
+
+  const prevMlxCfg =
+    (rawSettings.providerConfigs?.['mlx-fastapi'] as Record<string, unknown> | undefined) ??
+    (rawSettings.providerConfigs?.['cevin-3b-mlx'] as Record<string, unknown> | undefined) ??
+    {};
+
+  const migratedSettings: AppSettings = {
+    ...DEFAULT_APP_SETTINGS,
+    ...rawSettings,
+    activeProviderId,
+    providerConfigs: {
+      'mlx-fastapi': {
+        baseUrl:
+          typeof prevMlxCfg.baseUrl === 'string' &&
+          !prevMlxCfg.baseUrl.includes('11434')
+            ? prevMlxCfg.baseUrl
+            : 'http://localhost:8000',
+        model: 'cevin-3b-4bit-fused',
+        modelPath: './cevin-3b-4bit-fused',
+        maxSeqLength: 1024,
+      },
+      mock: {
+        ...DEFAULT_APP_SETTINGS.providerConfigs.mock,
+        ...(rawSettings.providerConfigs?.mock ?? {}),
+      },
+    },
+  };
+
+  const normalizeAlign = (val: unknown): 'left' | 'justify' =>
+    val === 'justify' ? 'justify' : 'left';
+
+  const migratedApplications = (params.applications ?? []).map((app) => {
+    const resumeAlign = normalizeAlign(app.workingDraft?.textAlign);
+    const workingDraft = {
+      ...app.workingDraft,
+      textAlign: resumeAlign,
+    };
+    const coverLetterDraft = app.coverLetterDraft
+      ? {
+          ...app.coverLetterDraft,
+          textAlign: normalizeAlign(app.coverLetterDraft.textAlign),
+        }
+      : undefined;
+    return {
+      ...app,
+      workingDraft,
+      coverLetterDraft,
+      documents: app.documents
+        ? {
+            resume: {
+              ...app.documents.resume,
+              textAlign: normalizeAlign(app.documents.resume?.textAlign ?? resumeAlign),
+            },
+            coverLetter:
+              coverLetterDraft ?? app.documents.coverLetter,
+          }
+        : undefined,
+    };
+  });
+
+  const migratedVersions = (params.versions ?? []).map((ver) => ({
+    ...ver,
+    modelId:
+      !ver.modelId ||
+      ver.modelId.toLowerCase().includes('llama') ||
+      ver.modelId.toLowerCase().includes('ollama')
+        ? 'cevin-3b-4bit-fused'
+        : ver.modelId,
+  }));
+
+  const rawBank = params.bank ?? createDemoBankSnapshot();
+  const normalizedSkills = (rawBank.skills ?? []).map((s) =>
+    normalizeBankSkill(s),
+  );
+  // Deduplicate placeholder "New Company" roles that have no achievements
+  const achExpIds = new Set(
+    (rawBank.achievements ?? []).map((a) => a.experienceId),
+  );
+  let seenPlaceholder = false;
+  const dedupedExperiences = (rawBank.experiences ?? []).filter((exp) => {
+    if (isPlaceholderExperience(exp) && !achExpIds.has(exp.id)) {
+      if (seenPlaceholder) return false;
+      seenPlaceholder = true;
+    }
+    return true;
+  });
+
+  return {
+    settings: migratedSettings,
+    applications: migratedApplications,
+    versions: migratedVersions,
+    bank: {
+      ...rawBank,
+      skills: normalizedSkills,
+      experiences: dedupedExperiences,
+    },
+  };
+}
+
 
 export class CevinDexieDatabase extends Dexie {
   profiles!: Table<Profile, string>;
@@ -339,29 +463,66 @@ export class CevinDexieDatabase extends Dexie {
             }
           });
       });
+
+    this.version(6)
+      .stores({
+        profiles: 'id',
+        experiences: 'id, company',
+        achievements: 'id, experienceId',
+        skills: 'id, name, category',
+        educations: 'id',
+        projects: 'id',
+        certifications: 'id',
+        applications: 'id, status, updatedAt',
+        versions: 'id, applicationId, kind, number, contentHash, createdAt',
+        settings: 'id',
+        preferences: 'id',
+        resultCache: 'key, taskId, lastAccessedAt',
+        performanceLog: 'id, taskId, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('settings')
+          .toCollection()
+          .modify((rec: { id: string; value?: AppSettings }) => {
+            if (rec.value) {
+              rec.value = migrateV5ToV6Records({ settings: rec.value }).settings;
+            }
+          });
+        await tx
+          .table('versions')
+          .toCollection()
+          .modify((ver: Record<string, unknown>) => {
+            const mId = typeof ver.modelId === 'string' ? ver.modelId : '';
+            if (
+              !mId ||
+              mId.toLowerCase().includes('llama') ||
+              mId.toLowerCase().includes('ollama')
+            ) {
+              ver.modelId = 'cevin-3b-4bit-fused';
+            }
+          });
+        await tx
+          .table('skills')
+          .toCollection()
+          .modify((skill: Skill) => {
+            const norm = normalizeBankSkill(skill);
+            skill.category = norm.category;
+            skill.aliases = norm.aliases;
+            skill.related = norm.related;
+          });
+      });
   }
 }
 
-
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  activeProviderId: 'cevin-3b-mlx',
+  activeProviderId: 'mlx-fastapi',
   providerConfigs: {
-    'cevin-3b-mlx': {
+    'mlx-fastapi': {
       baseUrl: 'http://localhost:8000',
       model: 'cevin-3b-4bit-fused',
-      numCtx: 1024,
-    },
-    'ollama-llama3.1': {
-      baseUrl: 'http://localhost:11434',
-      model: 'llama3.1:8b',
-      embeddingModel: '',
-      numCtx: 4096,
-    },
-    ollama: {
-      baseUrl: 'http://localhost:11434',
-      model: 'llama3.1:8b',
-      embeddingModel: '',
-      numCtx: 4096,
+      modelPath: './cevin-3b-4bit-fused',
+      maxSeqLength: 1024,
     },
     mock: {
       model: 'Demo mode',
@@ -836,7 +997,7 @@ export function createDexieRepositories(): {
         profile,
         experiences: orderedExperiences,
         achievements,
-        skills,
+        skills: skills.map((s) => normalizeBankSkill(s)),
         educations: cleanedEducations,
         projects: cleanedProjects,
         certifications,
@@ -961,17 +1122,13 @@ export function createDexieRepositories(): {
   const settingsRepo: SettingsRepository = {
     async getSettings(): Promise<AppSettings> {
       const record = await db.settings.get('main');
-      return {
-        ...DEFAULT_APP_SETTINGS,
-        ...(record?.value ?? {}),
-        providerConfigs: {
-          ...DEFAULT_APP_SETTINGS.providerConfigs,
-          ...(record?.value?.providerConfigs ?? {}),
-        },
-      };
+      return migrateV5ToV6Records({ settings: record?.value }).settings;
     },
     async saveSettings(settings: AppSettings): Promise<void> {
-      await db.settings.put({ id: 'main', value: settings });
+      await db.settings.put({
+        id: 'main',
+        value: migrateV5ToV6Records({ settings }).settings,
+      });
     },
   };
 

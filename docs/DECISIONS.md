@@ -29,4 +29,18 @@
 - **Decision:**
   - Reserve the top ~10% of each Recruiter appeal and Letter appeal lens for stretch criteria, verified against 4 reference fixtures (`poor < 55`, `average 55–75`, `good 75–90`, `gold 88–96`).
   - Cap untailored Quick check estimates at `95` and display them as a **5-point band** (`"85–90"`) inside a dashed `EstimateRing` labeled `Est.`
-  - Compare Review gauge deltas (`DeltaChip`) against the **previous saved version** (`vs v2`) rather than an arbitrary baseline.
+  - Compare Review gauge deltas (`DeltaChip`, formatted `+n` / `-n`) against the **previous saved version** (`vs v2`) rather than an arbitrary baseline.
+
+## ADR-005: Single-Owner Control Audit (No Duplicate Settings)
+- **Context:** Exposing the same document or workspace setting in multiple places (for example, a text-alignment toggle inside both the Summary card header and the DeskPreview toolbar, or a Target Company input inside both Studio Build and Application Details) creates conflicting state expectations and visual clutter.
+- **Decision:** Every setting has a single canonical owner in the UI:
+
+| Setting / Action | Single Canonical Owner | Removed Duplicate Locations |
+| :--- | :--- | :--- |
+| **Document body alignment (`Left` / `Justified`)** | **Studio `DeskPreview` toolbar** (applies to resume body or cover letter body separately, persisted in draft and version snapshots) | Removed duplicate `"Section content alignment"` control from Studio `2 Build` Summary card header; removed `Right` option for body text |
+| **Target company name** | **Application Details** (`Applications` detail drawer / `1 Job` posting header) | Removed duplicate `"Target company"` field from Studio `2 Build` Target framing card |
+| **Delete achievement / role / skill** | **Experience Bank** (`⋯` overflow menu on roles, projects, education, certifications; trash on Bank achievement rows) | Removed trash icon from Studio `2 Build` `BulletRow` (Studio uses checkbox inclusion only) |
+| **Reset draft to default** | **Studio header `⋯` overflow menu** (with confirmation dialog and Undo toast) | Removed top-level `"Reset to default"` button from Studio header bar |
+| **Document export (`PDF`, `Word .docx`, `Markdown`, `Plain text`)** | **Studio `3 Review` single Export split button** (PDF primary, menu for `.docx`, `.md`, `.txt`) | Removed separate secondary export card and clipboard HTML copy buttons |
+| **Default template, page size & voice** | **Settings → Appearance** (workspace defaults; per-application overrides live in Studio toolbar) | Removed redundant workspace default toggles from Studio |
+| **AI provider (`Cevin model` vs `Demo mode`)** | **Settings → AI connection** (with quick `"Use demo mode"` fallback action in unreachable banner) | Removed legacy provider cards and model-swap selectors |

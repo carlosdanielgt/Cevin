@@ -27,7 +27,7 @@ export type HarnessTaskId =
 export interface BuiltTaskPrompt {
   /**
    * Static system prompt + few-shot chat turns.
-   * Must be byte-identical across calls of the same task and voice so Ollama's KV prefix cache hits.
+   * Must be byte-identical across calls of the same task and voice for deterministic prefix reuse.
    */
   prefixMessages: LlmMessage[];
   /**

@@ -24,27 +24,27 @@ import {
 
 interface BenchCliOptions {
   model: string;
-  provider: 'ollama' | 'mock';
+  provider: 'mlx-fastapi' | 'mock';
   baseUrl: string;
   slots: number;
 }
 
 function parseCliArgs(argv: string[]): BenchCliOptions {
-  let model = 'llama3.1:8b';
-  let provider: 'ollama' | 'mock' = 'ollama';
-  let baseUrl = 'http://localhost:11434';
-  let slots = 2;
+  let model = 'cevin-3b-4bit-fused';
+  let provider: 'mlx-fastapi' | 'mock' = 'mlx-fastapi';
+  let baseUrl = 'http://localhost:8000';
+  let slots = 1;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--model' && argv[i + 1]) {
       model = argv[++i];
     } else if (arg === '--provider' && argv[i + 1]) {
-      provider = argv[++i] === 'mock' ? 'mock' : 'ollama';
+      provider = argv[++i] === 'mock' ? 'mock' : 'mlx-fastapi';
     } else if (arg === '--url' && argv[i + 1]) {
       baseUrl = argv[++i];
     } else if (arg === '--slots' && argv[i + 1]) {
-      slots = Math.max(1, Math.min(3, Number(argv[++i]) || 2));
+      slots = Math.max(1, Math.min(3, Number(argv[++i]) || 1));
     }
   }
 
@@ -66,17 +66,15 @@ async function runBenchmark() {
   const profileCatalog = createModelProfileCatalog();
   const profile = profileCatalog.resolveForModel(opts.model);
 
-  // Detect whether local Ollama is reachable; if not, fall back to the deterministic harness simulator
-  let activeProviderId: 'ollama' | 'mock' = opts.provider;
-  let modeNote = 'live-ollama';
+  // Detect whether local MLX service is reachable; if not, fall back to the deterministic harness simulator
+  let activeProviderId: 'mlx-fastapi' | 'mock' = opts.provider;
+  let modeNote = 'live-mlx-fastapi';
 
-  if (activeProviderId === 'ollama') {
-    const ollamaDesc = llmCatalog.getById('ollama');
-    const probe = ollamaDesc?.create({
+  if (activeProviderId === 'mlx-fastapi') {
+    const mlxDesc = llmCatalog.getById('mlx-fastapi');
+    const probe = mlxDesc?.create({
       baseUrl: opts.baseUrl,
       model: opts.model,
-      embeddingModel: 'nomic-embed-text',
-      numCtx: 4096,
       temperature: 0.25,
     });
     let ok = false;
@@ -91,27 +89,23 @@ async function runBenchmark() {
     if (!ok) {
       activeProviderId = 'mock';
       modeNote =
-        'simulated-m1-16gb-profile (Ollama not running locally; used deterministic M1 16GB timing model)';
+        'simulated-apple-silicon-profile (Cevin MLX service not running locally; used deterministic Apple Silicon timing model)';
     }
   } else {
-    modeNote = 'simulated-m1-16gb-profile (--provider mock)';
+    modeNote = 'simulated-apple-silicon-profile (--provider mock)';
   }
 
   const desc = llmCatalog.getById(activeProviderId)!;
   const provider = desc.create(
-    activeProviderId === 'ollama'
+    activeProviderId === 'mlx-fastapi'
       ? {
           baseUrl: opts.baseUrl,
           model: opts.model,
-          embeddingModel: 'nomic-embed-text',
-          numCtx: 4096,
           temperature: 0.25,
         }
       : {
           model: opts.model,
-          embeddingModel: 'nomic-embed-text',
           simulatedLatencyMs: 12,
-          simulatePartlyOnCpu: false,
           failValidationFirstAttempt: false,
           alwaysFailValidation: false,
         },
@@ -190,10 +184,7 @@ async function runBenchmark() {
     goldenLetters.push(applications[0]);
   }
 
-  // 1. Warm prefix first
-  await gateway.warmPrefix('balanced');
-
-  // 2. Execute 20 bullet rewrites
+  // 1. Execute 20 bullet rewrites
   let bulletFirstAttemptsPassed = 0;
   let bulletRepairsUsed = 0;
   let bulletFallbacksUsed = 0;
@@ -216,7 +207,7 @@ async function runBenchmark() {
     if (res.keptOriginalWording) bulletFallbacksUsed += 1;
   }
 
-  // 3. Execute 5 JD brief extractions + refinements
+  // 2. Execute 5 JD brief extractions + refinements
   for (let i = 0; i < goldenJds.length; i++) {
     const rawJd = goldenJds[i];
     const deterministicBrief = extractDeterministicJobBrief(rawJd);
@@ -238,7 +229,7 @@ async function runBenchmark() {
     );
   }
 
-  // 4. Execute 3 Cover Letters (outline deterministically + 4 blocks per letter)
+  // 3. Execute 3 Cover Letters (outline deterministically + 4 blocks per letter)
   let letterBlocksPassed = 0;
   const llmBlockTypes = ['opening', 'body1', 'body2', 'whyCompany'] as const;
 
@@ -291,7 +282,7 @@ async function runBenchmark() {
     }
   }
 
-  // 5. Measure an 8-bullet parallel batch (2 slots)
+  // 4. Measure an 8-bullet batch
   const batchStart = Date.now();
   await Promise.all(
     bulletFixtures.slice(0, 8).map((item) =>
@@ -304,7 +295,7 @@ async function runBenchmark() {
   );
   const batch8WallClockMs = Date.now() - batchStart;
 
-  // 6. Verify second-run cache hit rate (re-running same 8 bullets without bypassCache)
+  // 5. Verify second-run cache hit rate (re-running same 8 bullets without bypassCache)
   const cacheStart = Date.now();
   const cachedRuns = await Promise.all(
     bulletFixtures.slice(0, 8).map((item) =>
@@ -338,7 +329,7 @@ async function runBenchmark() {
     profileId: profile.id,
     mode: modeNote,
     parallelSlots: opts.slots,
-    numCtxPerSlot: profile.numCtx,
+    maxSeqLength: profile.maxSeqLength,
     fixtures: {
       bullets: bulletFixtures.length,
       jobDescriptions: goldenJds.length,
@@ -355,7 +346,7 @@ async function runBenchmark() {
       secondRunCacheHitRate: `${secondRunCacheHits}/${cachedRuns.length} (100%)`,
       secondRunBatch8WallMs: cacheBatchMs,
       maxTokensPerCall: maxPromptPlusOutputTokens,
-      tokenBudgetCap: profile.numCtx,
+      tokenBudgetCap: profile.maxSeqLength,
       firstAttemptValidationPassRate: `${bulletFirstAttemptsPassed}/${bulletFixtures.length} (${Math.round(
         (bulletFirstAttemptsPassed / bulletFixtures.length) * 100,
       )}%)`,
@@ -377,9 +368,9 @@ async function runBenchmark() {
 Generated via \`npm run bench:llm -- --model ${opts.model}\`.
 
 ## Hardware Target & Model Profile
-- **Target Machine**: Apple Silicon M1, 16 GB Unified Memory (~11 GB GPU-addressable, 68 GB/s memory bandwidth)
+- **Target Machine**: Apple Silicon M1, 16 GB Unified Memory (~2.73 GB model footprint)
 - **Tuned Model**: \`${opts.model}\` (\`${profile.id}\` profile)
-- **Context Window (\`num_ctx\`)**: \`${profile.numCtx}\` tokens per slot (constant across all tasks so Ollama never reloads the model)
+- **Max Sequence Length**: \`${profile.maxSeqLength}\` tokens per request
 - **Parallel Slots**: \`${opts.slots}\`
 - **Execution Mode**: \`${modeNote}\`
 
@@ -390,10 +381,10 @@ Generated via \`npm run bench:llm -- --model ${opts.model}\`.
 | **Golden Bullets Tested** | ${bulletFixtures.length} (4 achievements × 5 voices) | 20 |
 | **Golden JDs Extracted & Refined** | ${goldenJds.length} | 5 |
 | **Golden Cover Letters (4 LLM blocks each)** | ${goldenLetters.length} (${goldenLetters.length * 4} blocks) | 3 (12 blocks) |
-| **Average Reading Speed (Prefill)** | **${report.metrics.prefillTokensPerSecAvg} tok/s** | ~150–240 tok/s on M1 |
-| **Average Writing Speed (Decode)** | **${report.metrics.decodeTokensPerSecAvg} tok/s** | ~24–34 tok/s on M1 |
-| **Single Call Latency (p50 / p95)** | **${report.metrics.wallClockMsP50} ms / ${report.metrics.wallClockMsP95} ms** | < 3,500 ms after warm prefix |
-| **Max Prompt + Output Tokens in Any Call** | **${report.metrics.maxTokensPerCall} tokens** | ≤ 4,096 tokens |
+| **Average Reading Speed (Prefill)** | **${report.metrics.prefillTokensPerSecAvg} tok/s** | ~150–240 tok/s on Apple Silicon |
+| **Average Writing Speed (Decode)** | **${report.metrics.decodeTokensPerSecAvg} tok/s** | ~28–36 tok/s on Apple Silicon |
+| **Single Call Latency (p50 / p95)** | **${report.metrics.wallClockMsP50} ms / ${report.metrics.wallClockMsP95} ms** | < 3,500 ms |
+| **Max Prompt + Output Tokens in Any Call** | **${report.metrics.maxTokensPerCall} tokens** | ≤ 1,024 tokens |
 | **First-Attempt Validator Pass Rate** | **${report.metrics.firstAttemptValidationPassRate}** | ≥ 90% |
 | **Second-Run Cache Hit Rate** | **${report.metrics.secondRunCacheHitRate}** (${report.metrics.secondRunBatch8WallMs} ms for 8 bullets) | 100% (< 15 ms) |
 | **Unhandled JSON / Validation Failures** | **${report.metrics.unhandledJsonOrValidationErrors}** | 0 |
@@ -401,11 +392,11 @@ Generated via \`npm run bench:llm -- --model ${opts.model}\`.
 ## Reproducing Locally
 
 \`\`\`bash
-# Run against a live local Ollama instance (or automatic M1 timing simulation if offline):
-npm run bench:llm -- --model llama3.1:8b
+# Run against the live local Cevin MLX service (or automatic simulation if offline):
+npm run bench:llm -- --model cevin-3b-4bit-fused
 
 # Force deterministic simulation mode:
-npm run bench:llm -- --model llama3.1:8b --provider mock
+npm run bench:llm -- --model cevin-3b-4bit-fused --provider mock
 \`\`\`
 `;
   fs.writeFileSync(readmePath, readmeMd, 'utf-8');

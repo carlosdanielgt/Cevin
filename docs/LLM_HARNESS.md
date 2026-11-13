@@ -1,57 +1,49 @@
-# Cevin LLM Harness (`llama3.1:8b` on Apple Silicon M1 16GB)
+# Cevin LLM Harness (`cevin-3b-4bit-fused` on Apple Silicon MLX)
 
-Cevin's LLM Harness (`src/core/domain/harness.ts`, `src/core/application/gateway.ts`, `src/core/application/tasks/`, and `src/adapters/driven/llm/profiles.ts`) is engineered specifically so that a single small local model—**`llama3.1:8b`** running in Ollama on an Apple Silicon M1 with 16 GB unified memory (~11 GB GPU-addressable, 68 GB/s memory bandwidth)—delivers fast, grounded, zero-failure resume and cover-letter tailoring.
+Cevin's LLM Harness (`src/core/domain/harness.ts`, `src/core/application/gateway.ts`, `src/core/application/tasks/`, and `src/adapters/driven/llm/profiles.ts`) is engineered so that Cevin's fine-tuned local model—**`cevin-3b-4bit-fused`** (`Qwen2.5-3B-Instruct-4bit` fused with LoRA weights) running via FastAPI (`mlx_server.py`) on Apple Silicon—delivers fast, grounded, zero-failure resume and cover-letter tailoring.
 
 ---
 
 ## 1. Hardware Constraints & Design Rule
 
-On an M1 16 GB machine:
-- **Decode speed** is strictly memory-bandwidth-bound (~25–34 tokens/sec for Q4_K_M 8B weights).
-- **Prefill speed** (~160–240 tokens/sec) becomes the dominant latency bottleneck if prompts are long or if the KV prefix cache is invalidated between calls.
-- **Model reloads** happen automatically in Ollama whenever `num_ctx` changes between requests, costing 2–4 seconds of disk/memory stall.
+On Apple Silicon unified memory:
+- **Footprint:** `cevin-3b-4bit-fused` uses ~2.73 GB of unified memory with a `1024`-token maximum sequence length (`maxSeqLength: 1024`).
+- **Sequential GPU execution:** Metal inference runs sequentially (`parallelRecommended: 1`) via an `asyncio.Lock()` in `mlx_server.py`.
+- **Exact task schemas:** The model was fine-tuned with prompt-loss masking (`mask_prompt: true`) on exact `TASK:` headers and strict Chain-of-Thought JSON schemas (`_reasoning_trace`, `_fact_audit`, `_alignment_rationale`).
 
-Therefore, Cevin's harness enforces a single engineering rule:
-> **Fewer tokens in, fewer tokens out, narrower jobs, constant `num_ctx`, and aggressive KV prefix + content-addressed caching.**
+Therefore, Cevin's harness enforces:
+> **Domain pre-filtering of job descriptions and Experience Bank slices to fit within 1,024 tokens, exact task schemas, 6 domain validators, 1-shot targeted repair, and content-addressed caching.**
 
 ### Target Budgets
 | Budget | Target | How the Harness Achieves It |
 | :--- | :--- | :--- |
-| **First bullet visible** | **3–5 s** after click (warm prefix) | Background `warmPrefix` on app/Studio entry + 3-turn few-shot prefix reuse |
-| **8 bullets rewritten** | **~18–20 s** | 2 parallel slots (`parallelRecommended: 2`) + plain single-sentence outputs (`maxOutputTokens: 85`) |
-| **Per-slot context cap** | **≤ 4,096 tokens** (`numCtx: 4096`) | Constant `num_ctx: 4096` across all 5 tasks; never triggers an Ollama model reload |
-| **Unhandled JSON / validation errors** | **0** | Plain-text generation for prose tasks + sanitizer + 6 validators + 1-shot targeted repair + deterministic baseline fallback |
+| **Per-request sequence cap** | **≤ 1,024 tokens** (`maxSeqLength: 1024`) | Domain pre-processors strip HR boilerplate and pass only task-relevant Experience Bank items |
+| **Decode speed** | **~32–36 tok/s** on Apple Silicon | 4-bit quantized MLX weights with zero CPU offload |
+| **Unhandled JSON / validation errors** | **0** | Sanitizer + CoT JSON extractor + 6 validators + 1-shot targeted repair + deterministic baseline fallback |
 | **Offline / Demo usability** | **100%** | Every task has a deterministic zero-token baseline in `src/core/domain/` |
 
 ---
 
-## 2. Single-Model Policy (`llama3.1:8b`)
+## 2. Model Profiles (`profiles.ts`)
 
-1. **Tuned Default (`llama3_1_8b` profile)**:
-   - Recommended command in Settings: `ollama pull llama3.1:8b`
-   - Constant `numCtx: 4096` per slot, `parallelRecommended: 2` (`numCtx * 2 = 8192` total KV allocation, fitting comfortably inside ~6.3 GB VRAM alongside 4.7 GB Q4 weights).
-   - Task-calibrated temperatures (`0.25` for bullet/letter rewrites, `0.0` for JSON classification) and `stop: ['\n']` on single-line bullet tasks.
-   - `fewShotStyle: 'chat-turns'` so Llama 3.1's instruct template sees real `user`/`assistant` turns rather than a monolithic system wall of text.
-2. **Fallback Profile (`generic_small`)**:
-   - Any other installed model runs under `generic_small` with a gentle note in Settings: *"Cevin is tuned for llama3.1:8b."*
-   - Cevin never alternates between multiple chat models within a session, preventing model-swap thrashing.
-3. **Optional Embeddings (`Smarter matching`)**:
-   - Lexical + canonical alias matching (`src/core/domain/matching.ts`) is the default.
-   - Embeddings (`nomic-embed-text`, ~270 MB) are an opt-in toggle under **Settings → Performance → Advanced**.
+1. **Tuned Default (`cevin_3b_mlx` profile)**:
+   - Model ID: `cevin-3b-4bit-fused`
+   - `maxSeqLength: 1024`, `parallelRecommended: 1`, `isFineTunedCevin3B: true`, `fewShotStyle: 'zero-shot-cot'`.
+   - Task-calibrated temperatures (`0.25` for bullet/summary/letter rewrites, `0.0` for JSON extraction/classification).
+2. **Fallback Profile (`generic`)**:
+   - Used for Demo mode (`mock`) or any custom OpenAI-compatible local endpoint.
 
 ---
 
-## 3. Prompt & KV Prefix Architecture
+## 3. Prompt & Domain Pre-Filtering Architecture
 
 Every task in `src/core/application/tasks/index.ts` splits its messages into:
 1. **`buildPrefixMessages(voice, profile)`**:
-   - **Byte-identical across all items** for a given `(task, voice)`.
-   - Contains the compact system instruction (`<= 120` tokens) plus 3 calibration example pairs formatted as alternating `user` / `assistant` chat turns (`<= 220` tokens).
-   - Because the prefix is identical across all 8 bullets in a resume build, Ollama reuses the prefilled KV cache for the prefix on every subsequent bullet.
+   - For `cevin_3b_mlx` (`isFineTunedCevin3B: true`), emits the exact system instruction and `TASK:` schema header the model was trained on without redundant few-shot turns.
 2. **`buildSuffixMessage(input)`**:
-   - Contains only the specific item's facts (`action`, `result`, `metric`, `tools`, and matched job keywords) in `<= 160` tokens.
-3. **Plain Single-Sentence Output for Prose Tasks**:
-   - `rewriteBullet`, `writeSummary`, and `writeLetterBlock` output plain text—never JSON-wrapped prose—saving ~25% output tokens and eliminating JSON-escaping failures on quotes and percentages.
+   - Contains only the specific item's verified facts (`action`, `result`, `metric`, `tools`, and matched job keywords) in `<= 200` tokens.
+3. **Chain-of-Thought JSON Parsing (`mlxFastApi.ts` & `tasks/index.ts`)**:
+   - Extracts the target prose or structured fields while discarding internal reasoning keys (`_reasoning_trace`, `_fact_audit`, `_alignment_rationale`).
 
 ---
 
@@ -63,7 +55,7 @@ Every LLM output passes through a deterministic 4-stage pipeline in `LlmGateway.
 Raw LLM Output
    │
    ▼
-1. sanitizeLlmOutput()       Strips "Here is the rewritten bullet:", quotes, fences, bullet glyphs, trailing notes
+1. sanitizeLlmOutput()       Strips conversational preambles, quotes, fences, bullet glyphs, and internal CoT keys
    │
    ▼
 2. 6 Domain Validators       - numbers: normalized number multiset must equal source's (no dropped/invented metrics)
@@ -90,7 +82,7 @@ Raw LLM Output
 
 When the user clicks a Voice detent (`Polished`, `Professional`, `Balanced`, `Natural`, `Plain-spoken`) in Studio:
 1. **Stage 1 — Instant Deterministic Lexicon Pass (`< 10 ms`)**:
-   - `applyVoiceLexiconPass` swaps verbs and strips formulaic phrasing immediately so the user sees instant visual feedback and a brief row highlight, accompanied by an **ETA chip** (`"about 18 s for 6 bullets"`).
+   - `applyVoiceLexiconPass` swaps verbs and strips formulaic phrasing immediately so the user sees instant visual feedback and a brief row highlight.
 2. **Stage 2 — Progressive Queued Refinement**:
    - `LlmGateway` cancels any superseded in-flight requests from the previous voice detent via `AbortController`, prioritizes visible bullets (`interactive` > `visible` > `background`), and streams completed bullets into the document one by one.
    - All results are stored in `ResultCache` (`cevin_local_studio_db.resultCache`, LRU up to 5,000 entries), so switching back to a previously visited Voice detent is instantaneous (`0 ms` LLM time).
@@ -101,10 +93,9 @@ When the user clicks a Voice detent (`Polished`, `Professional`, `Balanced`, `Na
 
 | Task ID | Format | Max Input / Output Tokens | Temp | Validator & Fallback |
 | :--- | :--- | :--- | :--- | :--- |
-| `rewriteBullet` | Plain text | `≤ 380` in / `≤ 85` out | `0.25` | 6-validator suite + 1-shot repair → `assembleBullet()` |
-| `writeSummary` | Plain text | `≤ 360` in / `≤ 95` out | `0.25` | Grounding + length + cliché lint → deterministic summary |
-| `writeLetterBlock` (`v2.2`) | Plain text | `≤ 420` in / `≤ 140` out | `0.25` | Bans generic openers (*"I am writing to apply"*), requires concrete proof hook, omits fabricated *"because…"* when no mission/notes exist → `buildGroundedCoverLetterBlocks()` |
-| `refineJobBrief` | JSON | `≤ 350` in / `≤ 120` out | `0.0` | Zod schema check → `extractDeterministicJobBrief()` |
-| `classifyImportBlocks` | JSON | `≤ 400` in / `≤ 120` out | `0.0` | Zod schema check → rule-based section splitter |
-| `extractJobFact` (`v1.0`) | JSON | `≤ 220` in / `≤ 80` out | `0.0` | Invoked **only** when EN/FR rules mark a snippet as `'review'`. Verifies allowed enum value + verbatim substring quote in the raw posting → rule baseline (`not-stated`). Salary is never sent to the LLM. User preferences never appear in any prompt. |
-
+| `rewriteBullet` | CoT JSON / Plain text | `≤ 380` in / `≤ 180` out | `0.25` | 6-validator suite + 1-shot repair → `assembleBullet()` |
+| `writeSummary` | CoT JSON / Plain text | `≤ 360` in / `≤ 180` out | `0.25` | Grounding + length + cliché lint → deterministic summary |
+| `writeLetterBlock` (`v2.2`) | CoT JSON / Plain text | `≤ 420` in / `≤ 220` out | `0.25` | Bans generic openers, requires concrete proof hook → `buildGroundedCoverLetterBlocks()` |
+| `refineJobBrief` | JSON | `≤ 350` in / `≤ 220` out | `0.0` | Zod schema check → `extractDeterministicJobBrief()` |
+| `classifyImportBlocks` | JSON | `≤ 400` in / `≤ 260` out | `0.0` | Zod schema check → rule-based section splitter |
+| `extractJobFact` (`v1.0`) | JSON | `≤ 220` in / `≤ 120` out | `0.0` | Invoked **only** when EN/FR rules mark a snippet as `'review'`. Verifies allowed enum value + verbatim substring quote in the raw posting → rule baseline (`not-stated`). |

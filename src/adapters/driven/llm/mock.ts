@@ -87,15 +87,15 @@ export function createMockProvider(
         {
           id: 'Demo mode',
           name: 'Demo mode (Built-in)',
-          family: 'llama',
-          parameterSize: '8B',
+          family: 'cevin-demo',
+          parameterSize: '3B',
           supportsEmbeddings: false,
         },
         {
-          id: 'llama3.1:8b',
-          name: 'llama3.1:8b',
-          family: 'llama',
-          parameterSize: '8B',
+          id: 'cevin-3b-4bit-fused',
+          name: 'cevin-3b-4bit-fused',
+          family: 'qwen2.5-mlx-lora',
+          parameterSize: '3B',
           supportsEmbeddings: false,
         },
         {
@@ -452,8 +452,7 @@ export function createMockProvider(
 
     async warm(req: {
       prefixMessages: LlmMessage[];
-      numCtx: number;
-      keepAlive: string;
+      maxSeqLength: number;
       signal?: AbortSignal;
     }): Promise<LlmUsageMetrics> {
       if (req.signal?.aborted) {
@@ -790,16 +789,15 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
 
 export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> = {
   id: 'mock',
-  label: 'Demo mode (no AI needed)',
+  label: 'Demo mode',
   description:
-    'Try Cevin right away with sample responses — no local AI server required.',
+    'Runs in your browser with sample responses.',
   locality: 'local',
   capabilities: {
     streaming: true,
     jsonSchema: true,
     embeddings: true,
     reportsTimings: true,
-    keepAlive: true,
     runtimeStatus: true,
     parallel: true,
   },

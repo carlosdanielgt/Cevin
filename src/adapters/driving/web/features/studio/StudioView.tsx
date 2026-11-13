@@ -5,11 +5,10 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
   Download,
-  FileText,
   Loader2,
   Lock,
+  MoreHorizontal,
   Pencil,
   Plus,
   Redo2,
@@ -55,10 +54,11 @@ import {
   extractJobFactsByRules,
   formatAchievementInVoice,
   formatCount,
+  formatDocumentDateRange,
+  isPlaceholderExperience,
   mapApplicationToResumeDocument,
   mapToCoverLetterDocument,
   orderExperiencesForDraft,
-  renderDocumentToGoogleDocsHtml,
   sanitizeExportFilenameInput,
   sortExperiencesChronologically,
   validateBulletGrounding,
@@ -75,6 +75,7 @@ import {
   Button,
   CevinStatusIndicator,
   Checkbox,
+  ConfirmDialog,
   Disclosure,
   IconButton,
   Input,
@@ -120,13 +121,13 @@ About the role:
 We are looking for a Staff Infrastructure Engineer to lead our multi-region Kubernetes compute platform and high-throughput telemetry ingestion pipeline.
 
 Must-have requirements:
-- 7+ years building production distributed systems in Go, Rust, or TypeScript
+- 7+ years building production distributed systems in Go or TypeScript
 - Deep production experience with Kubernetes, Terraform, and AWS multi-region networking
 - Track record scaling high-throughput data pipelines (Kafka, gRPC, PostgreSQL) with strict SLOs
 - Experience with OpenTelemetry, Prometheus, and incident response
 
 Nice-to-have:
-- Experience with eBPF, FinOps cost optimization, or service mesh architecture`;
+- Experience with Rust, eBPF, FinOps cost optimization, or service mesh architecture`;
 
 function triggerBlobDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -216,6 +217,7 @@ export function StudioView({
   const [undoStack, setUndoStack] = useState<StudioHistoryEntry[]>([]);
   const [redoStack, setRedoStack] = useState<StudioHistoryEntry[]>([]);
   const [isResettingDraft, setIsResettingDraft] = useState(false);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
   useEffect(() => {
     setUndoStack([]);
@@ -374,7 +376,13 @@ export function StudioView({
         setAppliedFixIds([]);
         setApp(res.value);
         await reloadWorkspace();
-        addToast('Reset resume to default generated draft.', 'success');
+        addToast('Reset resume to default draft.', {
+          variant: 'info',
+          actionLabel: 'Undo',
+          onAction: () => {
+            void handleUndo();
+          },
+        });
       } else {
         addToast(res.error.message, 'danger');
       }
@@ -390,6 +398,7 @@ export function StudioView({
     useCases,
     reloadWorkspace,
     addToast,
+    handleUndo,
   ]);
 
   useEffect(() => {
@@ -557,7 +566,7 @@ export function StudioView({
   if (clDraft.blocks.length > 0) completedSteps.push('write');
 
   const orderedExperiences = orderExperiencesForDraft(
-    bank.experiences,
+    bank.experiences.filter((e) => !isPlaceholderExperience(e)),
     app.workingDraft.experienceOrder,
   );
 
@@ -912,41 +921,6 @@ export function StudioView({
     }
   };
 
-  const handleCopyForGoogleDocs = async (kind: DocumentKind = activeDoc) => {
-    const targetDoc = kind === 'coverLetter' ? coverLetterDoc : resumeDoc;
-    const html = renderDocumentToGoogleDocsHtml(targetDoc, {
-      templateId: app.templateId,
-      pageSize,
-    });
-    const plain = documentToPlainText(targetDoc);
-
-    try {
-      if (
-        typeof navigator !== 'undefined' &&
-        navigator.clipboard &&
-        typeof ClipboardItem !== 'undefined' &&
-        navigator.clipboard.write
-      ) {
-        const item = new ClipboardItem({
-          'text/html': new Blob([html], { type: 'text/html' }),
-          'text/plain': new Blob([plain], { type: 'text/plain' }),
-        });
-        await navigator.clipboard.write([item]);
-      } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(plain);
-      }
-      addToast(
-        'Copied WYSIWYG layout for Google Docs — paste (⌘V / Ctrl+V) into any Google Doc to keep editing.',
-        'success',
-      );
-    } catch {
-      if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(plain);
-      }
-      addToast('Copied document text to clipboard.', 'success');
-    }
-  };
-
   const handleExport = async (
     exporterId: string,
     kind: DocumentKind = activeDoc,
@@ -998,12 +972,7 @@ export function StudioView({
     }
     triggerBlobDownload(res.value.blob, res.value.fileName);
     await reloadWorkspace();
-    addToast(
-      exporterId === 'docx'
-        ? `Exported ${res.value.fileName} — upload or open in Google Drive / Google Docs to edit.`
-        : `Exported ${res.value.fileName}`,
-      'success',
-    );
+    addToast(`Exported ${res.value.fileName}`, 'success');
   };
 
   const handleSaveSnapshot = async () => {
@@ -1266,16 +1235,31 @@ export function StudioView({
               >
                 <Redo2 className="w-3.5 h-3.5" />
               </IconButton>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={isResettingDraft}
-                onClick={() => void handleResetToDefault()}
-                title="Reset resume to the default generated draft"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>{isResettingDraft ? 'Resetting…' : 'Reset to default'}</span>
-              </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <IconButton
+                    label="Studio draft options"
+                    size="sm"
+                    data-testid="studio-overflow-menu-btn"
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </IconButton>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-52 p-1">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={isResettingDraft}
+                    onClick={() => setConfirmResetOpen(true)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-ink-muted" />
+                    <span>
+                      {isResettingDraft ? 'Resetting…' : 'Reset to default…'}
+                    </span>
+                  </button>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 
@@ -1848,82 +1832,35 @@ export function StudioView({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label
-                        htmlFor="studio-target-company"
-                        className="block text-xs text-ink-muted mb-1"
-                      >
-                        Target company
-                      </label>
-                      <Input
-                        id="studio-target-company"
-                        value={app.company}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const updated = {
-                            ...app,
-                            company: val,
-                            parsedJob: app.parsedJob
-                              ? { ...app.parsedJob, company: val }
-                              : null,
-                          };
-                          setApp(updated);
-                          void persistApp(updated);
-                        }}
-                        placeholder="e.g. Kestrel Pay"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor="studio-target-headline"
-                        className="block text-xs text-ink-muted mb-1"
-                      >
-                        Target headline
-                      </label>
-                      <Input
-                        id="studio-target-headline"
-                        value={app.workingDraft.targetHeadline}
-                        onChange={(e) =>
-                          void persistApp({
-                            ...app,
-                            workingDraft: {
-                              ...app.workingDraft,
-                              targetHeadline: e.target.value,
-                            },
-                          })
-                        }
-                      />
-                    </div>
+                  <div>
+                    <label
+                      htmlFor="studio-target-headline"
+                      className="block text-xs text-ink-muted mb-1"
+                    >
+                      Target headline
+                    </label>
+                    <Input
+                      id="studio-target-headline"
+                      value={app.workingDraft.targetHeadline}
+                      onChange={(e) =>
+                        void persistApp({
+                          ...app,
+                          workingDraft: {
+                            ...app.workingDraft,
+                            targetHeadline: e.target.value,
+                          },
+                        })
+                      }
+                    />
                   </div>
 
                   <div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                      <label
-                        htmlFor="studio-summary-textarea"
-                        className="block text-xs text-ink-muted"
-                      >
-                        Executive summary
-                      </label>
-                      <div className="inline-flex items-center gap-2">
-                        <span className="text-[11px] font-medium text-ink-muted">
-                          Section content alignment:
-                        </span>
-                        <SegmentedControl<TextAlign>
-                          ariaLabel="Align section content (summary, experience bullets, projects, skills)"
-                          size="sm"
-                          value={app.workingDraft.textAlign ?? 'left'}
-                          onValueChange={(nextAlign) =>
-                            void handleChangeTextAlign(nextAlign)
-                          }
-                          options={[
-                            { value: 'left', label: 'Left' },
-                            { value: 'justify', label: 'Justify' },
-                            { value: 'right', label: 'Right' },
-                          ]}
-                        />
-                      </div>
-                    </div>
+                    <label
+                      htmlFor="studio-summary-textarea"
+                      className="block text-xs text-ink-muted mb-1.5"
+                    >
+                      Executive summary
+                    </label>
                     <AutoGrowTextarea
                       id="studio-summary-textarea"
                       minRows={2}
@@ -1960,7 +1897,7 @@ export function StudioView({
                       title="Sort experiences by newest first (reverse chronological)"
                     >
                       <ArrowUpDown className="w-3.5 h-3.5" />
-                      <span>Sort chronological</span>
+                      <span>Sort roles by date</span>
                     </Button>
                   </div>
 
@@ -1990,7 +1927,7 @@ export function StudioView({
                         <GroupHeader
                           company={exp.company}
                           title={exp.title}
-                          dateRange={`${exp.start} – ${exp.end}`}
+                          dateRange={formatDocumentDateRange(exp.start, exp.end)}
                           includedCount={includedBullets.length}
                           totalCount={expAchievements.length}
                           canMoveUp={expIdx > 0}
@@ -2736,6 +2673,61 @@ export function StudioView({
                     appealDelta={appealDelta}
                     atsDelta={atsDelta}
                     referenceVersionLabel={referenceVersionLabel}
+                    lensFix={
+                      activeDoc === 'resume' &&
+                      appealDetails &&
+                      (appealDetails.lenses.skim < 80 ||
+                        appealDetails.lenses.proof < 80 ||
+                        appealDetails.lenses.clarity < 80 ||
+                        appealDetails.lenses.voice < 80) &&
+                      appealDetails.fixes.length > 0
+                        ? {
+                            title: appealDetails.fixes[0].title,
+                            onApply: async () => {
+                              const suggested = appealDetails.fixes[0];
+                              const matchingFix: PrioritizedFix =
+                                fixes.find((f) => f.id === suggested.id) ?? {
+                                  id: suggested.id,
+                                  title: suggested.title,
+                                  description: suggested.description,
+                                  category: 'appeal',
+                                  impactPoints: suggested.impactPoints,
+                                  actionType: suggested.actionType,
+                                  actionPayload: suggested.actionPayload,
+                                };
+                              recordHistorySnapshot(
+                                app,
+                                bank.experiences,
+                                appliedFixIds,
+                              );
+                              setApplyingFixId(matchingFix.id);
+                              void refreshSidebarActivity();
+                              try {
+                                const r =
+                                  await useCases.scoreResume.applyOneClickFix(
+                                    app.id,
+                                    matchingFix,
+                                  );
+                                if (r.ok) {
+                                  setApp(r.value.application);
+                                  setFixes(r.value.analysis.fixes);
+                                  setAppliedFixIds((prev) => [
+                                    ...new Set([...prev, matchingFix.id]),
+                                  ]);
+                                  addToast(
+                                    `Applied fix: ${matchingFix.title}`,
+                                    'success',
+                                  );
+                                  await reloadWorkspace();
+                                }
+                              } finally {
+                                setApplyingFixId(null);
+                                void refreshSidebarActivity();
+                              }
+                            },
+                          }
+                        : undefined
+                    }
                   />
                 </PanelSection>
 
@@ -2745,6 +2737,52 @@ export function StudioView({
                     <LensBars
                       lenses={appealDetails.lenses}
                       weakestHints={appealDetails.weakestSubcheckHints}
+                      onApplyLensFix={async (lens) => {
+                        const suggested =
+                          appealDetails.fixes.find(
+                            (f) => f.lens === lens,
+                          ) ?? appealDetails.fixes[0];
+                        if (!suggested) return;
+                        const matchingFix: PrioritizedFix =
+                          fixes.find((f) => f.id === suggested.id) ?? {
+                            id: suggested.id,
+                            title: suggested.title,
+                            description: suggested.description,
+                            category: 'appeal',
+                            impactPoints: suggested.impactPoints,
+                            actionType: suggested.actionType,
+                            actionPayload: suggested.actionPayload,
+                          };
+                        recordHistorySnapshot(
+                          app,
+                          bank.experiences,
+                          appliedFixIds,
+                        );
+                        setApplyingFixId(matchingFix.id);
+                        void refreshSidebarActivity();
+                        try {
+                          const r =
+                            await useCases.scoreResume.applyOneClickFix(
+                              app.id,
+                              matchingFix,
+                            );
+                          if (r.ok) {
+                            setApp(r.value.application);
+                            setFixes(r.value.analysis.fixes);
+                            setAppliedFixIds((prev) => [
+                              ...new Set([...prev, matchingFix.id]),
+                            ]);
+                            addToast(
+                              `Applied fix: ${matchingFix.title}`,
+                              'success',
+                            );
+                            await reloadWorkspace();
+                          }
+                        } finally {
+                          setApplyingFixId(null);
+                          void refreshSidebarActivity();
+                        }
+                      }}
                     />
                     <TakeawayCard
                       takeaway={appealDetails.firstImpressionTakeaway}
@@ -2870,7 +2908,7 @@ export function StudioView({
                                 {fix.title}
                               </span>
                               <Badge tone="accent">
-                                +{fix.impactPoints} pts
+                                +{fix.impactPoints}
                               </Badge>
                             </div>
                             <p className="text-xs text-ink-muted mt-0.5">
@@ -2969,107 +3007,124 @@ export function StudioView({
                   </PanelSection>
                 )}
 
-                {/* PDF Round-Trip, Editable Export Filename & Snapshot Strip */}
-                <PanelSection className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs text-ink-muted">
-                      <span className="font-semibold text-ink">
-                        PDF check:{' '}
-                      </span>
-                      <span>
-                        ~{formatCount(app.latestScores.estimatedPages, 'page')}{' '}
-                        · selectable text layer · single-column order
-                      </span>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={isVerifyingPdf}
-                      onClick={() => void handleVerifyPdfRoundTrip()}
-                    >
-                      {isVerifyingPdf ? 'Verifying…' : 'Verify PDF'}
-                    </Button>
-                  </div>
-
-                  {app.latestScores.roundTrip && (
-                    <div className="p-3 rounded-md bg-surface-sunken border border-hairline text-xs space-y-1">
-                      <div className="font-semibold text-success-700">
-                        ✓ PDF round-trip verified (
-                        {app.latestScores.roundTrip.extractedCharacterCount}{' '}
-                        chars extracted)
+                {/* Unified Review Export Card */}
+                <PanelSection className="space-y-4">
+                  <div className="p-4 rounded-xl bg-surface-sunken/70 border border-hairline space-y-4">
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div className="flex-1 min-w-[220px]">
+                        <label
+                          htmlFor="studio-export-filename"
+                          className="block text-xs font-medium text-ink-muted mb-1"
+                        >
+                          Export filename
+                        </label>
+                        <Input
+                          id="studio-export-filename"
+                          value={customExportName}
+                          onChange={(e) => setCustomExportName(e.target.value)}
+                          className="h-9 text-xs font-mono"
+                        />
                       </div>
+
+                      <SplitButton
+                        primaryLabel={
+                          activeDoc === 'coverLetter'
+                            ? 'Export Cover Letter PDF'
+                            : 'Export Resume PDF'
+                        }
+                        primaryIcon={<Download className="w-4 h-4" />}
+                        onPrimaryClick={() =>
+                          void handleExport('pdf', activeDoc)
+                        }
+                        items={[
+                          {
+                            id: 'docx',
+                            label: 'Word document (.docx)',
+                            tooltip:
+                              'Editable Word file. Layout can differ slightly from the PDF.',
+                            onSelect: () =>
+                              void handleExport('docx', activeDoc),
+                          },
+                          {
+                            id: 'md',
+                            label: 'Markdown (.md)',
+                            onSelect: () =>
+                              void handleExport('markdown', activeDoc),
+                          },
+                          {
+                            id: 'txt',
+                            label: 'Plain text (.txt)',
+                            onSelect: () =>
+                              void handleExport('text', activeDoc),
+                          },
+                        ]}
+                      />
+                    </div>
+
+                    {/* PDF check status row with Re-check */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-hairline text-xs">
                       <div className="text-ink-muted">
-                        Detected headings:{' '}
-                        {app.latestScores.roundTrip.headingsDetected.join(', ')}
+                        <span className="font-semibold text-ink">
+                          PDF check:{' '}
+                        </span>
+                        <span>
+                          ~
+                          {formatCount(
+                            previewArtifact?.pageCount ??
+                              (activeDoc === 'coverLetter'
+                                ? 1
+                                : app.latestScores.estimatedPages),
+                            'page',
+                          )}
+                          {previewArtifact?.bytes.byteLength
+                            ? ` · ${Math.max(1, Math.round(previewArtifact.bytes.byteLength / 1024))} KB`
+                            : ''}{' '}
+                          · selectable text layer · single-column order
+                        </span>
                       </div>
+                      <button
+                        type="button"
+                        disabled={isVerifyingPdf}
+                        onClick={() => void handleVerifyPdfRoundTrip()}
+                        className="text-xs font-semibold text-accent hover:underline cursor-pointer disabled:opacity-50"
+                      >
+                        {isVerifyingPdf ? 'Checking…' : 'Re-check'}
+                      </button>
                     </div>
-                  )}
 
-                  {/* Editable export filename (Section 6.9) */}
-                  <div className="pt-1">
-                    <label
-                      htmlFor="studio-export-filename"
-                      className="block text-xs font-medium text-ink-muted mb-1"
-                    >
-                      Export filename
-                    </label>
-                    <Input
-                      id="studio-export-filename"
-                      value={customExportName}
-                      onChange={(e) => setCustomExportName(e.target.value)}
-                      className="h-8 text-xs font-mono"
-                    />
-                  </div>
-
-                  {/* Editable Google Drive / Google Docs WYSIWYG Export */}
-                  <div className="p-3 rounded-lg bg-surface-sunken border border-hairline space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-semibold text-ink">
-                          Editable Google Docs / Drive (WYSIWYG)
+                    {app.latestScores.roundTrip && (
+                      <div className="p-2.5 rounded-md bg-surface border border-hairline text-xs space-y-0.5">
+                        <div className="font-semibold text-success-700">
+                          ✓ PDF round-trip verified (
+                          {app.latestScores.roundTrip.extractedCharacterCount}{' '}
+                          chars extracted)
                         </div>
-                        <p className="text-[11px] text-ink-muted">
-                          Keep the exact single-column layout, fonts, section borders, and right-aligned dates while editing in Google Docs.
-                        </p>
+                        <div className="text-ink-muted">
+                          Detected headings:{' '}
+                          {app.latestScores.roundTrip.headingsDetected.join(
+                            ', ',
+                          )}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => void handleExport('docx', activeDoc)}
-                        >
-                          <FileText className="w-3.5 h-3.5 text-accent" />
-                          <span>Google Docs (.docx)</span>
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() =>
-                            void handleCopyForGoogleDocs(activeDoc)
-                          }
-                        >
-                          <Copy className="w-3.5 h-3.5 text-accent" />
-                          <span>Copy for Google Docs</span>
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+                    )}
 
-                  <div className="flex items-center gap-2 pt-1">
-                    <Input
-                      value={versionLabelInput}
-                      onChange={(e) => setVersionLabelInput(e.target.value)}
-                      placeholder="Snapshot label (optional)…"
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void handleSaveSnapshot()}
-                    >
-                      <BookmarkCheck className="w-3.5 h-3.5" />
-                      <span>Save snapshot</span>
-                    </Button>
+                    {/* Save snapshot secondary text action */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-hairline">
+                      <Input
+                        value={versionLabelInput}
+                        onChange={(e) => setVersionLabelInput(e.target.value)}
+                        placeholder="Snapshot label (optional)…"
+                        className="h-8 text-xs max-w-xs"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleSaveSnapshot()}
+                      >
+                        <BookmarkCheck className="w-3.5 h-3.5" />
+                        <span>Save snapshot</span>
+                      </Button>
+                    </div>
                   </div>
                 </PanelSection>
 
@@ -3092,70 +3147,23 @@ export function StudioView({
                     </span>
                   </Button>
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Tooltip content="This preview is the exported file.">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-sunken border border-hairline text-xs text-ink-muted tabular-nums cursor-help">
-                        <span>
-                          PDF ·{' '}
-                          {formatCount(
-                            previewArtifact?.pageCount ??
-                              (activeDoc === 'coverLetter'
-                                ? 1
-                                : app.latestScores.estimatedPages),
-                            'page',
-                          )}
-                          {previewArtifact?.bytes.byteLength
-                            ? ` · ${Math.max(1, Math.round(previewArtifact.bytes.byteLength / 1024))} KB`
-                            : ''}
-                        </span>
+                  <Tooltip content="This preview is the exported file.">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-sunken border border-hairline text-xs text-ink-muted tabular-nums cursor-help">
+                      <span>
+                        PDF ·{' '}
+                        {formatCount(
+                          previewArtifact?.pageCount ??
+                            (activeDoc === 'coverLetter'
+                              ? 1
+                              : app.latestScores.estimatedPages),
+                          'page',
+                        )}
+                        {previewArtifact?.bytes.byteLength
+                          ? ` · ${Math.max(1, Math.round(previewArtifact.bytes.byteLength / 1024))} KB`
+                          : ''}
                       </span>
-                    </Tooltip>
-
-                    <SplitButton
-                      primaryLabel={
-                        activeDoc === 'coverLetter'
-                          ? 'Export Cover Letter PDF'
-                          : 'Export Resume PDF'
-                      }
-                      primaryIcon={<Download className="w-4 h-4" />}
-                      onPrimaryClick={() => void handleExport('pdf', activeDoc)}
-                      items={[
-                        {
-                          id: 'pdf-resume',
-                          label: 'Export Resume PDF (.pdf)',
-                          onSelect: () => void handleExport('pdf', 'resume'),
-                        },
-                        {
-                          id: 'pdf-letter',
-                          label: 'Export Cover Letter PDF (.pdf)',
-                          onSelect: () =>
-                            void handleExport('pdf', 'coverLetter'),
-                        },
-                        {
-                          id: 'docx',
-                          label: 'Export Google Docs / Word (.docx)',
-                          onSelect: () => void handleExport('docx', activeDoc),
-                        },
-                        {
-                          id: 'gdocs-copy',
-                          label: 'Copy for Google Docs (WYSIWYG paste)',
-                          onSelect: () =>
-                            void handleCopyForGoogleDocs(activeDoc),
-                        },
-                        {
-                          id: 'md',
-                          label: 'Export Markdown (.md)',
-                          onSelect: () =>
-                            void handleExport('markdown', activeDoc),
-                        },
-                        {
-                          id: 'txt',
-                          label: 'Export plain text (.txt)',
-                          onSelect: () => void handleExport('text', activeDoc),
-                        },
-                      ]}
-                    />
-                  </div>
+                    </span>
+                  </Tooltip>
                 </StickyFooterBar>
               </div>
             )}
@@ -3206,6 +3214,18 @@ export function StudioView({
           onSubmit={handleIHaveThisSubmit}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmResetOpen}
+        onOpenChange={setConfirmResetOpen}
+        title="Reset resume to default draft?"
+        description="This replaces your current resume edits with the default draft assembled from your Experience Bank. You can still undo immediately afterward."
+        confirmLabel="Reset to default"
+        onConfirm={() => {
+          setConfirmResetOpen(false);
+          void handleResetToDefault();
+        }}
+      />
     </div>
   );
 }

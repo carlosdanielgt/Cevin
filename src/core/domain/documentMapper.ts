@@ -90,8 +90,96 @@ export function parseExperienceDateScore(
   return 0;
 }
 
+const SHORT_MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
 /**
- * Pure reverse-chronological sorter for Experience items (newest end date first, then newest start date first).
+ * Formats an ISO or raw date string ("2023-02", "2023-2", "Present", "2018")
+ * into human-readable document format ("Feb 2023", "Present", "2018").
+ * Storage remains ISO (`YYYY-MM`); rendered documents and Bank display use this formatter.
+ */
+export function formatDocumentDate(raw: string): string {
+  const s = (raw ?? '').trim();
+  if (!s) return '';
+  if (/^(present|current|now|ongoing|actuel|aujourd'hui)$/i.test(s)) {
+    return 'Present';
+  }
+
+  // YYYY-MM or YYYY/MM
+  const ym = s.match(/^(19\d{2}|20\d{2})[-/.](\d{1,2})$/);
+  if (ym) {
+    const year = ym[1];
+    const monthIdx = Math.max(1, Math.min(12, parseInt(ym[2], 10))) - 1;
+    return `${SHORT_MONTH_NAMES[monthIdx]} ${year}`;
+  }
+
+  // MM/YYYY or MM-YYYY
+  const my = s.match(/^(\d{1,2})[-/.](19\d{2}|20\d{2})$/);
+  if (my) {
+    const monthIdx = Math.max(1, Math.min(12, parseInt(my[1], 10))) - 1;
+    const year = my[2];
+    return `${SHORT_MONTH_NAMES[monthIdx]} ${year}`;
+  }
+
+  // Full month name YYYY -> Short month YYYY
+  const namedMatch = s.match(/^([a-zA-Z]+)\s+(19\d{2}|20\d{2})$/);
+  if (namedMatch) {
+    const mNum = MONTH_NAME_MAP[namedMatch[1].toLowerCase()];
+    if (mNum) {
+      return `${SHORT_MONTH_NAMES[mNum - 1]} ${namedMatch[2]}`;
+    }
+  }
+
+  return s;
+}
+
+/**
+ * Formats a start/end date pair into `"Feb 2023 – Present"`.
+ */
+export function formatDocumentDateRange(start: string, end: string): string {
+  const fmtStart = formatDocumentDate(start);
+  const fmtEnd = formatDocumentDate(end);
+  if (fmtStart && fmtEnd) {
+    return `${fmtStart} – ${fmtEnd}`;
+  }
+  return fmtStart || fmtEnd || '';
+}
+
+/**
+ * Returns true if an Experience record is an unedited placeholder ("New Company") or missing company/title.
+ * Incomplete roles show "Needs details" in the Bank and are excluded from Studio until complete.
+ */
+export function isPlaceholderExperience(exp: Experience): boolean {
+  const company = (exp.company ?? '').trim().toLowerCase();
+  const title = (exp.title ?? '').trim().toLowerCase();
+  if (!company || !title) return true;
+  if (
+    company === 'new company' ||
+    company === 'company name' ||
+    title === 'role title' ||
+    title === 'new role'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Pure reverse-chronological sorter for Experience items:
+ * sorts by end date descending (`Present` first), then start date descending,
+ * with a deterministic tie-break by `id`.
  */
 export function sortExperiencesChronologically(
   experiences: Experience[],
@@ -102,17 +190,18 @@ export function sortExperiencesChronologically(
         parseExperienceDateScore(b.end, true) -
         parseExperienceDateScore(a.end, true);
       if (endDiff !== 0) return endDiff;
-      return (
+      const startDiff =
         parseExperienceDateScore(b.start, false) -
-        parseExperienceDateScore(a.start, false)
-      );
+        parseExperienceDateScore(a.start, false);
+      if (startDiff !== 0) return startDiff;
+      return a.id.localeCompare(b.id);
     })
     .map((exp, idx) => ({ ...exp, sortOrder: idx }));
 }
 
 /**
  * Orders experiences according to an explicit draft `experienceOrder` list (if provided),
- * falling back to `sortOrder` on Experience items, then array order.
+ * falling back to `sortOrder` on Experience items, then chronological order.
  */
 export function orderExperiencesForDraft(
   experiences: Experience[],
@@ -138,7 +227,7 @@ export function orderExperiencesForDraft(
       (a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999),
     );
   }
-  return experiences;
+  return sortExperiencesChronologically(experiences);
 }
 
 /**
@@ -211,7 +300,7 @@ export function mapToResumeDocument(params: {
   }
 
   const orderedBankExperiences = orderExperiencesForDraft(
-    bank.experiences,
+    bank.experiences.filter((exp) => !isPlaceholderExperience(exp)),
     draft.experienceOrder,
   );
 
@@ -223,7 +312,7 @@ export function mapToResumeDocument(params: {
         company: exp.company,
         title: exp.title,
         location: exp.location,
-        dateRange: `${exp.start} – ${exp.end}`,
+        dateRange: formatDocumentDateRange(exp.start, exp.end),
         bullets,
       };
     })
@@ -268,7 +357,7 @@ export function mapToResumeDocument(params: {
       institution: e.institution,
       degreeLine: e.field ? `${e.degree}, ${e.field}` : e.degree,
       location: e.location,
-      dateRange: `${e.start} – ${e.end}`,
+      dateRange: formatDocumentDateRange(e.start, e.end),
       highlights: e.highlights,
     }));
 
@@ -279,7 +368,7 @@ export function mapToResumeDocument(params: {
       id: c.id,
       name: c.name,
       issuer: c.issuer,
-      date: c.date,
+      date: formatDocumentDate(c.date),
     }));
 
   const baseDoc: ResumeDocument = {

@@ -20,11 +20,8 @@ import {
   createMlxCareerIntelligenceAdapter,
   createMlxFastApiProvider,
   createModelProfileCatalog,
-  createOllamaProvider,
   mlxFastApiProviderDescriptor,
   mockProviderDescriptor,
-  ollamaLlama31ProviderDescriptor,
-  ollamaProviderDescriptor,
 } from '../adapters/driven/llm';
 import {
   DEFAULT_APP_SETTINGS,
@@ -33,6 +30,7 @@ import {
   createInMemoryResultCache,
   migrateV1ToV2Records,
   migrateV3ToV4Records,
+  migrateV5ToV6Records,
 } from '../adapters/driven/storage';
 import {
   getCompanyAvatarHueIndex,
@@ -122,9 +120,13 @@ import {
   normalizeKeyword,
   orderExperiencesForDraft,
   outlineCoverLetter,
+  TextAlignSchema,
+  extractFilesFromDocxBlob,
+  extractTextFromDocxBlob,
+  formatDocumentDate,
+  formatDocumentDateRange,
   rankBankItemsForJob,
   renderDocumentToDocxBytes,
-  renderDocumentToGoogleDocsHtml,
   renderDocumentToPdfArtifact,
   resolveMetroArea,
   sanitizeExportFilenameInput,
@@ -153,14 +155,14 @@ test('Keyword normalizer & canonical alias table resolve technical synonyms', ()
   assert.equal(normalizeKeyword('JS'), 'javascript');
   assert.equal(normalizeKeyword('k8s'), 'kubernetes');
   assert.equal(normalizeKeyword('Postgres'), 'postgresql');
-  assert.equal(normalizeKeyword('GitHub Actions'), 'ci/cd');
-  assert.equal(normalizeKeyword('OpenTelemetry'), 'observability');
+  assert.equal(normalizeKeyword('Golang'), 'golang');
+  assert.equal(normalizeKeyword('Go'), 'golang');
 
   const corpus =
     'Built multi-region k8s ingestion and tuned Postgres connection pools with GitHub Actions.';
   assert.equal(evaluateKeywordPresence('Kubernetes', corpus), 'covered');
   assert.equal(evaluateKeywordPresence('PostgreSQL', corpus), 'covered');
-  assert.equal(evaluateKeywordPresence('CI/CD', corpus), 'covered');
+  assert.equal(evaluateKeywordPresence('CI/CD', corpus), 'partial');
   assert.equal(evaluateKeywordPresence('Rust / eBPF', corpus), 'gap');
 });
 
@@ -569,7 +571,7 @@ async function runProviderContractTests(
   );
 }
 
-test('LLM Provider Contract Suite passes for Mock provider and Ollama provider (stubbed fetch)', async () => {
+test('LLM Provider Contract Suite passes for Mock provider and MLX FastAPI provider (stubbed fetch)', async () => {
   const mockInstance = mockProviderDescriptor.create(
     mockProviderDescriptor.defaultConfig,
   );
@@ -580,62 +582,61 @@ test('LLM Provider Contract Suite passes for Mock provider and Ollama provider (
       throw new Error('Request aborted');
     }
     const url = String(input);
-    if (url.endsWith('/api/tags')) {
+    if (url.endsWith('/v1/models') || url.endsWith('/health')) {
       return new Response(
         JSON.stringify({
-          models: [
+          status: 'ok',
+          model: 'cevin-3b-4bit-fused',
+          data: [{ id: 'cevin-3b-4bit-fused', name: 'cevin-3b-4bit-fused' }],
+        }),
+        { status: 200 },
+      );
+    }
+    if (
+      url.endsWith('/v1/chat/completions') ||
+      url.endsWith('/v1/generate') ||
+      url.endsWith('/v1/cevin/infer')
+    ) {
+      return new Response(
+        JSON.stringify({
+          text: JSON.stringify({
+            bullet:
+              'Engineered Kubernetes pipelines in Go, cutting egress spend by 38%.',
+          }),
+          data: {
+            bullet:
+              'Engineered Kubernetes pipelines in Go, cutting egress spend by 38%.',
+          },
+          result: {
+            bullet:
+              'Engineered Kubernetes pipelines in Go, cutting egress spend by 38%.',
+          },
+          choices: [
             {
-              name: 'llama3.1:8b',
-              details: { family: 'llama', parameter_size: '8B' },
+              message: {
+                content: JSON.stringify({
+                  bullet:
+                    'Engineered Kubernetes pipelines in Go, cutting egress spend by 38%.',
+                }),
+              },
             },
           ],
-        }),
-        { status: 200 },
-      );
-    }
-    if (url.endsWith('/api/chat')) {
-      const body = JSON.parse(String(init?.body ?? '{}'));
-      if (body.stream) {
-        const encoder = new TextEncoder();
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  message: { content: '{"bullet":"Stubbed token"}' },
-                }) + '\n',
-              ),
-            );
-            controller.close();
-          },
-        });
-        return new Response(stream, { status: 200 });
-      }
-      return new Response(
-        JSON.stringify({
-          message: {
-            content: JSON.stringify({
-              bullet:
-                'Engineered Kubernetes pipelines in Go, cutting egress spend by 38%.',
-            }),
+          usage: {
+            prompt_tokens: 180,
+            completion_tokens: 24,
           },
         }),
         { status: 200 },
       );
-    }
-    if (url.endsWith('/api/embed')) {
-      return new Response(JSON.stringify({ embeddings: [[0.1, 0.2, 0.3]] }), {
-        status: 200,
-      });
     }
     return new Response('Not found', { status: 404 });
   };
 
-  const ollamaInstance = createOllamaProvider(
-    ollamaProviderDescriptor.defaultConfig,
+  const mlxInstance = createMlxFastApiProvider(
+    mlxFastApiProviderDescriptor.defaultConfig,
     stubbedFetch,
   );
-  await runProviderContractTests(ollamaProviderDescriptor, ollamaInstance);
+  await runProviderContractTests(mlxFastApiProviderDescriptor, mlxInstance);
 });
 
 test('Importer & Exporter Contract Suite: PDF (with PositionedText), Markdown, and Plain Text for both Resume and Cover Letter', async () => {
@@ -754,9 +755,9 @@ test('Importer & Exporter Contract Suite: PDF (with PositionedText), Markdown, a
 test('Full End-to-End Flow: Quick Check -> Save as Prospect -> Promote Prospect (Start Tailoring) -> Review -> Export First_Last_Company_Resume.pdf', async () => {
   const container = buildCevinContainer({ inMemoryOnly: true, seedDemo: true });
 
-  // 1. Default provider is Cevin 3B Fine-Tuned (MLX FastAPI), and switching to mock enters Demo mode
+  // 1. Default provider is Cevin model (mlx-fastapi), and switching to mock enters Demo mode
   const initialSettings = await container.manageSettings.getSettings();
-  assert.equal(initialSettings.activeProviderId, 'cevin-3b-mlx');
+  assert.equal(initialSettings.activeProviderId, 'mlx-fastapi');
   await container.manageSettings.saveSettings({ activeProviderId: 'mock' });
 
   const demoStatus = await container.testLlmConnection.getSidebarStatus();
@@ -863,9 +864,9 @@ test('UI copy scanner enforces zero native <select>, zero banned implementation 
   }
 
   const tsxFiles = walkFiles(webDir, '.tsx');
-  // Section 0 & Section 8 banned implementation words (including enum, lexicon, tri-state, schema, snippet)
+  // Section 0 & Section 8 banned implementation words + chatty marketing words + release-note phrases
   const bannedWordsRegex =
-    /\b(catalog|descriptor|schema|deterministic|port|ID|ResumeVersion|atomic|enum|lexicon|tri-state|snippet)\b/;
+    /\b(catalog|descriptor|schema|deterministic|port|ID|ResumeVersion|atomic|enum|lexicon|tri-state|snippet|Kevin|supercharge|game-changer|Round 2|Round 3|Round 4|Phase 0)\b/;
   // Section 6.1 hardcoded plural patterns on dynamic counts
   const hardcodedPluralRegex =
     /\}\s+(achievements|gaps|roles|skills|requirements|versions)\b/;
@@ -936,10 +937,10 @@ test('UI copy scanner enforces zero native <select>, zero banned implementation 
 });
 
 // ============================================================================
-// 3. LLM HARNESS (LLAMA 3.1 8B ON M1 16GB) UNIT & GATEWAY TESTS
+// 3. LLM HARNESS (CEVIN 3B MLX ON APPLE SILICON) UNIT & GATEWAY TESTS
 // ============================================================================
 
-test('LLM Output Sanitizer strips Llama preambles, quotes, bullet glyphs, and trailing commentary', () => {
+test('LLM Output Sanitizer strips conversational preambles, quotes, bullet glyphs, and trailing commentary', () => {
   const messyOutput = `Here is the rewritten bullet:
 "- Built multi-region Kubernetes metric ingestion pipeline in Go and Kafka, cutting cross-AZ egress spend by 38% across 1.4M events/sec."
 Note: Let me know if you would like any adjustments!`;
@@ -1070,7 +1071,9 @@ Equal Opportunity Employer: Kestrel Pay is proud to be an equal opportunity work
   const brief = extractDeterministicJobBrief(rawJd);
   assert.equal(brief.company, 'Kestrel Pay');
   assert.equal(brief.seniority, 'Staff');
-  assert.ok(brief.topSkills.includes('Golang'));
+  assert.ok(
+    brief.topSkills.includes('Go') || brief.topSkills.includes('Golang'),
+  );
   assert.ok(brief.topSkills.includes('Kubernetes'));
   assert.ok(!brief.briefText.includes('Equal Opportunity Employer'));
 
@@ -1099,31 +1102,29 @@ Equal Opportunity Employer: Kestrel Pay is proud to be an equal opportunity work
   assert.ok(estimator.getCharsPerToken() < 3.8);
 });
 
-test('ModelProfileCatalog resolves llama3.1:8b with constant 4096 numCtx and generic_small fallback', () => {
+test('ModelProfileCatalog resolves cevin-3b-4bit-fused with 1024 maxSeqLength and generic fallback', () => {
   const catalog = createModelProfileCatalog();
-  const llamaProfile = catalog.resolveForModel('llama3.1:8b');
-  assert.equal(llamaProfile.id, 'llama3_1_8b');
-  assert.equal(llamaProfile.numCtx, 4096);
-  assert.equal(llamaProfile.parallelRecommended, 2);
-  assert.equal(llamaProfile.fewShotStyle, 'chat-turns');
+  const cevinProfile = catalog.resolveForModel('cevin-3b-4bit-fused');
+  assert.equal(cevinProfile.id, 'cevin_3b_mlx');
+  assert.equal(cevinProfile.maxSeqLength, 1024);
+  assert.equal(cevinProfile.parallelRecommended, 1);
+  assert.equal(cevinProfile.fewShotStyle, 'inline');
 
   const otherProfile = catalog.resolveForModel('mistral:7b');
-  assert.equal(otherProfile.id, 'generic_small');
-  assert.equal(otherProfile.numCtx, 4096);
+  assert.equal(otherProfile.id, 'generic');
+  assert.equal(otherProfile.maxSeqLength, 1024);
 });
 
 test('LlmGateway enforces caching, 1-shot targeted repair on validator failure, baseline fallback, and extractJobFact snippet task', async () => {
   const profileCatalog = createModelProfileCatalog();
-  const profile = profileCatalog.resolveForModel('llama3.1:8b');
+  const profile = profileCatalog.resolveForModel('cevin-3b-4bit-fused');
   const bank = createDemoBankSnapshot();
   const sampleExp = bank.experiences[0];
   const sampleAch = bank.achievements[0];
 
   const repairMockProvider = mockProviderDescriptor.create({
-    model: 'llama3.1:8b',
-    embeddingModel: 'nomic-embed-text',
+    model: 'cevin-3b-4bit-fused',
     simulatedLatencyMs: 5,
-    simulatePartlyOnCpu: false,
     failValidationFirstAttempt: true,
     alwaysFailValidation: false,
   });
@@ -1135,9 +1136,9 @@ test('LlmGateway enforces caching, 1-shot targeted repair on validator failure, 
     getProviderAndProfile: async () => ({
       provider: repairMockProvider,
       providerId: 'mock',
-      modelName: 'llama3.1:8b',
+      modelName: 'cevin-3b-4bit-fused',
       profile,
-      parallelSlots: 2,
+      parallelSlots: 1,
     }),
     resultCache: cache1,
     performanceLog: log1,
@@ -1310,9 +1311,10 @@ test('Coverage redesign: Needs attention first, Covered collapsed group, Bank ev
   assert.ok(k8sEvidence.some((e) => e.kind === 'achievement'));
 
   // Dismissing a gap removes it from gapCount and increments dismissedCount
-  const gapReqId = summary.needsAttention.mustHave.find(
-    (i) => i.status === 'gap',
-  )?.requirement.id;
+  const gapReqId = [
+    ...summary.needsAttention.mustHave,
+    ...summary.needsAttention.niceToHave,
+  ].find((i) => i.status === 'gap')?.requirement.id;
   assert.ok(gapReqId);
   const afterDismiss = buildGroupedCoverageSummary({
     parsedJob: app.parsedJob,
@@ -2297,21 +2299,21 @@ test('Takeaway metric context, embedded proof article insertion, and Quick check
   assert.equal(formatQuickEstimateBand(100), '90–95');
 });
 
-test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass through LlmGateway, sanitizer, 6-validator repair loop, and JSON importer', async () => {
+test('Tier 2 Golden Record-Replay: Recorded Cevin 3B completions pass through LlmGateway, sanitizer, 6-validator repair loop, and JSON importer', async () => {
   const fixturePath = path.resolve(
     process.cwd(),
-    'src/tests/fixtures/llama3_1_real_outputs.json',
+    'src/tests/fixtures/cevin_3b_real_outputs.json',
   );
   const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
   const profileCatalog = createModelProfileCatalog();
-  const profile = profileCatalog.resolveForModel('llama3.1:8b');
+  const profile = profileCatalog.resolveForModel('cevin-3b-4bit-fused');
   let seq = 1;
   const idGen = { nextId: (p = 'gw') => `${p}-${seq++}` };
   const clock = { nowIso: () => new Date().toISOString() };
 
   const makeReplayProvider = (getCompletion: () => string): LlmProvider => ({
     async listModels() {
-      return [{ id: 'llama3.1:8b', name: 'llama3.1:8b' }];
+      return [{ id: 'cevin-3b-4bit-fused', name: 'cevin-3b-4bit-fused' }];
     },
     async *chat() {
       yield getCompletion();
@@ -2337,8 +2339,8 @@ test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass throug
   const gw1 = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider: replayProvider1,
-      providerId: 'ollama',
-      modelName: 'llama3.1:8b',
+      providerId: 'mlx-fastapi',
+      modelName: 'cevin-3b-4bit-fused',
       profile,
       parallelSlots: 1,
     }),
@@ -2360,7 +2362,7 @@ test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass throug
   );
   assert.equal(res1.keptOriginalWording, false);
 
-  // Case 2: Llama 3.1 8B drops metric on Attempt 1 -> 6-Validator catches missing metric -> Attempt 2 repairs and restores metric
+  // Case 2: Model drops metric on Attempt 1 -> 6-Validator catches missing metric -> Attempt 2 repairs and restores metric
   let attemptCounter = 0;
   const replayProvider2 = makeReplayProvider(() => {
     attemptCounter += 1;
@@ -2374,8 +2376,8 @@ test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass throug
   const gw2 = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider: replayProvider2,
-      providerId: 'ollama',
-      modelName: 'llama3.1:8b',
+      providerId: 'mlx-fastapi',
+      modelName: 'cevin-3b-4bit-fused',
       profile,
       parallelSlots: 1,
     }),
@@ -2409,8 +2411,8 @@ test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass throug
   const gw3 = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider: replayProvider3,
-      providerId: 'ollama',
-      modelName: 'llama3.1:8b',
+      providerId: 'mlx-fastapi',
+      modelName: 'cevin-3b-4bit-fused',
       profile,
       parallelSlots: 1,
     }),
@@ -2436,8 +2438,8 @@ test('Tier 2 Golden Record-Replay: Recorded Llama 3.1 8B completions pass throug
   const gw4 = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider: replayProvider4,
-      providerId: 'ollama',
-      modelName: 'llama3.1:8b',
+      providerId: 'mlx-fastapi',
+      modelName: 'cevin-3b-4bit-fused',
       profile,
       parallelSlots: 1,
     }),
@@ -3015,7 +3017,7 @@ test('Smart targeted skill selection against 60-skill Bank and project highlight
   );
 });
 
-test('Inline Name+Headline across all templates, Section Content Alignment (left/justify/right), Recruiter Appeal Headline Fix threshold, and Google Docs WYSIWYG export', async () => {
+test('Inline Name+Headline across all templates, Document Body Alignment (left/justify), Recruiter Appeal Headline Fix threshold, and Word (.docx) export with real styles and fontTable', async () => {
   const bank = createDemoBankSnapshot();
   const { applications } = createDemoApplications(bank);
   const app = applications[0];
@@ -3056,22 +3058,22 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
     );
   }
 
-  // 2. Verify Section Content Alignment (left, justify, right) in PDF layout, DOCX, and Google Docs HTML
+  // 2. Verify Document Body Alignment (left, justify; 'right' coerces to 'left') in PDF layout and Word (.docx)
+  assert.equal(TextAlignSchema.parse('left'), 'left');
+  assert.equal(TextAlignSchema.parse('justify'), 'justify');
+  assert.equal(
+    TextAlignSchema.parse('right'),
+    'left',
+    'TextAlignSchema must coerce right alignment to left',
+  );
+
   const baseDoc = mapApplicationToResumeDocument(
     { ...app, templateId: 'classic' },
     bank,
   );
-  const leftPdf = renderDocumentToPdfArtifact({
-    ...baseDoc,
-    meta: { ...baseDoc.meta, textAlign: 'left' },
-  });
   const justifyPdf = renderDocumentToPdfArtifact({
     ...baseDoc,
     meta: { ...baseDoc.meta, textAlign: 'justify' },
-  });
-  const rightPdf = renderDocumentToPdfArtifact({
-    ...baseDoc,
-    meta: { ...baseDoc.meta, textAlign: 'right' },
   });
 
   // Justified PDF should emit positive Tw operator in stream on multi-line summary/bullet lines
@@ -3079,19 +3081,6 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
   assert.ok(
     /\d+\.\d{3} Tw/.test(justifyStreamText),
     'Justified alignment must emit positive Tw word-spacing operator in PDF stream',
-  );
-
-  // Right-aligned PDF should shift body text runs further right than left-aligned PDF
-  const leftSummaryRun = leftPdf.positionedText.find((r) =>
-    r.text.includes('Staff Infrastructure'),
-  );
-  const rightSummaryRun = rightPdf.positionedText.find((r) =>
-    r.text.includes('Staff Infrastructure'),
-  );
-  assert.ok(leftSummaryRun && rightSummaryRun);
-  assert.ok(
-    rightSummaryRun.x >= leftSummaryRun.x,
-    'Right-aligned summary run must be positioned at or to the right of left-aligned summary run',
   );
 
   // 3. Verify Recruiter Appeal does NOT suggest 'fix-appeal-align-headline' when headline already matches targetRole
@@ -3137,7 +3126,8 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
     'fix-appeal-align-headline MUST appear when headline does not match target role',
   );
 
-  // 4. Verify Google Docs (.docx and WYSIWYG HTML) export and round-trip extraction
+  // 4. Verify Word document (.docx) export, real Word styles, fontTable.xml, and round-trip extraction
+  assert.equal(docxDocumentExporter.label, 'Word document (.docx)');
   const justifiedDoc = {
     ...baseDoc,
     header: {
@@ -3154,10 +3144,25 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
   const docxBlob = await docxDocumentExporter.export(justifiedDoc, {
     templateId: 'classic',
   });
-  assert.ok(docxDocumentExporter.extractTextFromBlob);
-  const extractedDocxText = await docxDocumentExporter.extractTextFromBlob(
-    docxBlob,
+  const docxFiles = await extractFilesFromDocxBlob(docxBlob);
+  assert.ok(docxFiles['word/styles.xml'], 'DOCX must include word/styles.xml');
+  assert.ok(
+    docxFiles['word/styles.xml'].includes('w:styleId="Heading1"') &&
+      docxFiles['word/styles.xml'].includes('w:styleId="Heading2"') &&
+      docxFiles['word/styles.xml'].includes('w:styleId="ListBullet"') &&
+      docxFiles['word/styles.xml'].includes('w:styleId="Normal"'),
+    'word/styles.xml must define real Word styles Normal, Heading1, Heading2, and ListBullet',
   );
+  assert.ok(
+    docxFiles['word/fontTable.xml'],
+    'DOCX must include word/fontTable.xml with fallback font mappings',
+  );
+  assert.ok(
+    docxFiles['word/document.xml'].includes('w:val="both"'),
+    'Justified DOCX must emit w:jc w:val="both" on body paragraphs',
+  );
+
+  const extractedDocxText = await extractTextFromDocxBlob(docxBlob);
   assert.ok(
     extractedDocxText.includes(baseDoc.header.name),
     'Round-trip .docx text must include candidate full name',
@@ -3174,26 +3179,6 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
     extractedDocxText.includes('linkedin.com/in/danieldiaz'),
     'Round-trip .docx text must include cleaned LinkedIn URL, not just a bare label',
   );
-
-  const gdocsHtml = renderDocumentToGoogleDocsHtml(justifiedDoc);
-  assert.ok(
-    gdocsHtml.includes('text-align:justify'),
-    'Google Docs WYSIWYG HTML must include text-align:justify when textAlign is justify',
-  );
-  assert.ok(
-    gdocsHtml.includes(baseDoc.header.name),
-    'Google Docs WYSIWYG HTML must include candidate name',
-  );
-  assert.ok(
-    gdocsHtml.includes('href="https://github.com/danieldiaz"') &&
-      gdocsHtml.includes('github.com/danieldiaz'),
-    'Google Docs WYSIWYG HTML must include clickable GitHub link with display URL',
-  );
-  assert.ok(
-    gdocsHtml.includes('href="https://linkedin.com/in/danieldiaz"') &&
-      gdocsHtml.includes('linkedin.com/in/danieldiaz'),
-    'Google Docs WYSIWYG HTML must include clickable LinkedIn link with display URL',
-  );
 });
 
 // ============================================================================
@@ -3203,8 +3188,8 @@ test('Inline Name+Headline across all templates, Section Content Alignment (left
 test('Domain Pre-Processors strip JD boilerplate, split statements, scan deterministic skills, and slice candidate entities cleanly', () => {
   assert.equal(
     DEFAULT_APP_SETTINGS.activeProviderId,
-    'cevin-3b-mlx',
-    'cevin-3b-mlx must be the default inference provider',
+    'mlx-fastapi',
+    'mlx-fastapi must be the default inference provider',
   );
 
   // 1. JD Boilerplate Stripper & Excerpt Capper (~250 words)
@@ -3608,7 +3593,7 @@ test('cevin3bMlxProfile (disableRawPromptTrimming: true) bypasses LlmGateway raw
   const catalog = createModelProfileCatalog();
   const resolved = catalog.resolveForModel('cevin-3b-4bit-fused');
   assert.equal(resolved.id, 'cevin_3b_mlx');
-  assert.equal(resolved.numCtx, 1024);
+  assert.equal(resolved.maxSeqLength, 1024);
   assert.equal(resolved.disableRawPromptTrimming, true);
   assert.equal(cevin3bMlxProfile.disableRawPromptTrimming, true);
 
@@ -3635,7 +3620,7 @@ test('cevin3bMlxProfile (disableRawPromptTrimming: true) bypasses LlmGateway raw
   const gateway = createLlmGateway({
     getProviderAndProfile: async () => ({
       provider: fakeMlxProvider,
-      providerId: 'cevin-3b-mlx',
+      providerId: 'mlx-fastapi',
       modelName: 'cevin-3b-4bit-fused',
       profile: cevin3bMlxProfile,
       parallelSlots: 1,
@@ -3674,5 +3659,263 @@ test('cevin3bMlxProfile (disableRawPromptTrimming: true) bypasses LlmGateway raw
     lastMessageContent.includes(sentinelEnd),
     'When disableRawPromptTrimming is true on cevin3bMlxProfile, LlmGateway must not slice the end of the user prompt',
   );
+});
+
+test('Cleanup Round Verification: Dexie v5->v6 migration, Aliases vs Related partial coverage, Document Date formatting, and Repo-wide forbidden-term guard', () => {
+  // 1. Dexie v5->v6 migration (`migrateV5ToV6Records`)
+  const demoBank = createDemoBankSnapshot();
+  const { applications: demoApps, versions: demoVersions } =
+    createDemoApplications(demoBank);
+  const legacyPort = '114' + '34';
+  const legacyProvider = 'oll' + 'ama';
+  const legacyModel = 'llama' + '3.1:8b';
+  const migrated = migrateV5ToV6Records({
+    settings: {
+      activeProviderId: legacyProvider,
+      providerConfigs: {
+        [legacyProvider]: {
+          baseUrl: `http://localhost:${legacyPort}`,
+          model: legacyModel,
+        },
+      },
+      theme: 'light',
+      defaultTemplateId: 'classic',
+      defaultVoice: 'balanced',
+      pageSize: 'letter',
+    },
+    applications: [
+      {
+        ...demoApps[0],
+        workingDraft: {
+          ...demoApps[0].workingDraft,
+          textAlign: 'right' as unknown as 'left',
+        },
+        coverLetterDraft: demoApps[0].coverLetterDraft
+          ? {
+              ...demoApps[0].coverLetterDraft,
+              textAlign: 'right' as unknown as 'left',
+            }
+          : undefined,
+      },
+    ],
+    versions: [
+      {
+        ...demoVersions[0],
+        modelId: legacyModel,
+      },
+    ],
+    bank: {
+      ...demoBank,
+      skills: [
+        {
+          id: 'skill-ms',
+          name: 'Microservices',
+          category: 'Languages',
+          aliases: ['Service Mesh', 'gRPC'],
+        },
+        {
+          id: 'skill-arch',
+          name: 'Technical Architecture',
+          category: 'Languages',
+          aliases: ['Distributed Systems'],
+        },
+        {
+          id: 'skill-ts',
+          name: 'TypeScript',
+          category: 'Languages',
+          aliases: ['TS', 'JavaScript', 'Node.js'],
+        },
+      ],
+    },
+  });
+
+  assert.equal(migrated.settings.activeProviderId, 'mlx-fastapi');
+  const mlxCfg = migrated.settings.providerConfigs['mlx-fastapi'] as Record<
+    string,
+    unknown
+  >;
+  assert.equal(mlxCfg?.baseUrl, 'http://localhost:8000');
+  assert.equal(mlxCfg?.model, 'cevin-3b-4bit-fused');
+  assert.equal(migrated.applications[0].workingDraft.textAlign, 'left');
+  assert.equal(migrated.applications[0].coverLetterDraft?.textAlign, 'left');
+  assert.equal(migrated.versions[0].modelId, 'cevin-3b-4bit-fused');
+
+  const msSkill = migrated.bank.skills.find((s) => s.id === 'skill-ms');
+  const archSkill = migrated.bank.skills.find((s) => s.id === 'skill-arch');
+  const tsSkill = migrated.bank.skills.find((s) => s.id === 'skill-ts');
+  assert.equal(msSkill?.category, 'Practices');
+  assert.equal(archSkill?.category, 'Practices');
+  assert.deepEqual(tsSkill?.aliases, ['TS']);
+  assert.ok(tsSkill?.related?.includes('JavaScript'));
+  assert.ok(tsSkill?.related?.includes('Node.js'));
+
+  // 2. Aliases vs Related: JavaScript requirement is 'partial' (never 'covered') when candidate Bank only has TypeScript
+  const tsOnlyBank = {
+    ...demoBank,
+    experiences: [
+      {
+        id: 'exp-ts',
+        company: 'Acme Cloud',
+        title: 'Backend Engineer',
+        start: '2023-02',
+        end: 'Present',
+        current: true,
+        location: 'Remote',
+      },
+    ],
+    achievements: [
+      {
+        id: 'ach-ts',
+        experienceId: 'exp-ts',
+        action: 'Built distributed API gateway in TypeScript',
+        result: 'reducing p99 latency by 40%',
+        metric: '40%',
+        skillIds: ['skill-ts'],
+        tags: ['backend'],
+      },
+    ],
+    skills: [
+      {
+        id: 'skill-ts',
+        name: 'TypeScript',
+        category: 'Languages' as const,
+        aliases: ['TS'],
+        related: ['JavaScript', 'Node.js'],
+      },
+    ],
+  };
+
+  const jsEvidence = findBankEvidenceForTerm('JavaScript', tsOnlyBank);
+  assert.ok(
+    jsEvidence.some((e) => e.title === 'TypeScript'),
+    'JavaScript must surface TypeScript as related Bank evidence when Bank only has TypeScript',
+  );
+
+  const coverageSummary = buildGroupedCoverageSummary({
+    parsedJob: {
+      title: 'Backend Engineer',
+      company: 'Acme',
+      seniority: 'Senior',
+      summary: 'Backend Engineer',
+      requirements: [
+        {
+          id: 'req-ts',
+          text: 'TypeScript',
+          normalizedKey: 'typescript',
+          priority: 'must-have',
+          category: 'hard-skill',
+        },
+        {
+          id: 'req-js',
+          text: 'JavaScript',
+          normalizedKey: 'javascript',
+          priority: 'must-have',
+          category: 'hard-skill',
+        },
+        {
+          id: 'req-rust',
+          text: 'Rust',
+          normalizedKey: 'rust',
+          priority: 'must-have',
+          category: 'hard-skill',
+        },
+      ],
+      responsibilities: [],
+      keywords: [],
+    },
+    resumeText: 'Built distributed API gateway in TypeScript (TS).',
+    selectedSkillIds: ['skill-ts'],
+    bank: tsOnlyBank,
+  });
+
+  const tsItem = coverageSummary.covered.mustHave.find(
+    (i) => i.term === 'TypeScript',
+  );
+  const jsItem = coverageSummary.needsAttention.mustHave.find(
+    (i) => i.term === 'JavaScript',
+  );
+  const rustItem = coverageSummary.needsAttention.mustHave.find(
+    (i) => i.term === 'Rust',
+  );
+  assert.equal(tsItem?.status, 'covered');
+  assert.equal(
+    jsItem?.status,
+    'partial',
+    'JavaScript requirement must be partial (and never covered) when candidate only has TypeScript',
+  );
+  assert.equal(rustItem?.status, 'gap');
+
+  // 3. Document Date formatting ("Feb 2023 – Present")
+  assert.equal(formatDocumentDate('2023-02'), 'Feb 2023');
+  assert.equal(
+    formatDocumentDateRange('2023-02', 'Present'),
+    'Feb 2023 – Present',
+  );
+  assert.equal(
+    formatDocumentDateRange('2020-06', '2023-01'),
+    'Jun 2020 – Jan 2023',
+  );
+
+  // 4. Repo-wide guard against forbidden legacy tokens
+  const rootDir = process.cwd();
+  const forbiddenRegex = new RegExp(
+    [
+      'oll' + 'ama',
+      'OLL' + 'AMA_',
+      '114' + '34',
+      'llama' + '3\\.1',
+      'keep_' + 'alive',
+      'num_' + 'ctx',
+      '/api/' + 'tags',
+      '/api/' + 'ps',
+      '/api/' + 'embed',
+      'CV \\+ ' + 'Kevin',
+      'Google ' + 'Docs',
+    ].join('|'),
+    'i',
+  );
+
+  function collectRepoTextFiles(dir: string): string[] {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const e of entries) {
+      if (
+        e.name === 'node_modules' ||
+        e.name === 'dist' ||
+        e.name === '.git' ||
+        e.name === '.venv' ||
+        e.name === '.aistudio'
+      ) {
+        continue;
+      }
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        out.push(...collectRepoTextFiles(full));
+      } else if (/\.(ts|tsx|py|md|json|yml|yaml)$/.test(e.name)) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  const repoFiles = collectRepoTextFiles(rootDir);
+  for (const file of repoFiles) {
+    const rel = path.relative(rootDir, file).replace(/\\/g, '/');
+    // Allow CHANGELOG.md and the Dexie migration file itself
+    if (
+      rel === 'CHANGELOG.md' ||
+      rel === 'src/adapters/driven/storage/dexieDb.ts' ||
+      rel === 'package-lock.json'
+    ) {
+      continue;
+    }
+    const text = fs.readFileSync(file, 'utf8');
+    const match = forbiddenRegex.exec(text);
+    assert.equal(
+      match,
+      null,
+      `Repo-wide guard failed: forbidden legacy token "${match?.[0]}" found in ${rel}`,
+    );
+  }
 });
 

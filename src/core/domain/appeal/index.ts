@@ -67,11 +67,13 @@ export interface AppealSuggestedFix {
   title: string;
   impactPoints: number;
   description: string;
+  lens?: 'skim' | 'proof' | 'clarity' | 'voice';
   actionType:
     | 'promote-strongest-bullet'
     | 'trim-long-bullet'
     | 'shorten-summary'
-    | 'align-headline';
+    | 'align-headline'
+    | 'soften-ai-cliches';
   actionPayload?: string;
 }
 
@@ -1031,8 +1033,12 @@ export function computeRecruiterAppeal(
   };
 
   const appealFixes: AppealSuggestedFix[] = [];
-  if (skimHeadlinePts < 27 && targetRole) {
-    const currentHeadline = doc.header.headline.trim();
+  const currentHeadline = doc.header.headline.trim();
+  if (
+    skimHeadlinePts < 27 &&
+    targetRole &&
+    currentHeadline.toLowerCase() !== targetRole.trim().toLowerCase()
+  ) {
     appealFixes.push({
       id: 'fix-appeal-align-headline',
       title: `Align headline to "${targetRole}"`,
@@ -1040,25 +1046,28 @@ export function computeRecruiterAppeal(
       description: currentHeadline
         ? `Updates your resume header title from "${currentHeadline}" to "${targetRole}" for 3-second recruiter skims.`
         : `Sets your resume header title to "${targetRole}" for 3-second recruiter skims.`,
+      lens: 'skim',
       actionType: 'align-headline',
       actionPayload: targetRole,
     });
   }
-  if (proofLeadPts < 22 && rolesWithBullets > 0) {
+  if ((proofLeadPts < 22 || proofScore < 80) && rolesWithBullets > 0) {
     appealFixes.push({
       id: 'fix-appeal-promote-bullet',
       title: 'Lead each role with its highest-impact quantified bullet',
       impactPoints: 5,
       description: 'Recruiters read the first bullet of each role most closely.',
+      lens: 'proof',
       actionType: 'promote-strongest-bullet',
     });
   }
-  if (longBullets > 0) {
+  if (longBullets > 0 || clarityScore < 80) {
     appealFixes.push({
       id: 'fix-appeal-trim-bullet',
-      title: 'Trim bullets over 26 words to 2 crisp lines',
+      title: 'Trim long bullets',
       impactPoints: 4,
       description: 'Keeps every achievement scannable without dense text walls.',
+      lens: 'clarity',
       actionType: 'trim-long-bullet',
     });
   }
@@ -1068,7 +1077,18 @@ export function computeRecruiterAppeal(
       title: 'Tighten summary to 2 sentences (under 55 words)',
       impactPoints: 4,
       description: 'Brings your first experience role higher into the top third of Page 1.',
+      lens: skimScore < 80 ? 'skim' : 'clarity',
       actionType: 'shorten-summary',
+    });
+  }
+  if (voiceScore < 80) {
+    appealFixes.push({
+      id: 'fix-appeal-natural-voice',
+      title: 'Switch to Natural voice',
+      impactPoints: 4,
+      description: 'Replaces formal phrasing and buzzwords with direct, concrete verbs.',
+      lens: 'voice',
+      actionType: 'soften-ai-cliches',
     });
   }
 
@@ -1474,7 +1494,7 @@ export const APPEAL_CALIBRATION_FIXTURES: Record<
         'Results-driven, passionate, dynamic team player and thought leader looking for a new role.',
       bullets: [
         'Responsible for maintaining backend servers and helping with database tickets across various internal teams when needed by management and stakeholders during busy sprint cycles.',
-        'Worked on deployment scripts and participated in weekly team meetings to discuss ongoing maintenance tasks, bug fixes, and documentation updates across legacy repositories.',
+        'Worked on deployment scripts and participated in weekly team meetings to discuss ongoing maintenance tasks, bug fixes, and documentation updates across older repositories.',
       ],
     }),
   },

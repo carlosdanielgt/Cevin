@@ -6,9 +6,13 @@ import {
   ScoreBreakdown,
 } from '../entities';
 import { formatCount } from '../format';
-import { evaluateKeywordPresence, normalizeKeyword } from '../keywords';
+import {
+  evaluateKeywordPresence,
+  normalizeKeyword,
+  sanitizeSkillAliasesAndRelated,
+} from '../keywords';
 import { lintMachineMadeScore } from '../linter';
-import { buildCustomAliasMap } from '../matching';
+import { buildCustomAliasMap, buildCustomRelatedMap } from '../matching';
 import {
   ATS_CATEGORY_WEIGHTS,
   CONTENT_QUALITY_THRESHOLDS,
@@ -90,6 +94,7 @@ export function computeAtsAndJobMatchScores(
   const draft = application.workingDraft;
   const parsedJob = application.parsedJob;
   const customAliases = buildCustomAliasMap(bank.skills);
+  const customRelated = buildCustomRelatedMap(bank.skills);
   const dismissedSet = new Set(
     (application.dismissedRequirements ?? []).map((r) => normalizeKeyword(r)),
   );
@@ -109,7 +114,14 @@ export function computeAtsAndJobMatchScores(
     draft.targetHeadline,
     draft.summary,
     ...bulletStrings,
-    ...selectedSkills.map((s) => `${s.name} ${s.aliases.join(' ')}`),
+    ...selectedSkills.map((s) => {
+      const { aliases } = sanitizeSkillAliasesAndRelated(
+        s.name,
+        s.aliases,
+        s.related ?? [],
+      );
+      return `${s.name} ${aliases.join(' ')}`;
+    }),
     ...selectedProjects.map(
       (p) => `${p.name} ${p.description} ${p.highlights.join(' ')}`,
     ),
@@ -143,6 +155,7 @@ export function computeAtsAndJobMatchScores(
         req.text,
         resumeCorpus,
         customAliases,
+        customRelated,
       );
       if (status === 'covered') {
         coveredKeywords.push(req.text);
@@ -168,6 +181,7 @@ export function computeAtsAndJobMatchScores(
         kw.term,
         resumeCorpus,
         customAliases,
+        customRelated,
       );
       if (status === 'covered') {
         coveredKeywords.push(kw.term);
@@ -349,23 +363,28 @@ export function computeAtsAndJobMatchScores(
   const fixes: PrioritizedFix[] = [];
 
   if (titleAlignmentScore < 95 && (parsedJob?.title || application.roleTitle)) {
-    const desiredTitle = parsedJob?.title || application.roleTitle;
+    const desiredTitle = (parsedJob?.title || application.roleTitle).trim();
     const currentHeadline = (
       draft.targetHeadline ||
       bank.profile.headline ||
       ''
     ).trim();
-    fixes.push({
-      id: 'fix-align-headline',
-      title: `Align resume headline to "${desiredTitle}"`,
-      impactPoints: 4,
-      category: 'title',
-      description: currentHeadline
-        ? `Updates your resume header title from "${currentHeadline}" to "${desiredTitle}" so ATS and recruiter skims match the target role.`
-        : `Sets your resume header title to "${desiredTitle}" so ATS and recruiter skims match the target role.`,
-      actionType: 'align-headline',
-      actionPayload: desiredTitle,
-    });
+    if (
+      desiredTitle &&
+      currentHeadline.toLowerCase() !== desiredTitle.toLowerCase()
+    ) {
+      fixes.push({
+        id: 'fix-align-headline',
+        title: `Align resume headline to "${desiredTitle}"`,
+        impactPoints: 4,
+        category: 'title',
+        description: currentHeadline
+          ? `Updates your resume header title from "${currentHeadline}" to "${desiredTitle}".`
+          : `Sets your resume header title to "${desiredTitle}".`,
+        actionType: 'align-headline',
+        actionPayload: desiredTitle,
+      });
+    }
   }
 
   // Check if there are skills in the Bank that match JD gaps but aren't selected in the draft yet

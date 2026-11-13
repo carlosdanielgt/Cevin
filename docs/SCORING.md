@@ -30,20 +30,18 @@ Every score is deterministic, reproducible, and runs locally in your browser in 
 - **Must-have coverage (65% weight):** Share of non-dismissed must-have requirements from the job posting that are proven by your Experience Bank and present in your tailored draft (`covered` = `1.0`, `partial` = `0.5`, `gap` = `0.0`).
 - **Nice-to-have coverage (20% weight):** Share of nice-to-have requirements covered in the draft.
 - **Role & seniority alignment (15% weight):** Token and synonym overlap between your document's target headline / experience titles and the posting's role title.
+- **Synonyms (`aliases`) vs. Adjacent Skills (`related`):** True synonyms (`JS`/`JavaScript`, `k8s`/`Kubernetes`, `Postgres`/`PostgreSQL`) count as `'covered'`. Related or adjacent skills (`JavaScript` ↔ `TypeScript`, `Kafka` ↔ `RabbitMQ`) produce `'partial'` coverage and never count as `'covered'`.
 
 **Interactive Coverage Controls:**
 - **Dismiss (`Not relevant`):** Marks a requirement as not relevant to this role, removing it from the denominator with an instant undo link (`"1 dismissed · Undo"`).
 - **Quick-add (`I have this`):** Adds a skill you actually have (plus optional aliases and achievement attachment) directly to your Experience Bank and immediately rescores the application.
-
-**What it does NOT mean:**
-- A `95` Job match does not guarantee an interview, and a `70` does not mean you are unqualified—it simply shows how many stated requirements from the posting are explicitly evidenced on the page.
 
 ---
 
 ## 3. Recruiter Appeal (Estimate) — `"10-second skim"` (`0–100`)
 
 **What it measures (`src/core/domain/appeal/index.ts`):**
-Recruiter appeal models what a human reviewer notices during a 6–10 second initial pass across four weighted lenses:
+Recruiter appeal models what a human reviewer notices during a 6–10 second initial pass across four weighted lenses (weights are shown in each lens tooltip, e.g., `"35% of Recruiter appeal"`):
 
 | Lens | Weight | Sub-checks |
 | :--- | :--- | :--- |
@@ -52,15 +50,11 @@ Recruiter appeal models what a human reviewer notices during a 6–10 second ini
 | **Clarity** | **20%** | Share of bullets within `12–28` words and `≤ 2` visual lines (`30`), bullet count per role (`2–5` for recent roles, `≤ 3` for roles older than 5 years, `25`), summary `≤ 60` words and `≤ 3` lines (`20`), consistent date formatting (`10`), and comfortable page density (`15`). |
 | **Voice** | **15%** | Inverse of `machineMadeScore` (`60` pts: clichés, stacked adverbs, uniform sentence cadence) plus `40` pts for zero banned buzzwords (`synergized`, `spearheaded`, `world-class`, `passionate`). |
 
-### Bullet Impact-Strength Heuristic (`computeBulletImpactStrength`)
-Used to detect whether your most impressive bullet is buried at the bottom of a role:
-- **`+3`** for a concrete metric (`%`, `$`, `ms`, `x`, `k/M/B`, `p95/p99`, before→after delta)
-- **`+1`** for a scale or timeframe marker (`regions`, `clusters`, `requests/sec`, `in 6 weeks`)
-- **`+1`** for a strong outcome verb (`cut`, `reduced`, `built`, `shipped`, `migrated`, `eliminated`)
-- **`+2`** when the bullet mentions a must-have requirement from the job posting
+### Actionable Fixes on Lens Verdicts
+Whenever any lens scores under `80` and has a corresponding actionable fix (for example, `"Trim long bullets"` when Clarity is below `80`), Cevin renders a one-click fix button directly next to that lens's verdict.
 
 ### Calibration Curves & 4 Reference Fixtures (`poor`, `average`, `good`, `gold`)
-Every lens reserves its top ~10% (`90–100`) for a stretch criterion (for example, `≥ 3` quantified outcomes above the fold and `≥ 75%` quantified bullets across the draft). Standard well-tailored drafts land in `78–92`, preventing premature `100` saturation.
+Every lens reserves its top ~10% (`90–100`) for a stretch criterion. Standard well-tailored drafts land in `78–92`, preventing premature `100` saturation.
 
 `src/core/domain/appeal/index.ts` exports four deterministic calibration fixtures (`APPEAL_CALIBRATION_FIXTURES` for resumes and `LETTER_APPEAL_CALIBRATION_FIXTURES` for cover letters) verified in `npm test`:
 - **`poor` (`< 55`):** Sparse, unquantified duties with generic openers and weak keyword alignment.
@@ -69,9 +63,9 @@ Every lens reserves its top ~10% (`90–100`) for a stretch criterion (for examp
 - **`gold` (`88–96`):** Strong top-third fold density, rich metrics with units and context (`p99 420→68 ms`), varied verbs, and zero machine-made clichés.
 
 ### Skim View, SVG Overlay & First-Impression Takeaway
-- **Skim view toggle (preview toolbar):** Renders an SVG `PreviewOverlay` directly over the PDF.js `<canvas>` using `PositionedText[]` coordinates from the PDF engine, dimming non-anchor lines while highlighting skim anchors (name, headline, section headers, company names, role titles, dates, lead words, metrics, and matched job keywords). Never alters exported PDFs.
-- **First-impression takeaway (`TakeawayCard`):** Summarizes what a 10-second skim communicates (`Role · Most recent company · Date range · Top 3–4 skills · Strongest metric with unit & context, e.g. p99 420→68 ms`) and flags with `✓` or `!` whether the headline matches the target role.
-- **Version Deltas (`DeltaChip`):** In Studio Review, each gauge displays a `+n pts` / `-n pts` delta chip directly underneath when compared against the **previous saved version** (`vs v2`), or hides the chip when the delta is zero or no prior version exists.
+- **Skim view toggle (preview toolbar):** Renders an SVG `PreviewOverlay` directly over the PDF.js `<canvas>` using `PositionedText[]` coordinates from the PDF engine, dimming non-anchor lines while highlighting skim anchors. Never alters exported PDFs.
+- **First-impression takeaway (`TakeawayCard`):** Summarizes what a 10-second skim communicates and flags with `✓` or `!` whether the headline matches the target role.
+- **Version Deltas (`DeltaChip`):** In Studio Review, each gauge displays a compact `+n` / `-n` delta chip directly underneath when compared against the **previous saved version** (`vs v2`), or hides the chip when the delta is zero or no prior version exists.
 
 ---
 
@@ -107,14 +101,13 @@ For cover letters (`src/core/domain/coverLetter.ts` & `src/core/domain/appeal/in
 ## 6. Practical Fit & Scalable Salience Hierarchy (`Fits` / `Conflict` / `Not stated`)
 
 **What it measures (`src/core/domain/jobfacts/index.ts` & `src/core/domain/jobfacts/registry.ts`):**
-- Extracts structured **Job facts** from the posting (5 core facts: `workPermits`, `location`, `salary`, `employmentType`, `languages`, plus extensible registry kinds in `FACT_KIND_REGISTRY` such as `travel`, `onCall`, `clearance`, `relocation`, `timezone`, etc.).
+- Extracts structured **Job facts** from the posting (`workPermits`, `location`, `salary`, `employmentType`, `languages`, plus extensible registry kinds in `FACT_KIND_REGISTRY`).
 - Each fact kind has a user-configurable `FactImportance` (`'dealbreaker' | 'important' | 'nice-to-know'`).
 - Pure `deriveSalience(status, importance)` maps every evaluated fact to `'critical' | 'notable' | 'quiet'`:
   - `conflict` + `dealbreaker` → **`critical`**
   - `conflict` + `important` OR `not-stated` + `dealbreaker` → **`notable`**
-  - Everything else (`fits`, or `not-stated` on `important`/`nice-to-know`, or `conflict` on `nice-to-know`) → **`quiet`**
+  - Everything else → **`quiet`**
 - **Fixed Attention Budgets per Surface:**
-  - **Applications list row:** At most **1 `AttentionToken`** (`✕ Work permit` -> `! 3d office` -> `2 gaps`), never unknown `"? n"` chips.
-  - **Applications detail:** **Score row always first**, followed by a 1-line **`FitStrip`** (`"Fits your preferences ✓"` or `"1 dealbreaker · 1 flag"` with up to 3 salient pills and `+n`) and stage-aware expansion (`Prospect` expanded by default; `Draft`/`Applied` collapsed to 1 line; `Rejected`/`Archived` tucked behind a quiet link).
-  - **Job step, Quick check & expanded detail:** Dense **`JobFactsTable`** (`Needs a look` rows first, `Fits (n)` collapsed into a single summary line, plain-language source tooltips, `"Ask recruiter"` question copy button, and inline manual override).
-
+  - **Applications list row:** At most **1 `AttentionToken`** (`✕ Work permit` -> `! 3d office` -> `2 gaps`), with a single icon and short text.
+  - **Applications detail:** **Score row always first** (`Job match`, `Appeal`, `ATS`, `Fit` on one tabular baseline), followed by a 1-line **`FitStrip`**.
+  - **Job step, Quick check & expanded detail:** Dense **`JobFactsTable`** (`Needs a look` rows first, `Fits (n)` collapsed into a single summary line).

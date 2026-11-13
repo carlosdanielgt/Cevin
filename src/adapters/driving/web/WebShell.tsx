@@ -29,7 +29,7 @@ import {
   TooltipProvider,
 } from './ui';
 
-function LegacyStudioRedirect() {
+function StudioIndexRedirect() {
   const { id } = useParams<{ id: string }>();
   if (!id) return <Navigate to="/applications" replace />;
   return <Navigate to={`/applications/${id}/studio/resume/build`} replace />;
@@ -287,7 +287,7 @@ function InnerWorkspace() {
                 path="/applications/:id/studio/:doc/:step"
                 element={<StudioRouteWrapper />}
               />
-              <Route path="/studio/:id" element={<LegacyStudioRedirect />} />
+              <Route path="/studio/:id" element={<StudioIndexRedirect />} />
               <Route path="/bank" element={<BankView />} />
               <Route
                 path="/settings"

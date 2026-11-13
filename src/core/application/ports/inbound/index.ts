@@ -323,6 +323,10 @@ export interface ManageBankUseCase {
     snapshot: BankSnapshot;
     mergedCount: number;
   }>;
+  mergeDuplicateExperiences(): Promise<{
+    snapshot: BankSnapshot;
+    mergedCount: number;
+  }>;
   exportAllDataJson(): Promise<string>;
   importAllDataJson(rawJson: string): Promise<Result<void>>;
   wipeAllData(): Promise<void>;
@@ -450,7 +454,6 @@ export interface LlmProviderDTO {
     jsonSchema: boolean;
     embeddings: boolean;
     reportsTimings?: boolean;
-    keepAlive?: boolean;
     runtimeStatus?: boolean;
     parallel?: boolean;
   };

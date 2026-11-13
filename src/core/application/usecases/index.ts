@@ -251,17 +251,18 @@ function syncApplicationWithBank(
 
 const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
   id: 'cevin_3b_mlx',
-  label: 'Cevin 3B Fine-Tuned (MLX 4-bit)',
+  label: 'Cevin model (3B 4-bit MLX)',
   isRecommendedDefault: true,
   matches: (name: string) => {
     const norm = name.trim().toLowerCase();
     return (
       norm === 'cevin-3b-4bit-fused' ||
       norm.includes('cevin-3b') ||
-      norm.includes('qwen2.5-3b')
+      norm.includes('qwen2.5-3b') ||
+      norm === 'demo mode'
     );
   },
-  numCtx: 1024,
+  maxSeqLength: 1024,
   parallelRecommended: 1,
   disableRawPromptTrimming: true,
   temperatures: {
@@ -281,62 +282,37 @@ const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
     jobFact: 512,
   },
   stop: [],
-  keepAlive: '30m',
   fewShotStyle: 'inline',
   serverEnv: ['CEVIN_MLX_MODEL_PATH=./cevin-3b-4bit-fused'],
 };
 
-const DEFAULT_LLAMA31_PROFILE: ModelProfile = {
-  id: 'llama3_1_8b',
-  label: 'Llama 3.1 8B (Tuned for llama3.1:8b)',
+const DEFAULT_GENERIC_PROFILE: ModelProfile = {
+  id: 'generic',
+  label: 'Generic Local Model',
   isRecommendedDefault: false,
-  matches: (name: string) => {
-    const norm = name.trim().toLowerCase();
-    return (
-      norm === 'llama3.1:8b' ||
-      norm.startsWith('llama3.1:8b-') ||
-      norm === 'llama3.1:latest' ||
-      norm === 'llama3.1' ||
-      norm === 'demo mode'
-    );
-  },
-  numCtx: 4096,
-  parallelRecommended: 2,
+  matches: () => true,
+  maxSeqLength: 1024,
+  parallelRecommended: 1,
   disableRawPromptTrimming: false,
   temperatures: {
     classify: 0,
     extract: 0,
-    bullet: 0.4,
-    summary: 0.4,
-    letter: 0.6,
+    bullet: 0.35,
+    summary: 0.35,
+    letter: 0.5,
   },
-  topP: 0.9,
+  topP: 0.85,
   tokenCaps: {
-    bullet: 80,
-    summary: 110,
-    letterBlock: 170,
-    briefRefine: 200,
+    bullet: 120,
+    summary: 160,
+    letterBlock: 220,
+    briefRefine: 240,
     importClassify: 450,
-    jobFact: 80,
+    jobFact: 100,
   },
   stop: ['\n'],
-  keepAlive: '30m',
   fewShotStyle: 'chat-turns',
-  serverEnv: [
-    'OLLAMA_FLASH_ATTENTION=1',
-    'OLLAMA_KV_CACHE_TYPE=q8_0',
-    'OLLAMA_NUM_PARALLEL=2',
-  ],
-};
-
-const DEFAULT_GENERIC_PROFILE: ModelProfile = {
-  ...DEFAULT_LLAMA31_PROFILE,
-  id: 'generic_small',
-  label: 'Generic Small Local Model',
-  isRecommendedDefault: false,
-  matches: () => true,
-  parallelRecommended: 1,
-  keepAlive: '15m',
+  serverEnv: [],
 };
 
 function createFallbackPreferencesRepo(): PreferencesRepository {
@@ -437,9 +413,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     if (DEFAULT_CEVIN3B_MLX_PROFILE.matches(modelName)) {
       return DEFAULT_CEVIN3B_MLX_PROFILE;
     }
-    return DEFAULT_LLAMA31_PROFILE.matches(modelName)
-      ? DEFAULT_LLAMA31_PROFILE
-      : DEFAULT_GENERIC_PROFILE;
+    return DEFAULT_GENERIC_PROFILE;
   };
 
   const getActiveLlmProvider = async (): Promise<{
@@ -455,27 +429,26 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     const settings = await deps.settingsRepo.getSettings();
     const descriptor =
       deps.llmCatalog.getById(settings.activeProviderId) ??
-      deps.llmCatalog.getById('cevin-3b-mlx') ??
+      deps.llmCatalog.getById('mlx-fastapi') ??
       deps.llmCatalog.getById('mock') ??
       deps.llmCatalog.list()[0];
 
     const rawConfig =
       settings.providerConfigs[descriptor.id] ??
+      settings.providerConfigs[settings.activeProviderId] ??
       (descriptor.defaultConfig as Record<string, unknown>);
     const provider = descriptor.create(rawConfig);
     const modelId =
       typeof rawConfig.model === 'string' && rawConfig.model
         ? rawConfig.model
-        : descriptor.id === 'cevin-3b-mlx'
-          ? 'cevin-3b-4bit-fused'
-          : descriptor.id === 'mock'
-            ? 'Demo mode'
-            : 'llama3.1:8b';
+        : descriptor.id === 'mock'
+          ? 'Demo mode'
+          : 'cevin-3b-4bit-fused';
     const profile = resolveModelProfile(modelId);
     const parallelSlots =
-      descriptor.id === 'cevin-3b-mlx'
+      descriptor.id === 'mlx-fastapi'
         ? 1
-        : (settings.parallelSlots ?? profile.parallelRecommended ?? 2);
+        : (settings.parallelSlots ?? profile.parallelRecommended ?? 1);
     const embedModel =
       typeof rawConfig.embeddingModel === 'string' && rawConfig.embeddingModel
         ? rawConfig.embeddingModel
@@ -526,12 +499,13 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         models: [],
         statusCode: 'UNREACHABLE',
         headline: `Unknown provider "${providerId}"`,
-        details: 'Choose Ollama or Demo mode in Settings.',
+        details: 'Choose the Cevin model or Demo mode in Settings.',
       };
     }
 
     const config = {
       ...(descriptor.defaultConfig as Record<string, unknown>),
+      ...(settings.providerConfigs[descriptor.id] ?? {}),
       ...(settings.providerConfigs[providerId] ?? {}),
       ...(configOverride ?? {}),
     };
@@ -547,15 +521,15 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       if (models.length === 0) {
         return {
           connected: false,
-          providerId,
+          providerId: descriptor.id,
           endpoint,
           models: [],
           statusCode: 'NO_MODELS',
-          headline: 'Connected to Ollama, but no models are installed.',
+          headline: `Connected to ${endpoint}, but no model is loaded.`,
           remediationCommand:
-            'ollama pull llama3.1:8b && ollama pull nomic-embed-text',
+            'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
           details:
-            'Pull a 7B–8B model in your terminal, then click Test connection again.',
+            'Ensure ./cevin-3b-4bit-fused is present in the project root, then test connection again.',
         };
       }
 
@@ -569,73 +543,36 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
       ) {
         return {
           connected: false,
-          providerId,
+          providerId: descriptor.id,
           endpoint,
           models,
           statusCode: 'MODEL_MISSING',
-          headline: `Model "${configuredModel}" is not installed on ${endpoint}.`,
-          remediationCommand: `ollama pull ${configuredModel}`,
+          headline: `Model "${configuredModel}" is not loaded at ${endpoint}.`,
+          remediationCommand: 'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
           details: `Available models: ${models.map((m) => m.name).join(', ')}`,
         };
       }
 
       return {
         connected: true,
-        providerId,
+        providerId: descriptor.id,
         endpoint,
         models,
         statusCode: 'OK',
-        headline: `Connected to ${descriptor.label} (${models.length} model${models.length === 1 ? '' : 's'} ready).`,
-        details: `Active generation model: ${configuredModel || models[0].name}`,
+        headline: `Connected to ${descriptor.label}.`,
+        details: `Active model: ${configuredModel || models[0].name}`,
       };
-    } catch (err) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      const origin =
-        typeof window !== 'undefined' && window.location?.origin
-          ? window.location.origin
-          : 'http://localhost:8080';
-
-      if (providerId === 'cevin-3b-mlx') {
-        return {
-          connected: false,
-          providerId,
-          endpoint,
-          models: [],
-          statusCode: 'UNREACHABLE',
-          headline: `Can't reach Cevin 3B MLX FastAPI at ${endpoint}`,
-          remediationCommand: 'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
-          details:
-            'Start the local Apple Silicon MLX FastAPI microservice (mlx_server.py), or select Llama 3.1 8B (Ollama) / Demo mode in Settings.',
-        };
-      }
-
-      if (
-        rawMsg.toLowerCase().includes('cors') ||
-        rawMsg.toLowerCase().includes('failed to fetch') ||
-        rawMsg.toLowerCase().includes('networkerror')
-      ) {
-        return {
-          connected: false,
-          providerId,
-          endpoint,
-          models: [],
-          statusCode: 'CORS_BLOCKED',
-          headline: `Can't reach Ollama at ${endpoint}.`,
-          remediationCommand: `OLLAMA_ORIGINS="${origin}" ollama serve`,
-          details:
-            'Either Ollama is not running, or browser CORS blocked the request. Run the command above and restart Ollama.',
-        };
-      }
-
+    } catch {
       return {
         connected: false,
-        providerId,
+        providerId: descriptor.id,
         endpoint,
         models: [],
         statusCode: 'UNREACHABLE',
-        headline: `Can't reach Ollama at ${endpoint}`,
-        remediationCommand: 'ollama serve',
-        details: rawMsg,
+        headline: `Can't reach the Cevin model at ${endpoint}.`,
+        remediationCommand: 'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
+        details:
+          'Run the command from the project root with your Python virtual environment active.',
       };
     }
   };
@@ -980,7 +917,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           ? providerCfg.model
           : settings.activeProviderId === 'mock'
             ? 'Demo mode'
-            : 'llama3.1:8b';
+            : 'cevin-3b-4bit-fused';
 
       const pdfExporter = deps.exporterCatalog.getById('pdf');
 
@@ -1721,13 +1658,12 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         }
 
         const diag = await testConnectionInternal(settings.activeProviderId);
-        const isMlxProvider = settings.activeProviderId === 'cevin-3b-mlx';
         if (diag.connected) {
           const cfg = settings.providerConfigs[settings.activeProviderId] ?? {};
           const modelName =
             (typeof cfg.model === 'string' && cfg.model) ||
             diag.models[0]?.name ||
-            (isMlxProvider ? 'cevin-3b-4bit-fused' : 'llama3.1:8b');
+            'cevin-3b-4bit-fused';
           const profile = resolveModelProfile(modelName);
 
           if (activity.warmingUp) {
@@ -1736,7 +1672,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
               label: 'Warming up',
               modelName,
               providerId: settings.activeProviderId,
-              detail: `Warming ${modelName} in memory.`,
+              detail: 'Warming model in memory.',
               isTunedDefaultModel: profile.isRecommendedDefault,
             };
           }
@@ -1753,26 +1689,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             };
           }
 
-          const { provider } = await getActiveLlmProvider();
-          if (provider.getRuntimeStatus) {
-            const rt = await provider.getRuntimeStatus();
-            if (rt.partlyOnCpu) {
-              return {
-                state: 'partly-on-cpu',
-                label: 'Partly on CPU',
-                modelName,
-                providerId: settings.activeProviderId,
-                detail: `${rt.memorySummary}. Reduce context size or close GPU apps for faster generation.`,
-                isTunedDefaultModel: profile.isRecommendedDefault,
-              };
-            }
-          }
-
           return {
             state: 'connected',
-            label: isMlxProvider
-              ? `Cevin 3B MLX · ${modelName}`
-              : `Ollama · ${modelName}`,
+            label: 'Model ready',
             modelName,
             providerId: settings.activeProviderId,
             detail: diag.headline,
@@ -1781,9 +1700,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         }
         return {
           state: 'offline',
-          label: isMlxProvider
-            ? "Can't reach MLX FastAPI"
-            : "Can't reach Ollama",
+          label: "Can't reach the model",
           providerId: settings.activeProviderId,
           detail: diag.headline,
         };
@@ -2035,7 +1952,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
             ...compactBrief.parsedJob,
           };
 
-          // Optional lightweight 200-token refinement via LlmGateway when connected to Ollama
+          // Optional lightweight 200-token refinement via LlmGateway when connected to local model
           if (providerId !== 'mock') {
             try {
               const refinedRes = await gateway.executeTask(
@@ -2659,7 +2576,8 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
 
         let summaryText = '';
         if (
-          active.providerId === 'cevin-3b-mlx' &&
+          (active.providerId === 'mlx-fastapi' ||
+            active.providerId === 'cevin-3b-mlx') &&
           active.provider.careerIntelligence
         ) {
           try {
@@ -3867,6 +3785,72 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         }
         return { snapshot: nextBank, mergedCount };
       },
+      async mergeDuplicateExperiences() {
+        const bank = await deps.bankRepo.getSnapshot();
+        const byKey = new Map<string, Experience>();
+        const redirectMap = new Map<string, string>();
+        let mergedCount = 0;
+
+        for (const exp of bank.experiences) {
+          const isPlaceholder =
+            (!exp.company.trim() ||
+              exp.company.trim().toLowerCase() === 'new company') &&
+            (!exp.title.trim() ||
+              exp.title.trim().toLowerCase() === 'role title');
+          const key = isPlaceholder
+            ? '__placeholder_role__'
+            : `${exp.company.trim().toLowerCase()}::${exp.title.trim().toLowerCase()}::${exp.start.trim().toLowerCase()}`;
+
+          const existing = byKey.get(key);
+          if (existing) {
+            mergedCount++;
+            redirectMap.set(exp.id, existing.id);
+            if (!existing.location && exp.location) {
+              existing.location = exp.location;
+            }
+            if (!existing.end && exp.end) {
+              existing.end = exp.end;
+            }
+          } else {
+            byKey.set(key, { ...exp });
+          }
+        }
+
+        const nextAchievements = bank.achievements.map((ach) => {
+          const redirected = redirectMap.get(ach.experienceId);
+          return redirected ? { ...ach, experienceId: redirected } : ach;
+        });
+
+        const nextBank: BankSnapshot = {
+          ...bank,
+          experiences: Array.from(byKey.values()),
+          achievements: nextAchievements,
+        };
+        await deps.bankRepo.saveSnapshot(nextBank);
+
+        if (redirectMap.size > 0) {
+          const apps = await deps.appRepo.listApplications();
+          for (const app of apps) {
+            const nextBullets = app.workingDraft.bullets.map((b) => {
+              const redirected = redirectMap.get(b.experienceId);
+              return redirected ? { ...b, experienceId: redirected } : b;
+            });
+            const synced = syncApplicationWithBank(
+              {
+                ...app,
+                workingDraft: {
+                  ...app.workingDraft,
+                  bullets: nextBullets,
+                },
+              },
+              nextBank,
+            );
+            await deps.appRepo.saveApplication(synced.app);
+          }
+        }
+
+        return { snapshot: nextBank, mergedCount };
+      },
       async exportAllDataJson() {
         const bank = await deps.bankRepo.getSnapshot();
         const applications = await deps.appRepo.listApplications();
@@ -4340,8 +4324,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
                     briefHash: 'cal',
                     voice: 'balanced',
                   }).prefixMessages,
-                  numCtx: profile.numCtx,
-                  keepAlive: profile.keepAlive,
+                  maxSeqLength: profile.maxSeqLength,
                   signal,
                 });
                 coldLoadMs = warmMetrics.loadMs ?? Math.max(10, Date.now() - t0);

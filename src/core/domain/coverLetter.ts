@@ -1094,10 +1094,18 @@ export function mapApplicationToCoverLetterDocument(
   versionNumber = 1,
   pageSize: PageSize = 'letter',
 ): CoverLetterDocument {
-  const draft =
-    application.documents?.coverLetter ??
+  const baseDraft =
     application.coverLetterDraft ??
+    application.documents?.coverLetter ??
     createDefaultCoverLetterDraft(application, bank);
+  const draft = {
+    ...baseDraft,
+    textAlign:
+      application.coverLetterDraft?.textAlign ??
+      application.documents?.coverLetter?.textAlign ??
+      application.workingDraft?.textAlign ??
+      'left',
+  };
   return mapToCoverLetterDocument({
     draft,
     bank,

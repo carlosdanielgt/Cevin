@@ -8,8 +8,9 @@ import {
   evaluateKeywordPresence,
   expandKeywordAliases,
   normalizeKeyword,
+  sanitizeSkillAliasesAndRelated,
 } from '../keywords';
-import { buildCustomAliasMap } from '../matching';
+import { buildCustomAliasMap, buildCustomRelatedMap } from '../matching';
 
 export type CoverageFilter = 'all' | 'gap' | 'partial' | 'covered';
 
@@ -64,6 +65,7 @@ export function findBankEvidenceForTerm(
   bank: BankSnapshot,
 ): BankEvidenceItem[] {
   const customAliases = buildCustomAliasMap(bank.skills);
+  const customRelated = buildCustomRelatedMap(bank.skills);
   const variants = expandKeywordAliases(term, customAliases).map((v) =>
     v.toLowerCase().trim(),
   );
@@ -72,13 +74,23 @@ export function findBankEvidenceForTerm(
 
   // 1. Bank Skills
   for (const skill of bank.skills) {
+    const { aliases } = sanitizeSkillAliasesAndRelated(
+      skill.name,
+      skill.aliases,
+      skill.related ?? [],
+    );
     const sNameNorm = skill.name.toLowerCase().trim();
-    const sAliasesNorm = skill.aliases.map((a) => a.toLowerCase().trim());
+    const sAliasesNorm = aliases.map((a) => a.toLowerCase().trim());
     const isDirectMatch =
       variants.includes(sNameNorm) ||
       sAliasesNorm.some((a) => variants.includes(a));
-    const skillCorpus = `${skill.name} ${skill.aliases.join(' ')}`;
-    const presence = evaluateKeywordPresence(term, skillCorpus, customAliases);
+    const skillCorpus = `${skill.name} ${aliases.join(' ')}`;
+    const presence = evaluateKeywordPresence(
+      term,
+      skillCorpus,
+      customAliases,
+      customRelated,
+    );
 
     if (isDirectMatch || presence !== 'gap') {
       matchedSkillIds.add(skill.id);
@@ -86,7 +98,7 @@ export function findBankEvidenceForTerm(
         id: skill.id,
         kind: 'skill',
         title: skill.name,
-        snippet: skill.aliases.length > 0 ? skill.aliases.join(', ') : skill.category,
+        snippet: aliases.length > 0 ? aliases.join(', ') : skill.category,
         detail: skill.category,
       });
     }
@@ -96,7 +108,12 @@ export function findBankEvidenceForTerm(
   for (const ach of bank.achievements) {
     const sharesSkill = ach.skillIds.some((id) => matchedSkillIds.has(id));
     const achText = `${ach.action} ${ach.result} ${ach.metric ?? ''}`;
-    const presence = evaluateKeywordPresence(term, achText, customAliases);
+    const presence = evaluateKeywordPresence(
+      term,
+      achText,
+      customAliases,
+      customRelated,
+    );
 
     if (sharesSkill || presence !== 'gap') {
       results.push({
@@ -112,7 +129,12 @@ export function findBankEvidenceForTerm(
   // 3. Bank Projects
   for (const proj of bank.projects) {
     const projText = `${proj.name} ${proj.description} ${proj.highlights.join(' ')}`;
-    const presence = evaluateKeywordPresence(term, projText, customAliases);
+    const presence = evaluateKeywordPresence(
+      term,
+      projText,
+      customAliases,
+      customRelated,
+    );
     if (presence !== 'gap') {
       results.push({
         id: proj.id,
@@ -127,7 +149,12 @@ export function findBankEvidenceForTerm(
   // 4. Bank Certifications
   for (const cert of bank.certifications) {
     const certText = `${cert.name} ${cert.issuer}`;
-    const presence = evaluateKeywordPresence(term, certText, customAliases);
+    const presence = evaluateKeywordPresence(
+      term,
+      certText,
+      customAliases,
+      customRelated,
+    );
     if (presence !== 'gap') {
       results.push({
         id: cert.id,
@@ -184,6 +211,7 @@ export function buildGroupedCoverageSummary(
   }
 
   const customAliases = buildCustomAliasMap(bank.skills);
+  const customRelated = buildCustomRelatedMap(bank.skills);
 
   const dismissedSet = new Set<string>([
     ...dismissedRequirementIds.map((id) => id.toLowerCase().trim()),
@@ -196,11 +224,25 @@ export function buildGroupedCoverageSummary(
     ? bank.skills.filter((s) => selectedSkillIds.includes(s.id))
     : bank.skills;
   const activeSkillsCorpus = activeSkills
-    .map((s) => `${s.name} ${s.aliases.join(' ')}`)
+    .map((s) => {
+      const { aliases } = sanitizeSkillAliasesAndRelated(
+        s.name,
+        s.aliases,
+        s.related ?? [],
+      );
+      return `${s.name} ${aliases.join(' ')}`;
+    })
     .join(' \n ');
 
   const bankCorpus = [
-    ...bank.skills.map((s) => `${s.name} ${s.aliases.join(' ')}`),
+    ...bank.skills.map((s) => {
+      const { aliases } = sanitizeSkillAliasesAndRelated(
+        s.name,
+        s.aliases,
+        s.related ?? [],
+      );
+      return `${s.name} ${aliases.join(' ')}`;
+    }),
     ...bank.achievements.map((a) => `${a.action} ${a.result} ${a.metric ?? ''}`),
     ...bank.projects.map((p) => `${p.name} ${p.description} ${p.highlights.join(' ')}`),
     ...bank.certifications.map((c) => `${c.name} ${c.issuer}`),
@@ -236,18 +278,25 @@ export function buildGroupedCoverageSummary(
       req.text,
       evalCorpus,
       customAliases,
+      customRelated,
     );
 
     const evidence = findBankEvidenceForTerm(req.text, bank);
     const exactBankSkill = bank.skills.find((s) => {
+      const { aliases } = sanitizeSkillAliasesAndRelated(
+        s.name,
+        s.aliases,
+        s.related ?? [],
+      );
       const sNorm = normalizeKeyword(s.name);
       return (
         sNorm === reqNorm ||
-        s.aliases.some((a) => normalizeKeyword(a) === reqNorm) ||
+        aliases.some((a) => normalizeKeyword(a) === reqNorm) ||
         evaluateKeywordPresence(
           req.text,
-          `${s.name} ${s.aliases.join(' ')}`,
+          `${s.name} ${aliases.join(' ')}`,
           customAliases,
+          customRelated,
         ) === 'covered'
       );
     });

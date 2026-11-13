@@ -38,7 +38,7 @@ export const MlxFastApiConfigSchema = z.object({
   baseUrl: z.string().url().default('http://localhost:8000'),
   model: z.string().min(1).default('cevin-3b-4bit-fused'),
   modelPath: z.string().default('./cevin-3b-4bit-fused'),
-  numCtx: z.coerce.number().int().min(512).max(4096).default(1024),
+  maxSeqLength: z.coerce.number().int().min(512).max(4096).default(1024),
 });
 
 export type MlxFastApiConfig = z.infer<typeof MlxFastApiConfigSchema>;
@@ -83,8 +83,7 @@ function parseJsonFromMlxPayload(payload: MlxFastApiInferPayload): unknown {
  * Driven Adapter implementing `CareerIntelligencePort` for the fine-tuned
  * `./cevin-3b-4bit-fused` MLX model served via FastAPI (`http://localhost:8000/v1/cevin/infer`).
  *
- * Strictly bypasses the legacy Llama-3.1 prompt-trimming harness and sends exact
- * `CEVIN_MLX_SYSTEM_PROMPT` + `TASK:` headers with Chain-of-Thought JSON schemas.
+ * Sends exact `CEVIN_MLX_SYSTEM_PROMPT` + `TASK:` headers with structured JSON schemas.
  */
 export function createMlxCareerIntelligenceAdapter(
   rawConfig?: Partial<MlxFastApiConfig>,
@@ -432,8 +431,7 @@ export function createMlxFastApiProvider(
 
     async warm(req: {
       prefixMessages: LlmMessage[];
-      numCtx: number;
-      keepAlive: string;
+      maxSeqLength: number;
       signal?: AbortSignal;
     }): Promise<LlmUsageMetrics> {
       const start = Date.now();
@@ -511,17 +509,16 @@ export function createMlxFastApiProvider(
 
 export const mlxFastApiProviderDescriptor: LlmProviderDescriptor<MlxFastApiConfig> =
   {
-    id: 'cevin-3b-mlx',
-    label: 'Cevin 3B Fine-Tuned — MLX FastAPI',
+    id: 'mlx-fastapi',
+    label: 'Cevin model (on this Mac)',
     description:
-      'Default local Apple Silicon MLX engine (./cevin-3b-4bit-fused, Qwen2.5-3B-Instruct-4bit + LoRA v4, 1024-ctx CoT JSON).',
+      'Fine-tuned for resume writing. Runs on this Mac (Apple Silicon).',
     locality: 'local',
     capabilities: {
       streaming: true,
       jsonSchema: true,
       embeddings: false,
       reportsTimings: true,
-      keepAlive: true,
       runtimeStatus: true,
       parallel: false,
     },
@@ -529,34 +526,35 @@ export const mlxFastApiProviderDescriptor: LlmProviderDescriptor<MlxFastApiConfi
     configFields: [
       {
         key: 'baseUrl',
-        label: 'FastAPI MLX Server URL',
+        label: 'Model URL',
         type: 'text',
         placeholder: 'http://localhost:8000',
         helpText:
-          'Default is http://localhost:8000 (exposes GET /health and POST /v1/cevin/infer).',
+          'Local server address (default http://localhost:8000).',
       },
       {
         key: 'model',
-        label: 'Fused Model ID',
+        label: 'Model ID',
         type: 'text',
         placeholder: 'cevin-3b-4bit-fused',
         helpText:
-          'Fine-tuned Qwen2.5-3B-Instruct-4bit fused with adapters_3b_v4 LoRA weights.',
+          'Fine-tuned local resume model weights directory.',
       },
       {
-        key: 'numCtx',
+        key: 'maxSeqLength',
         label: 'Max sequence length',
         type: 'number',
         placeholder: '1024',
         helpText:
-          'Trained with mask_prompt: true and max_seq_length: 1024 on atomic career tasks.',
+          'Maximum token sequence length per request (default 1024).',
       },
     ],
     defaultConfig: {
       baseUrl: 'http://localhost:8000',
       model: 'cevin-3b-4bit-fused',
       modelPath: './cevin-3b-4bit-fused',
-      numCtx: 1024,
+      maxSeqLength: 1024,
     },
     create: (config) => createMlxFastApiProvider(config),
   };
+

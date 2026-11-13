@@ -49,6 +49,7 @@ import {
   PopoverTrigger,
   SegmentedControl,
   Sparkline,
+  Tooltip,
 } from '../../ui/primitives';
 import {
   ApplicationDetailsForm,
@@ -81,6 +82,33 @@ function formatRelativeDate(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function formatLocaleUiDate(dateStr: string): string {
+  const trimmed = dateStr.trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const d = new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+    );
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+  return trimmed;
 }
 
 function triggerBlobDownload(blob: Blob, fileName: string) {
@@ -126,6 +154,7 @@ export function ApplicationsView({
   const addToast = useUiStore((s) => s.addToast);
   const setNewAppModalOpen = useUiStore((s) => s.setNewAppModalOpen);
   const connectionStatus = useUiStore((s) => s.connectionStatus);
+  const setConnectionStatus = useUiStore((s) => s.setConnectionStatus);
   const gettingStartedDismissed = useUiStore((s) => s.gettingStartedDismissed);
   const setGettingStartedDismissed = useUiStore(
     (s) => s.setGettingStartedDismissed,
@@ -556,44 +585,34 @@ export function ApplicationsView({
 
   return (
     <div className="space-y-6 pb-16">
-      <PageHeader
-        title="Applications"
-        subtitle="Check postings against your preferences, tailor resumes and grounded cover letters, and compare versions."
-      />
+      <PageHeader title="Applications" />
 
-      {!gettingStartedDismissed && !allStepsComplete && (
+      {applications.length === 0 && !gettingStartedDismissed && !allStepsComplete && (
         <GettingStartedCard
           aiConnectedOrDemo={aiReady}
           hasExperience={hasExperience}
           hasApplication={hasApplication}
           isDemoDataLoaded={isDemoDataLoaded}
           onConnectAi={() => navigate('/settings')}
+          onUseDemoMode={async () => {
+            await useCases.manageSettings.saveSettings({
+              activeProviderId: 'mock',
+            });
+            const status = await useCases.testLlmConnection.getSidebarStatus();
+            setConnectionStatus(status);
+            addToast('Switched to Demo mode.', 'success');
+          }}
           onAddExperience={() => navigate('/bank')}
           onCreateApplication={() => setNewAppModalOpen(true)}
           onTryDemoData={async () => {
             await useCases.manageBank.loadDemoWorkspace();
             await loadData();
-            addToast('Loaded demo workspace.', 'success');
-          }}
-          onDismiss={() => void handleDismissGettingStarted()}
-        />
-      )}
-
-      {applications.length === 0 ? (
-        <EmptyState
-          illustrationKind="applications"
-          title="Tailor your first resume in 3 steps"
-          description="1. Quick check a job posting · 2. Tune your writing voice and proof points · 3. Export a clean, single-page PDF and cover letter."
-          actionLabel="New application"
-          onAction={() => setNewAppModalOpen(true)}
-          secondaryActionLabel="Load sample workspace"
-          onSecondaryAction={async () => {
-            await useCases.manageBank.loadDemoWorkspace();
-            await loadData();
             addToast('Loaded sample workspace.', 'success');
           }}
         />
-      ) : (
+      )}
+
+      {applications.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Pane (4 cols): Search + ViewMenu, Status Tabs, Faceted Filters (Score, Role, Company, Status), Application List */}
           <div className="lg:col-span-4 bg-surface border border-border rounded-xl p-3.5 shadow-sm space-y-3">
@@ -642,7 +661,11 @@ export function ApplicationsView({
               })}
             </div>
 
-            {/* Faceted Filter Bar: Score, Role, Company, Status */}
+            {/* Faceted Filter Bar: shown only when there are > 12 applications or active advanced filters */}
+            {(applications.length > 12 ||
+              minScoreFilter > 0 ||
+              companyFilter !== 'All' ||
+              roleFilter !== 'All') && (
             <div
               data-testid="applications-filter-bar"
               className="flex flex-wrap items-center gap-1.5 pb-1 border-b border-hairline"
@@ -927,6 +950,7 @@ export function ApplicationsView({
                 </button>
               )}
             </div>
+            )}
 
             {/* Application rows: fixed 3-row structure + right ScoreRing/EstimateRing (max 1 AttentionToken) */}
             <div className="space-y-1.5 max-h-[640px] overflow-y-auto pr-0.5">
@@ -1295,13 +1319,13 @@ export function ApplicationsView({
                         <Calendar className="w-3.5 h-3.5 text-ink-subtle" />
                         <span>
                           {activeApp.appliedDate
-                            ? `Applied ${activeApp.appliedDate}`
+                            ? `Applied ${formatLocaleUiDate(activeApp.appliedDate)}`
                             : 'No applied date set'}
                         </span>
                       </span>
-                      <span className="inline-flex items-center gap-1.5 text-ink-muted min-w-0">
+                      <span className="inline-flex items-center gap-1.5 text-ink-muted min-w-0 flex-1">
                         <StickyNote className="w-3.5 h-3.5 text-ink-subtle shrink-0" />
-                        <span className="truncate max-w-md">
+                        <span className="line-clamp-1 truncate max-w-md">
                           {activeApp.notes?.trim()
                             ? activeApp.notes.trim()
                             : 'Add posting URL, applied date, or interview notes…'}
@@ -1355,91 +1379,120 @@ export function ApplicationsView({
                 ) : (
                   <div
                     data-testid="detail-score-row"
-                    className="grid grid-cols-1 sm:grid-cols-3 gap-3.5"
+                    className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 items-stretch"
                   >
-                    <div className="p-4 rounded-lg bg-surface-sunken/70 border border-hairline flex items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-                          Job match
-                        </span>
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-display text-[34px] font-bold text-ink leading-none tabular-nums">
-                            {activeApp.latestScores.jobMatch}
+                    <div className="p-3.5 rounded-lg bg-surface-sunken/70 border border-hairline flex flex-col justify-between gap-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Tooltip content="Job match against posting requirements">
+                          <span className="text-xs font-semibold text-ink-muted cursor-help whitespace-nowrap">
+                            Job match
                           </span>
-                          <DeltaChip
-                            delta={matchDelta}
-                            referenceLabel={refVerLabel}
-                          />
-                        </div>
-                        <p className="text-xs text-ink-muted">
-                          {activeApp.latestScores.coveredKeywords.length}{' '}
-                          covered ·{' '}
-                          {formatCount(
-                            activeApp.latestScores.gapKeywords.length,
-                            'gap',
+                        </Tooltip>
+                        <Sparkline
+                          values={chronoResumeVersions.map(
+                            (v) => v.scores.jobMatch,
                           )}
-                        </p>
+                        />
                       </div>
-                      <Sparkline
-                        values={chronoResumeVersions.map(
-                          (v) => v.scores.jobMatch,
+                      <div className="flex items-baseline gap-2 h-9">
+                        <span className="font-display text-[32px] font-bold text-ink leading-none tabular-nums">
+                          {activeApp.latestScores.jobMatch}
+                        </span>
+                        <DeltaChip
+                          delta={matchDelta}
+                          referenceLabel={refVerLabel}
+                        />
+                      </div>
+                      <p className="text-xs text-ink-muted truncate tabular-nums">
+                        {activeApp.latestScores.coveredKeywords.length} covered ·{' '}
+                        {formatCount(
+                          activeApp.latestScores.gapKeywords.length,
+                          'gap',
                         )}
-                      />
+                      </p>
                     </div>
 
-                    <div className="p-4 rounded-lg bg-surface-sunken/70 border border-hairline flex items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-                          Recruiter appeal
-                        </span>
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-display text-[34px] font-bold text-ink leading-none tabular-nums">
-                            {activeApp.latestScores.recruiterAppeal ?? 82}
+                    <div className="p-3.5 rounded-lg bg-surface-sunken/70 border border-hairline flex flex-col justify-between gap-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Tooltip content="Recruiter appeal (10-second skim estimate)">
+                          <span className="text-xs font-semibold text-ink-muted cursor-help whitespace-nowrap">
+                            Appeal
                           </span>
-                          <DeltaChip
-                            delta={appealDelta}
-                            referenceLabel={refVerLabel}
-                          />
-                        </div>
-                        <p className="text-xs text-ink-muted">
-                          10-second skim (estimate)
-                        </p>
+                        </Tooltip>
+                        <Sparkline
+                          values={chronoResumeVersions.map(
+                            (v) => v.scores.recruiterAppeal ?? 80,
+                          )}
+                        />
                       </div>
-                      <Sparkline
-                        values={chronoResumeVersions.map(
-                          (v) => v.scores.recruiterAppeal ?? 80,
-                        )}
-                      />
+                      <div className="flex items-baseline gap-2 h-9">
+                        <span className="font-display text-[32px] font-bold text-ink leading-none tabular-nums">
+                          {activeApp.latestScores.recruiterAppeal ?? 82}
+                        </span>
+                        <DeltaChip
+                          delta={appealDelta}
+                          referenceLabel={refVerLabel}
+                        />
+                      </div>
+                      <p className="text-xs text-ink-muted truncate">
+                        10-second skim
+                      </p>
                     </div>
 
-                    <div className="p-4 rounded-lg bg-surface-sunken/70 border border-hairline flex items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-                          ATS readiness
-                        </span>
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-display text-[34px] font-bold text-ink leading-none tabular-nums">
-                            {activeApp.latestScores.atsReadiness}
+                    <div className="p-3.5 rounded-lg bg-surface-sunken/70 border border-hairline flex flex-col justify-between gap-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Tooltip content="ATS readiness (single-column & text layer check)">
+                          <span className="text-xs font-semibold text-ink-muted cursor-help whitespace-nowrap">
+                            ATS
                           </span>
-                          <DeltaChip
-                            delta={atsDelta}
-                            referenceLabel={refVerLabel}
-                          />
-                        </div>
-                        <p className="text-xs text-ink-muted">
-                          Single-column · ~
-                          {formatCount(
-                            activeApp.latestScores.estimatedPages,
-                            'page',
+                        </Tooltip>
+                        <Sparkline
+                          values={chronoResumeVersions.map(
+                            (v) => v.scores.atsReadiness,
                           )}
-                        </p>
+                          className="text-success"
+                        />
                       </div>
-                      <Sparkline
-                        values={chronoResumeVersions.map(
-                          (v) => v.scores.atsReadiness,
+                      <div className="flex items-baseline gap-2 h-9">
+                        <span className="font-display text-[32px] font-bold text-ink leading-none tabular-nums">
+                          {activeApp.latestScores.atsReadiness}
+                        </span>
+                        <DeltaChip
+                          delta={atsDelta}
+                          referenceLabel={refVerLabel}
+                        />
+                      </div>
+                      <p className="text-xs text-ink-muted truncate tabular-nums">
+                        Single-column · ~
+                        {formatCount(
+                          activeApp.latestScores.estimatedPages,
+                          'page',
                         )}
-                        className="text-success"
-                      />
+                      </p>
+                    </div>
+
+                    <div className="p-3.5 rounded-lg bg-surface-sunken/70 border border-hairline flex flex-col justify-between gap-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Tooltip content="Practical fit against your job preferences">
+                          <span className="text-xs font-semibold text-ink-muted cursor-help whitespace-nowrap">
+                            Fit
+                          </span>
+                        </Tooltip>
+                      </div>
+                      <div className="flex items-baseline gap-2 h-9">
+                        <span className="font-display text-[32px] font-bold text-ink leading-none tabular-nums">
+                          {activeFitInfo
+                            ? `${activeFitInfo.fit.fitsCount ?? activeFitInfo.fit.fittingItems?.length ?? 0}/${Math.max(1, activeFitInfo.fit.orderedItems?.length ?? activeFitInfo.fit.items?.length ?? 5)}`
+                            : '—'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-ink-muted truncate tabular-nums">
+                        {activeFitInfo
+                          ? activeFitInfo.fit.conflictCount > 0
+                            ? `${formatCount(activeFitInfo.fit.conflictCount, 'conflict')}`
+                            : 'No conflicts'
+                          : 'Preferences check'}
+                      </p>
                     </div>
                   </div>
                 )}

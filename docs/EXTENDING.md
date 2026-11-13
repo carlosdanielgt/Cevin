@@ -47,6 +47,7 @@ Register in `src/adapters/driven/exporters/registry.ts`:
 ```ts
 const REGISTERED_EXPORTERS: DocumentExporter[] = [
   pdfResumeExporter,
+  docxDocumentExporter,
   markdownResumeExporter,
   plainTextDocumentExporter,
 ];
@@ -56,7 +57,7 @@ const REGISTERED_EXPORTERS: DocumentExporter[] = [
 
 ## 3. Adding a New Template (`TemplateSpec`)
 
-Add the template ID to `TemplateIdSchema` in `src/core/domain/entities.ts` and add a `TemplateSpec` entry to `TEMPLATE_SPECS` in `src/core/domain/templateSpec.ts`. Because `generatePdfArtifact` (`src/core/domain/pdfEngine.ts`), `PdfPreview`, and `PdfThumbnail` all read from `TEMPLATE_SPECS`, both the live preview and exported PDF automatically support the new template with 100% parity.
+Add the template ID to `TemplateIdSchema` in `src/core/domain/entities.ts` and add a `TemplateSpec` entry to `TEMPLATE_SPECS` in `src/core/domain/templateSpec.ts`. Because `generatePdfArtifact` (`src/core/domain/pdfEngine.ts`), `renderDocumentToDocxBlob` (`src/core/domain/docxEngine.ts`), `PdfPreview`, and `PdfThumbnail` all read from `TEMPLATE_SPECS`, the live preview, exported PDF, and exported Word `.docx` automatically support the new template.
 
 ---
 
@@ -71,45 +72,38 @@ Implement `LlmProviderDescriptor` in `src/adapters/driven/llm/` and add one line
 Define a `ModelProfile` object in `src/adapters/driven/llm/profiles.ts` and add it to `REGISTERED_PROFILES`:
 
 ```ts
-export const qwen2_5_7bProfile: ModelProfile = {
-  id: 'qwen2_5_7b',
-  label: 'Qwen 2.5 7B (Local)',
-  recommendedModelTag: 'qwen2.5:7b',
-  numCtx: 4096, // Keep constant across tasks to prevent Ollama model reloads
-  parallelRecommended: 2,
+export const customMlxProfile: ModelProfile = {
+  id: 'custom_mlx',
+  label: 'Custom MLX Model',
+  recommendedModelTag: 'custom-3b-4bit',
+  maxSeqLength: 1024,
+  parallelRecommended: 1,
+  isFineTunedCevin3B: true,
   temperatures: {
-    rewriteBullet: 0.2,
+    rewriteBullet: 0.25,
     writeSummary: 0.25,
     writeLetterBlock: 0.25,
-    refineJobBrief: 0.1,
+    refineJobBrief: 0.0,
     classifyImportBlocks: 0.0,
     extractJobFact: 0.0,
   },
   maxOutputTokens: {
-    rewriteBullet: 85,
-    writeSummary: 110,
-    writeLetterBlock: 130,
+    rewriteBullet: 180,
+    writeSummary: 180,
+    writeLetterBlock: 220,
     refineJobBrief: 220,
     classifyImportBlocks: 260,
-    extractJobFact: 80,
+    extractJobFact: 120,
   },
   stopSequences: {
-    rewriteBullet: ['\n'],
-    writeSummary: ['\n\n'],
-    writeLetterBlock: ['\n\n'],
+    rewriteBullet: [],
+    writeSummary: [],
+    writeLetterBlock: [],
     refineJobBrief: [],
     classifyImportBlocks: [],
-    extractJobFact: ['\n'],
+    extractJobFact: [],
   },
-  keepAlive: '30m',
-  fewShotStyle: 'chat-turns',
-  serverEnv: {
-    OLLAMA_FLASH_ATTENTION: '1',
-    OLLAMA_KV_CACHE_TYPE: 'q8_0',
-    OLLAMA_NUM_PARALLEL: '2',
-    OLLAMA_MAX_LOADED_MODELS: '1',
-    OLLAMA_KEEP_ALIVE: '30m',
-  },
+  fewShotStyle: 'zero-shot-cot',
 };
 ```
 
@@ -118,7 +112,7 @@ export const qwen2_5_7bProfile: ModelProfile = {
 ## 6. Adding a New Narrow LLM Task (`LlmTaskSpec`)
 
 Add an `LlmTaskSpec<TInput, TOutput>` in `src/core/application/tasks/index.ts` and register it on `HARNESS_TASK_CATALOG`:
-1. **`buildPrefixMessages(voice, profile)`**: Static system + few-shot turns for KV prefix cache reuse.
+1. **`buildPrefixMessages(voice, profile)`**: System + schema instructions.
 2. **`buildSuffixMessage(input)`**: Compact item payload (`<= 200` tokens).
 3. **`parseAndSanitize(rawOutput, input)`**: Pure sanitizer/parser.
 4. **`validate(parsedOutput, input, voice)`**: Returns `ValidationReport` from `src/core/domain/harness.ts`.
@@ -151,5 +145,3 @@ Cevin's Job facts hierarchy is driven by `FACT_KIND_REGISTRY` (`src/core/domain/
    - **Applications list rows** still show at most 1 `AttentionToken` prioritized by `critical` → `notable` → coverage gap.
    - **Applications detail** still renders the Score row first and summarizes all facts in the 1-line `FitStrip` (up to 3 salient pills + `+n`).
    - **`JobFactsTable`** automatically lists `Needs a look` rows first and collapses all `Fits (n)` items into a single quiet line.
-
-

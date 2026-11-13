@@ -3,7 +3,6 @@ import {
   Cpu,
   Database,
   Download,
-  Flame,
   Gauge as GaugeIcon,
   HelpCircle,
   Monitor,
@@ -27,7 +26,6 @@ import {
   TemplateId,
   UserPreferences,
   VoiceLevel,
-  RECOMMENDED_OLLAMA_ENV,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
 import {
@@ -40,7 +38,6 @@ import {
   Disclosure,
   Input,
   SegmentedControl,
-  Switch,
 } from '../../ui/primitives';
 import {
   PageHeader,
@@ -88,7 +85,6 @@ export function SettingsView({
     null,
   );
   const [isTesting, setIsTesting] = useState(false);
-  const [isWarming, setIsWarming] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationStep, setCalibrationStep] = useState('');
   const [calibrationStepIndex, setCalibrationStepIndex] = useState(0);
@@ -144,17 +140,6 @@ export function SettingsView({
     addToast(d.headline, d.connected ? 'success' : 'warning');
   };
 
-  const handleWarmUp = async () => {
-    setIsWarming(true);
-    onConnectionChanged();
-    await useCases.performance.warmUp(settings.defaultVoice ?? 'balanced');
-    setIsWarming(false);
-    onConnectionChanged();
-    const summary = await useCases.performance.getPerformanceSummary();
-    setPerfSummary(summary);
-    addToast('Model warmed in memory.', 'success');
-  };
-
   const handleCalibrate = async () => {
     setIsCalibrating(true);
     setCalibrationStep('Cevin is checking');
@@ -177,22 +162,13 @@ export function SettingsView({
     }
   };
 
-  const mlxConfig = (settings.providerConfigs['cevin-3b-mlx'] ?? {
+  const mlxConfig = (settings.providerConfigs['mlx-fastapi'] ?? {
     baseUrl: 'http://localhost:8000',
     model: 'cevin-3b-4bit-fused',
-    numCtx: 1024,
-  }) as { baseUrl?: string; model?: string; numCtx?: number };
+    maxSeqLength: 1024,
+  }) as { baseUrl?: string; model?: string; maxSeqLength?: number };
 
-  const ollamaConfig = (settings.providerConfigs['ollama-llama3.1'] ??
-    settings.providerConfigs.ollama ?? {
-      baseUrl: 'http://localhost:11434',
-      model: 'llama3.1:8b',
-    }) as { baseUrl?: string; model?: string; embeddingModel?: string };
-
-  const isMlxSelected = settings.activeProviderId === 'cevin-3b-mlx';
-  const isOllamaSelected =
-    settings.activeProviderId === 'ollama-llama3.1' ||
-    settings.activeProviderId === 'ollama';
+  const isMlxSelected = settings.activeProviderId !== 'mock';
 
   const navItems: Array<{
     id: SettingsSectionId;
@@ -237,10 +213,7 @@ export function SettingsView({
 
   return (
     <div className="space-y-6 pb-16">
-      <PageHeader
-        title="Settings"
-        subtitle="Configure your practical job preferences, local AI assistant, appearance, paper size, and browser-stored data."
-      />
+      <PageHeader title="Settings" />
 
       {/* Two-Column Layout at >=1280px */}
       <div className="xl:grid xl:grid-cols-12 xl:gap-8 items-start space-y-6 xl:space-y-0">
@@ -307,9 +280,6 @@ export function SettingsView({
                 <h2 className="text-base font-display font-semibold text-ink">
                   AI connection
                 </h2>
-                <p className="text-xs text-ink-muted mt-0.5">
-                  Default engine: <strong>cevin-3b-4bit-fused</strong> (Apple MLX 4-bit fine-tuned)
-                </p>
               </div>
               <Badge
                 tone={
@@ -319,25 +289,19 @@ export function SettingsView({
                 }
               >
                 {settings.activeProviderId === 'mock'
-                  ? 'Demo mode active'
+                  ? 'Demo mode'
                   : diag?.connected
-                    ? `Connected · ${
-                        isMlxSelected
-                          ? (mlxConfig.model ?? 'cevin-3b-4bit-fused')
-                          : (ollamaConfig.model ?? 'llama3.1:8b')
-                      }`
-                    : isMlxSelected
-                      ? 'MLX FastAPI unreachable'
-                      : 'Ollama unreachable'}
+                    ? 'Model ready'
+                    : "Can't reach the model"}
               </Badge>
             </div>
 
-            {/* 3 Radio Cards: Cevin 3B Fine-Tuned (MLX FastAPI), Llama 3.1 8B (Ollama Legacy), Built-in demo mode */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {/* 2 Cards Only: Cevin model (on this Mac) and Demo mode */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
               <button
                 type="button"
                 onClick={() =>
-                  void updateSettings({ activeProviderId: 'cevin-3b-mlx' })
+                  void updateSettings({ activeProviderId: 'mlx-fastapi' })
                 }
                 className={`relative p-4 rounded-lg border text-left transition-all cursor-pointer ${
                   isMlxSelected
@@ -346,11 +310,8 @@ export function SettingsView({
                 }`}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
-                      <ShieldCheck className="w-4 h-4" />
-                    </div>
-                    <Badge tone="accent">Default</Badge>
+                  <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
+                    <Cpu className="w-4 h-4" />
                   </div>
                   {isMlxSelected && (
                     <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center">
@@ -359,42 +320,10 @@ export function SettingsView({
                   )}
                 </div>
                 <div className="text-sm font-semibold text-ink">
-                  Cevin 3B Fine-Tuned — MLX FastAPI
+                  Cevin model (on this Mac)
                 </div>
                 <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                  Specialized 4-bit Apple Silicon MLX model with Chain-of-Thought grounding and hallucination audit.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  void updateSettings({ activeProviderId: 'ollama-llama3.1' })
-                }
-                className={`relative p-4 rounded-lg border text-left transition-all cursor-pointer ${
-                  isOllamaSelected
-                    ? 'border-accent ring-2 ring-accent bg-accent-50/60'
-                    : 'border-border bg-surface hover:border-border-strong'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-md bg-surface-sunken flex items-center justify-center text-accent">
-                      <Cpu className="w-4 h-4" />
-                    </div>
-                    <Badge tone="neutral">Legacy</Badge>
-                  </div>
-                  {isOllamaSelected && (
-                    <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center">
-                      <Check className="w-3 h-3" />
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm font-semibold text-ink">
-                  Llama 3.1 8B — Ollama Legacy
-                </div>
-                <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                  General-purpose fallback connecting to local Ollama for zero-cloud bullet rephrasing.
+                  Fine-tuned for resume writing. Runs on this Mac (Apple Silicon).
                 </p>
               </button>
 
@@ -420,79 +349,23 @@ export function SettingsView({
                   )}
                 </div>
                 <div className="text-sm font-semibold text-ink">
-                  Built-in demo mode (no setup)
+                  Demo mode
                 </div>
                 <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                  Works immediately in any browser with zero network setup.
+                  Works immediately in any browser with sample responses.
                 </p>
               </button>
             </div>
 
             {/* Tinted Banner for Status */}
             {settings.activeProviderId === 'mock' ? (
-              <Banner tone="success" title="Built-in demo mode is ready">
-                All features work immediately without running a local server.
+              <Banner tone="success" title="Demo mode is active">
+                All features work immediately without running a local model server.
               </Banner>
             ) : diag?.connected ? (
               <Banner
                 tone="success"
                 title={diag.headline}
-                actions={
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={isTesting}
-                      onClick={() => void handleTestConnection()}
-                    >
-                      {isTesting ? (
-                        <CevinStatusIndicator
-                          state="thinking"
-                          size={16}
-                          variant="glyph"
-                          label="Cevin is checking"
-                        />
-                      ) : (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Test connection</span>
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={isWarming}
-                      onClick={() => void handleWarmUp()}
-                    >
-                      {isWarming ? (
-                        <CevinStatusIndicator
-                          state="thinking"
-                          size={16}
-                          variant="glyph"
-                          label="Cevin is warming up"
-                        />
-                      ) : (
-                        <>
-                          <Flame className="w-3.5 h-3.5 text-accent" />
-                          <span>Warm up now</span>
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                }
-              >
-                {diag.details}
-              </Banner>
-            ) : (
-              <Banner
-                tone="warning"
-                title={
-                  diag?.headline ??
-                  (isMlxSelected
-                    ? "Can't reach Cevin 3B MLX FastAPI"
-                    : "Can't reach local Ollama")
-                }
                 actions={
                   <Button
                     size="sm"
@@ -516,40 +389,62 @@ export function SettingsView({
                   </Button>
                 }
               >
-                {diag?.details ??
-                  (isMlxSelected
-                    ? 'Start the local Apple Silicon MLX FastAPI server, or switch to Ollama / Demo mode.'
-                    : 'Start Ollama with browser access enabled, or use Built-in demo mode.')}
+                {diag.details}
               </Banner>
-            )}
-
-            {isMlxSelected && (
-              <div className="space-y-3 pt-1">
-                <div className="text-xs font-medium text-ink">
-                  Quick terminal setup for cevin-3b-4bit-fused (Apple Silicon MLX)
+            ) : (
+              <Banner
+                tone="warning"
+                title={
+                  diag?.headline ??
+                  `Can't reach the Cevin model at ${mlxConfig.baseUrl ?? 'http://localhost:8000'}.`
+                }
+                actions={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={isTesting}
+                      onClick={() => void handleTestConnection()}
+                    >
+                      {isTesting ? (
+                        <CevinStatusIndicator
+                          state="thinking"
+                          size={16}
+                          variant="glyph"
+                          label="Cevin is checking"
+                        />
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Test connection</span>
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        void updateSettings({ activeProviderId: 'mock' })
+                      }
+                    >
+                      <span>Use demo mode</span>
+                    </Button>
+                  </div>
+                }
+              >
+                <div className="space-y-2.5 mt-1">
+                  <p>
+                    {diag?.details ??
+                      'Start the Cevin model server in your project directory inside your Python virtual environment (.venv).'}
+                  </p>
+                  <CopyCommandField
+                    command={
+                      diag?.remediationCommand ??
+                      'uvicorn mlx_server:app --host 127.0.0.1 --port 8000'
+                    }
+                  />
                 </div>
-                <CopyCommandField
-                  command={
-                    diag?.remediationCommand ??
-                    'uvicorn mlx_server:app --host 127.0.0.1 --port 8000'
-                  }
-                />
-              </div>
-            )}
-
-            {isOllamaSelected && (
-              <div className="space-y-3 pt-1">
-                <div className="text-xs font-medium text-ink">
-                  Quick terminal setup for llama3.1:8b
-                </div>
-                <CopyCommandField command="ollama pull llama3.1:8b" />
-                <CopyCommandField
-                  command={
-                    diag?.remediationCommand ??
-                    'OLLAMA_ORIGINS="*" ollama serve'
-                  }
-                />
-              </div>
+              </Banner>
             )}
           </section>
 
@@ -564,7 +459,7 @@ export function SettingsView({
                   Performance
                 </h2>
                 <p className="text-xs text-ink-muted mt-0.5">
-                  Prefix caching, parallel slots, and local speed calibration.
+                  Speed and memory on this Mac.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -573,7 +468,7 @@ export function SettingsView({
                   variant="secondary"
                   disabled={isCalibrating}
                   onClick={() => void handleCalibrate()}
-                  title={calibrationStep || 'Tune for my Mac'}
+                  title={calibrationStep || 'Measure speed on this Mac'}
                 >
                   {isCalibrating ? (
                     <CevinStatusIndicator
@@ -584,7 +479,7 @@ export function SettingsView({
                       label="Cevin is checking"
                     />
                   ) : (
-                    'Calibrate speed (~15s)'
+                    'Measure speed (~15s)'
                   )}
                 </Button>
                 <Button
@@ -601,172 +496,100 @@ export function SettingsView({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
-                <span className="text-xs text-ink-muted block">
-                  Reading speed
-                </span>
+                <span className="text-xs text-ink-muted block">Speed</span>
                 {settings.activeProviderId === 'mock' ? (
                   <span className="text-xs font-medium text-ink-muted block mt-1">
-                    Not measured in demo mode
-                  </span>
-                ) : (perfSummary?.readingSpeedTokPerSec ?? 0) > 0 ? (
-                  <>
-                    <span className="text-lg font-display font-bold tabular-nums text-ink">
-                      {perfSummary!.readingSpeedTokPerSec} tok/s
-                    </span>
-                    <span className="text-[11px] text-ink-subtle block">
-                      Measured on this computer.
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-xs font-medium text-ink-muted block mt-1">
-                    Not calibrated yet
-                  </span>
-                )}
-              </div>
-              <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
-                <span className="text-xs text-ink-muted block">
-                  Writing speed
-                </span>
-                {settings.activeProviderId === 'mock' ? (
-                  <span className="text-xs font-medium text-ink-muted block mt-1">
-                    Not measured in demo mode
+                    Demo mode (instant)
                   </span>
                 ) : (perfSummary?.writingSpeedTokPerSec ?? 0) > 0 ? (
                   <>
                     <span className="text-lg font-display font-bold tabular-nums text-ink">
                       {perfSummary!.writingSpeedTokPerSec} tok/s
                     </span>
-                    <span className="text-[11px] text-ink-subtle block">
-                      Measured on this computer.
+                    <span className="text-[11px] text-ink-subtle block tabular-nums">
+                      Read {perfSummary!.readingSpeedTokPerSec} tok/s on this Mac
                     </span>
                   </>
                 ) : (
                   <span className="text-xs font-medium text-ink-muted block mt-1">
-                    Not calibrated yet
+                    Not measured yet
                   </span>
                 )}
               </div>
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
-                <span className="text-xs text-ink-muted block">Cache hits</span>
+                <span className="text-xs text-ink-muted block">Memory</span>
                 <span className="text-lg font-display font-bold tabular-nums text-ink">
-                  {perfSummary?.cacheHits ?? 0} / {perfSummary?.totalCalls ?? 0}
+                  {settings.activeProviderId === 'mock' ? '0 GB' : '~2.7 GB'}
+                </span>
+                <span className="text-[11px] text-ink-subtle block">
+                  {settings.activeProviderId === 'mock'
+                    ? 'In-browser demo'
+                    : '4-bit Apple Silicon unified memory'}
                 </span>
               </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div>
-                <div className="text-xs font-semibold text-ink">
-                  Keep model warm in memory (30m)
-                </div>
-                <p className="text-xs text-ink-muted">
-                  Avoids cold-start delay when switching between bullets.
-                </p>
+              <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
+                <span className="text-xs text-ink-muted block">
+                  Response cache
+                </span>
+                {(perfSummary?.totalCalls ?? 0) > 0 ? (
+                  <>
+                    <span className="text-lg font-display font-bold tabular-nums text-ink">
+                      {perfSummary!.cacheHits} / {perfSummary!.totalCalls}
+                    </span>
+                    <span className="text-[11px] text-ink-subtle block">
+                      Saved responses reused
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs font-medium text-ink-muted block mt-1">
+                    No saved responses yet
+                  </span>
+                )}
               </div>
-              <Switch
-                checked={settings.keepModelWarm ?? true}
-                onCheckedChange={(v) =>
-                  void updateSettings({ keepModelWarm: v })
-                }
-                label="Keep model warm"
-              />
             </div>
 
-            <Disclosure title="Advanced local engine parameters">
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-ink-muted mb-1">
-                      MLX FastAPI base URL
-                    </label>
-                    <Input
-                      value={mlxConfig.baseUrl ?? 'http://localhost:8000'}
-                      onChange={(e) =>
-                        void updateSettings({
-                          providerConfigs: {
-                            ...settings.providerConfigs,
-                            'cevin-3b-mlx': {
-                              ...mlxConfig,
-                              baseUrl: e.target.value,
-                            },
+            <Disclosure title="Model server address">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-ink-muted mb-1">
+                    Server URL
+                  </label>
+                  <Input
+                    value={mlxConfig.baseUrl ?? 'http://localhost:8000'}
+                    onChange={(e) =>
+                      void updateSettings({
+                        providerConfigs: {
+                          ...settings.providerConfigs,
+                          'mlx-fastapi': {
+                            ...mlxConfig,
+                            baseUrl: e.target.value,
                           },
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-ink-muted mb-1">
-                      Fused MLX model directory
-                    </label>
-                    <Input
-                      value={mlxConfig.model ?? 'cevin-3b-4bit-fused'}
-                      onChange={(e) =>
-                        void updateSettings({
-                          providerConfigs: {
-                            ...settings.providerConfigs,
-                            'cevin-3b-mlx': {
-                              ...mlxConfig,
-                              model: e.target.value,
-                            },
-                          },
-                        })
-                      }
-                    />
-                  </div>
+                        },
+                      })
+                    }
+                  />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-ink-muted mb-1">
-                      Ollama base URL (Legacy fallback)
-                    </label>
-                    <Input
-                      value={ollamaConfig.baseUrl ?? 'http://localhost:11434'}
-                      onChange={(e) =>
-                        void updateSettings({
-                          providerConfigs: {
-                            ...settings.providerConfigs,
-                            'ollama-llama3.1': {
-                              ...ollamaConfig,
-                              baseUrl: e.target.value,
-                            },
-                            ollama: {
-                              ...ollamaConfig,
-                              baseUrl: e.target.value,
-                            },
+                <div>
+                  <label className="block text-xs text-ink-muted mb-1">
+                    Model name
+                  </label>
+                  <Input
+                    value={mlxConfig.model ?? 'cevin-3b-4bit-fused'}
+                    onChange={(e) =>
+                      void updateSettings({
+                        providerConfigs: {
+                          ...settings.providerConfigs,
+                          'mlx-fastapi': {
+                            ...mlxConfig,
+                            model: e.target.value,
                           },
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-ink-muted mb-1">
-                      Ollama model tag
-                    </label>
-                    <Input
-                      value={ollamaConfig.model ?? 'llama3.1:8b'}
-                      onChange={(e) =>
-                        void updateSettings({
-                          providerConfigs: {
-                            ...settings.providerConfigs,
-                            'ollama-llama3.1': {
-                              ...ollamaConfig,
-                              model: e.target.value,
-                            },
-                            ollama: {
-                              ...ollamaConfig,
-                              model: e.target.value,
-                            },
-                          },
-                        })
-                      }
-                    />
-                  </div>
+                        },
+                      })
+                    }
+                  />
                 </div>
-                <CopyCommandField
-                  command={`OLLAMA_FLASH_ATTENTION=${RECOMMENDED_OLLAMA_ENV.OLLAMA_FLASH_ATTENTION} OLLAMA_KV_CACHE_TYPE=${RECOMMENDED_OLLAMA_ENV.OLLAMA_KV_CACHE_TYPE} OLLAMA_NUM_PARALLEL=${RECOMMENDED_OLLAMA_ENV.OLLAMA_NUM_PARALLEL} ollama serve`}
-                />
               </div>
             </Disclosure>
           </section>

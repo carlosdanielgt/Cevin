@@ -105,7 +105,7 @@ export const defaultTokenEstimator = new TokenEstimator();
 
 /**
  * Output Sanitizer (`sanitizeLlmOutput`):
- * Strips Llama-3.1 preambles ("Here is the rewritten bullet:", "Sure! Here's..."),
+ * Strips conversational preambles ("Here is the rewritten bullet:", "Sure! Here's..."),
  * markdown code fences, leading labels ("REWRITTEN:", "Bullet:"), bullet glyphs,
  * surrounding quotes, and trailing explanations ("Note: ...").
  */
@@ -452,7 +452,7 @@ export interface VoiceHarnessData {
 
 /**
  * Voice styles as pure data:
- * - 3 chat-turn example pairs per detent (fed as user/assistant message pairs so llama3.1:8b imitates style reliably)
+ * - 3 chat-turn example pairs per detent (fed as user/assistant message pairs so the local model imitates style reliably)
  * - Word-count length band per detent
  * - Deterministic verb-swap lexicon for instant (<10ms) dial movement before LLM refinement finishes
  * - Voice-specific banned words

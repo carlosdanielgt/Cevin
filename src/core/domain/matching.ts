@@ -8,6 +8,7 @@ import {
 import {
   evaluateKeywordPresence,
   normalizeKeyword,
+  sanitizeSkillAliasesAndRelated,
 } from './keywords';
 
 export interface RankedAchievementItem {
@@ -38,12 +39,46 @@ export function buildCustomAliasMap(skills: Skill[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const skill of skills) {
     const norm = normalizeKeyword(skill.name);
+    const { aliases } = sanitizeSkillAliasesAndRelated(
+      skill.name,
+      skill.aliases,
+      skill.related ?? [],
+    );
     const existing = map.get(norm) ?? [];
     map.set(norm, [
       ...existing,
       skill.name.toLowerCase(),
-      ...skill.aliases.map((a) => a.toLowerCase()),
+      ...aliases.map((a) => a.toLowerCase()),
     ]);
+  }
+  return map;
+}
+
+export function buildCustomRelatedMap(skills: Skill[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const skill of skills) {
+    const norm = normalizeKeyword(skill.name);
+    const { related } = sanitizeSkillAliasesAndRelated(
+      skill.name,
+      skill.aliases,
+      skill.related ?? [],
+    );
+    if (related.length === 0) continue;
+    const existing = map.get(norm) ?? [];
+    map.set(
+      norm,
+      Array.from(new Set([...existing, ...related.map((r) => r.toLowerCase())])),
+    );
+    for (const rel of related) {
+      const relNorm = normalizeKeyword(rel);
+      const relExisting = map.get(relNorm) ?? [];
+      map.set(
+        relNorm,
+        Array.from(
+          new Set([...relExisting, skill.name.toLowerCase(), norm]),
+        ),
+      );
+    }
   }
   return map;
 }

@@ -140,7 +140,7 @@ function mapTaskIdToActivityKind(taskId: string): CevinActivityKind {
  * Single orchestrator (`LlmGateway`) for all local model calls:
  * - Priority queue (`interactive` > `visible` > `background`) bounded by `parallelSlots` (1–3)
  * - Per-item `AbortController` supersession: a new job with the same `itemKey` aborts the previous one
- * - Constant `profile.numCtx` (4096) on every call so Ollama never reallocates the KV cache
+ * - Constant `profile.maxSeqLength` per call
  * - Byte-identical `prefixMessages` + variable `suffixMessage` for KV prefix reuse
  * - Persistent `ResultCache` lookup before calling the provider
  * - 1-shot targeted repair call on validator failure; falls back to `task.baseline(input)` with `keptOriginalWording: true` if repair still fails
@@ -387,12 +387,11 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
 
       if (
         !profile.disableRawPromptTrimming &&
-        estimatedInputTokens + tokenCap > profile.numCtx
+        estimatedInputTokens + tokenCap > profile.maxSeqLength
       ) {
-        // Legacy llama3.1:8b prompt-trimming harness: only run when raw truncation is not disabled
         const maxSuffixChars = Math.max(
           400,
-          Math.floor((profile.numCtx - tokenCap - 450) * 3.5),
+          Math.floor((profile.maxSeqLength - tokenCap - 450) * 3.5),
         );
         const lastIdx = baseMessages.length - 1;
         baseMessages[lastIdx] = {
@@ -410,13 +409,12 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
             messages,
             format: task.format,
             options: {
-              numCtx: profile.numCtx,
+              maxSeqLength: profile.maxSeqLength,
               temperature: task.getTemperature(profile),
               topP: profile.topP,
               seed: attemptSeed,
               numPredict: tokenCap,
               stop: task.stopSequences ?? profile.stop,
-              keepAlive: profile.keepAlive,
             },
             signal: controller.signal,
           });
@@ -693,8 +691,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         });
         await provider.warm({
           prefixMessages: dummyPrompt.prefixMessages,
-          numCtx: profile.numCtx,
-          keepAlive: profile.keepAlive,
+          maxSeqLength: profile.maxSeqLength,
         });
       } catch {
         // Ignore background warm-up errors
@@ -781,8 +778,8 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         Math.min(3, parallelSlots ?? configuredSlots ?? 2),
       );
 
-      // Estimate per-bullet time from measured reading/writing speeds (defaulting to M1 16GB llama3.1:8b numbers: ~3.5s per bullet)
-      const writeSpeed = Math.max(12, summary.writingSpeedTokPerSec || 38);
+      // Estimate per-bullet time from measured reading/writing speeds (defaulting to Apple Silicon 3B MLX numbers)
+      const writeSpeed = Math.max(12, summary.writingSpeedTokPerSec || 33);
       const readSpeed = Math.max(60, summary.readingSpeedTokPerSec || 195);
       const perBulletSec = 110 / readSpeed + 32 / writeSpeed + 0.45;
       const waves = Math.ceil(bulletCount / slots);

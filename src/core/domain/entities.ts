@@ -129,6 +129,7 @@ export const SkillCategorySchema = z.enum([
   'Data & AI',
   'Practices',
   'Tools',
+  'Other',
 ]);
 export type SkillCategory = z.infer<typeof SkillCategorySchema>;
 
@@ -137,6 +138,7 @@ export const SkillSchema = z.object({
   name: z.string().min(1),
   category: SkillCategorySchema,
   aliases: z.array(z.string()),
+  related: z.array(z.string()).optional(),
 });
 export type Skill = z.infer<typeof SkillSchema>;
 
@@ -225,8 +227,11 @@ export const TailoredBulletSchema = z.object({
 });
 export type TailoredBullet = z.infer<typeof TailoredBulletSchema>;
 
-export const TextAlignSchema = z.enum(['left', 'justify', 'right']);
-export type TextAlign = z.infer<typeof TextAlignSchema>;
+export const TextAlignSchema = z.preprocess(
+  (val) => (val === 'right' ? 'left' : val),
+  z.enum(['left', 'justify']),
+);
+export type TextAlign = 'left' | 'justify';
 
 export const ResumeDraftContentSchema = z.object({
   targetHeadline: z.string(),

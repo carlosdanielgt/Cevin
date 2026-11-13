@@ -92,6 +92,7 @@ import {
   CevinMark,
   CevinStatusIndicator,
   Checkbox,
+  CopyCommandField,
   DeltaChip,
   Dialog,
   DialogContent,
@@ -565,6 +566,7 @@ export function HeroScoreBand({
   referenceVersionLabel = 'v1',
   verdictTitle,
   verdictSummary,
+  lensFix,
 }: {
   jobMatch: number;
   appeal?: number;
@@ -580,6 +582,7 @@ export function HeroScoreBand({
   referenceVersionLabel?: string;
   verdictTitle?: string;
   verdictSummary?: string;
+  lensFix?: { title: string; onApply: () => void };
 }) {
   const appeal =
     documentKind === 'coverLetter'
@@ -671,19 +674,33 @@ export function HeroScoreBand({
       </div>
 
       {/* Verdict spans the full width below the three gauges */}
-      <div className="border-t border-hairline pt-4 space-y-1.5">
-        <div className="inline-flex items-center gap-2">
-          <CevinAvatar size="sm" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-accent-700">
-            Cevin’s assessment
-          </span>
+      <div className="border-t border-hairline pt-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1.5 flex-1 min-w-[240px]">
+          <div className="inline-flex items-center gap-2">
+            <CevinAvatar size="sm" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-accent-700">
+              Cevin’s assessment
+            </span>
+          </div>
+          <h3 className="text-2xl font-display font-semibold text-ink tracking-tight">
+            {verdictTitle ?? defaultVerdict}
+          </h3>
+          <p className="text-sm text-ink-muted leading-relaxed">
+            {verdictSummary ?? defaultSummary}
+          </p>
         </div>
-        <h3 className="text-2xl font-display font-semibold text-ink tracking-tight">
-          {verdictTitle ?? defaultVerdict}
-        </h3>
-        <p className="text-sm text-ink-muted leading-relaxed">
-          {verdictSummary ?? defaultSummary}
-        </p>
+        {lensFix && (
+          <div className="shrink-0 pt-1">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={lensFix.onApply}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-accent" />
+              <span>{lensFix.title}</span>
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -698,6 +715,8 @@ export const ThreeScoreHeroBand = HeroScoreBand;
 export function LensBars({
   lenses,
   weakestHints,
+  onApplyLensFix,
+  lensFixLabels,
 }: {
   lenses: AppealLensScores;
   weakestHints?: {
@@ -706,6 +725,8 @@ export function LensBars({
     clarity: string;
     voice: string;
   };
+  onApplyLensFix?: (lens: 'skim' | 'proof' | 'clarity' | 'voice') => void;
+  lensFixLabels?: Partial<Record<'skim' | 'proof' | 'clarity' | 'voice', string>>;
 }) {
   const hints = weakestHints ??
     lenses.weakestHints ??
@@ -715,30 +736,45 @@ export function LensBars({
       clarity: 'Crisp bullet length and balanced density',
       voice: 'Specific phrasing with varied verbs',
     };
-  const rows = [
+  const rows: Array<{
+    id: 'skim' | 'proof' | 'clarity' | 'voice';
+    label: string;
+    weightTooltip: string;
+    score: number;
+    hint: string;
+    defaultFixLabel: string;
+  }> = [
     {
       id: 'skim',
-      label: 'Skim (35%)',
+      label: 'Skim',
+      weightTooltip: '35% of Recruiter appeal',
       score: lenses.skim,
       hint: hints.skim,
+      defaultFixLabel: 'Tighten summary',
     },
     {
       id: 'proof',
-      label: 'Proof (30%)',
+      label: 'Proof',
+      weightTooltip: '30% of Recruiter appeal',
       score: lenses.proof,
       hint: hints.proof,
+      defaultFixLabel: 'Promote strongest bullet',
     },
     {
       id: 'clarity',
-      label: 'Clarity (20%)',
+      label: 'Clarity',
+      weightTooltip: '20% of Recruiter appeal',
       score: lenses.clarity,
       hint: hints.clarity,
+      defaultFixLabel: 'Trim long bullets',
     },
     {
       id: 'voice',
-      label: 'Voice (15%)',
+      label: 'Voice',
+      weightTooltip: '15% of Recruiter appeal',
       score: lenses.voice,
       hint: hints.voice,
+      defaultFixLabel: 'Switch to Natural voice',
     },
   ];
 
@@ -781,13 +817,29 @@ export function LensBars({
             : row.score >= 65
               ? 'bg-accent'
               : 'bg-warning';
+        const fixLabel = lensFixLabels?.[row.id] ?? row.defaultFixLabel;
         return (
           <div key={row.id} className="space-y-1">
             <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="font-semibold text-ink">{row.label}</span>
-              <span className="font-sans font-bold tabular-nums text-ink">
-                {row.score}
-              </span>
+              <Tooltip content={row.weightTooltip}>
+                <span className="font-semibold text-ink cursor-help">
+                  {row.label}
+                </span>
+              </Tooltip>
+              <div className="inline-flex items-center gap-2">
+                {row.score < 80 && onApplyLensFix && (
+                  <button
+                    type="button"
+                    onClick={() => onApplyLensFix(row.id)}
+                    className="text-[11px] font-semibold text-accent hover:underline cursor-pointer"
+                  >
+                    {fixLabel}
+                  </button>
+                )}
+                <span className="font-sans font-bold tabular-nums text-ink">
+                  {row.score}
+                </span>
+              </div>
             </div>
             <div className="h-2 w-full rounded-full bg-surface-sunken border border-hairline overflow-hidden">
               <div
@@ -1525,15 +1577,18 @@ export function Stepper({
 export const CompactStepper = Stepper;
 
 /**
- * Dismissible Getting Started checklist card on /applications.
- * Auto-hides when all 3 steps are done, and hides "Try with demo data" when demo data is already loaded.
+ * Unified 3-step Getting Started checklist on /applications.
+ * Auto-hides when all 3 steps are complete, shows inline model start command when unreachable,
+ * and adapts the primary action to the first incomplete step ("Import your resume" -> "New application").
  */
 export function GettingStartedCard({
   aiConnectedOrDemo,
   hasExperience,
   hasApplication,
   isDemoDataLoaded = false,
+  remediationCommand = 'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
   onConnectAi,
+  onUseDemoMode,
   onAddExperience,
   onCreateApplication,
   onTryDemoData,
@@ -1543,82 +1598,129 @@ export function GettingStartedCard({
   hasExperience: boolean;
   hasApplication: boolean;
   isDemoDataLoaded?: boolean;
+  remediationCommand?: string;
   onConnectAi: () => void;
+  onUseDemoMode?: () => void;
   onAddExperience: () => void;
   onCreateApplication: () => void;
   onTryDemoData: () => void;
-  onDismiss: () => void;
+  onDismiss?: () => void;
 }) {
   const steps = [
     {
       id: 'ai',
-      label: '1. Connect AI or choose demo mode',
+      label: 'Connect the model (or use Demo mode)',
       done: aiConnectedOrDemo,
       onClick: onConnectAi,
     },
     {
       id: 'bank',
-      label: '2. Add your experience',
+      label: 'Add your experience',
       done: hasExperience,
       onClick: onAddExperience,
     },
     {
       id: 'app',
-      label: '3. Create your first application',
+      label: 'Create your first application',
       done: hasApplication,
       onClick: onCreateApplication,
     },
   ];
 
+  const primaryActionLabel = !hasExperience
+    ? 'Import your resume'
+    : 'New application';
+  const handlePrimaryAction = !hasExperience
+    ? onAddExperience
+    : onCreateApplication;
+
   return (
-    <div className="bg-surface border border-border rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-4">
-      <div className="flex flex-wrap items-center gap-3.5">
-        <div className="inline-flex items-center gap-2">
-          <CevinAvatar size="sm" />
-          <span className="text-sm font-semibold text-ink">Getting started</span>
+    <div
+      data-testid="getting-started-checklist"
+      className="bg-surface border border-border rounded-xl p-5 shadow-sm space-y-4"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3.5">
+          <div className="inline-flex items-center gap-2">
+            <CevinAvatar size="sm" />
+            <span className="text-sm font-semibold text-ink">
+              Getting started
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {steps.map((s, idx) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={s.onClick}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer',
+                  s.done
+                    ? 'bg-success-50 border-success/30 text-success-700'
+                    : 'bg-surface-sunken border-border text-ink hover:border-border-strong',
+                )}
+              >
+                {s.done ? (
+                  <Check className="w-3.5 h-3.5 text-success-700" />
+                ) : (
+                  <span className="w-4 h-4 rounded-full bg-accent text-white text-[10px] font-bold inline-flex items-center justify-center tabular-nums">
+                    {idx + 1}
+                  </span>
+                )}
+                <span>{s.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {steps.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={s.onClick}
-              className={cn(
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer',
-                s.done
-                  ? 'bg-success-50 border-success/30 text-success-700'
-                  : 'bg-surface-sunken border-border text-ink hover:border-border-strong',
-              )}
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handlePrimaryAction}
+          >
+            <span>{primaryActionLabel}</span>
+          </Button>
+          {!isDemoDataLoaded && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onTryDemoData}
             >
-              {s.done ? (
-                <Check className="w-3.5 h-3.5 text-success-700" />
-              ) : (
-                <span className="w-2 h-2 rounded-full bg-accent" />
-              )}
-              <span>{s.label}</span>
-            </button>
-          ))}
+              <span>Load sample workspace</span>
+            </Button>
+          )}
+          {onDismiss && hasApplication && (
+            <IconButton
+              label="Dismiss getting started checklist"
+              size="sm"
+              onClick={onDismiss}
+            >
+              <X className="w-4 h-4" />
+            </IconButton>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        {!isDemoDataLoaded && (
-          <button
-            type="button"
-            onClick={onTryDemoData}
-            className="text-xs font-semibold text-accent hover:underline cursor-pointer"
-          >
-            Try with demo data
-          </button>
-        )}
-        <IconButton
-          label="Dismiss getting started checklist"
-          size="sm"
-          onClick={onDismiss}
-        >
-          <X className="w-4 h-4" />
-        </IconButton>
-      </div>
+      {!aiConnectedOrDemo && (
+        <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline space-y-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium text-ink">
+              Can&apos;t reach the Cevin model at http://localhost:8000. Start it in your project directory (inside your Python virtual environment):
+            </span>
+            {onUseDemoMode && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onUseDemoMode}
+              >
+                Use demo mode
+              </Button>
+            )}
+          </div>
+          <CopyCommandField command={remediationCommand} />
+        </div>
+      )}
     </div>
   );
 }
@@ -2513,33 +2615,9 @@ export function BulletRow({
                   <ArrowDown className="w-3.5 h-3.5" />
                   <span>Move bullet down</span>
                 </button>
-
-                <div className="my-1 border-t border-hairline" />
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onRemove();
-                    setMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-warning-700 rounded-sm hover:bg-warning-50 text-left cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-warning-600" />
-                  <span>Remove from resume</span>
-                </button>
               </div>
             </PopoverContent>
           </Popover>
-
-          <IconButton
-            size="sm"
-            label="Remove from resume"
-            onClick={onRemove}
-            className="text-ink-muted hover:text-warning-700"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </IconButton>
         </div>
       </div>
 
@@ -3922,22 +4000,18 @@ export function PreviewToolbar({
   }> = [
     {
       value: 'left',
-      label: 'Align section content left',
+      label: 'Left',
       icon: AlignLeft,
     },
     {
       value: 'justify',
-      label: 'Justify section content evenly',
+      label: 'Justified',
       icon: AlignJustify,
-    },
-    {
-      value: 'right',
-      label: 'Align section content right',
-      icon: AlignRight,
     },
   ];
 
-  const zoomLabel = zoom === 'sm' ? '90%' : zoom === 'lg' ? '110%' : '100%';
+  const zoomPercent = zoom === 'sm' ? '90%' : zoom === 'lg' ? '110%' : '100%';
+  const zoomLabel = zoom === 'md' ? 'Fit' : zoomPercent;
   const kbSize = byteSize ? Math.max(1, Math.round(byteSize / 1024)) : null;
 
   return (
@@ -4042,9 +4116,11 @@ export function PreviewToolbar({
         >
           <ZoomOut className="w-3.5 h-3.5" />
         </IconButton>
-        <span className="text-xs font-sans font-medium tabular-nums text-ink-muted px-1">
-          {zoomLabel}
-        </span>
+        <Tooltip content={`Zoom: ${zoomPercent}`}>
+          <span className="text-xs font-sans font-medium tabular-nums text-ink-muted px-1 cursor-help">
+            {zoomLabel}
+          </span>
+        </Tooltip>
         <IconButton
           label="Zoom in preview"
           size="sm"
@@ -4560,6 +4636,7 @@ export function AttentionToken({
       : token.kind === 'notable-fit'
         ? '! '
         : '';
+  const cleanLabel = token.label.replace(/^[!✕✓⚠]\s*/, '');
 
   return (
     <Tooltip content={token.tooltip}>
@@ -4570,7 +4647,7 @@ export function AttentionToken({
         )}
       >
         {prefix}
-        {token.label}
+        {cleanLabel}
       </span>
     </Tooltip>
   );

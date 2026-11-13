@@ -9,17 +9,18 @@ import { ModelProfile, ModelProfileCatalog } from '../../../core/application';
  */
 export const cevin3bMlxProfile: ModelProfile = {
   id: 'cevin_3b_mlx',
-  label: 'Cevin 3B Fine-Tuned (MLX 4-bit)',
+  label: 'Cevin model (3B 4-bit MLX)',
   isRecommendedDefault: true,
   matches(modelName: string): boolean {
     const normalized = modelName.trim().toLowerCase();
     return (
       normalized === 'cevin-3b-4bit-fused' ||
       normalized.includes('cevin-3b') ||
-      normalized.includes('qwen2.5-3b')
+      normalized.includes('qwen2.5-3b') ||
+      normalized === 'demo mode'
     );
   },
-  numCtx: 1024,
+  maxSeqLength: 1024,
   parallelRecommended: 1,
   disableRawPromptTrimming: true,
   temperatures: {
@@ -39,71 +40,21 @@ export const cevin3bMlxProfile: ModelProfile = {
     jobFact: 512,
   },
   stop: [],
-  keepAlive: '30m',
   fewShotStyle: 'inline',
   serverEnv: ['CEVIN_MLX_MODEL_PATH=./cevin-3b-4bit-fused'],
 };
 
 /**
- * Legacy fallback model profile: `llama3.1:8b` tuned for an Apple Silicon M1 16GB.
- * - Constant `numCtx: 4096` per slot so Ollama never reallocates the KV cache mid-session.
- * - 2 parallel slots recommended (`OLLAMA_NUM_PARALLEL=2`).
- * - Few-shot examples formatted as real `user`/`assistant` chat turns for reliable style transfer.
+ * Fallback profile for any other local model configured by the user.
  */
-export const llama3_1_8bProfile: ModelProfile = {
-  id: 'llama3_1_8b',
-  label: 'Llama 3.1 8B (Tuned for llama3.1:8b)',
-  isRecommendedDefault: false,
-  matches(modelName: string): boolean {
-    const normalized = modelName.trim().toLowerCase();
-    return (
-      normalized === 'llama3.1:8b' ||
-      normalized.startsWith('llama3.1:8b-') ||
-      normalized === 'llama3.1:latest' ||
-      normalized === 'llama3.1' ||
-      normalized === 'demo mode'
-    );
-  },
-  numCtx: 4096,
-  parallelRecommended: 2,
-  disableRawPromptTrimming: false,
-  temperatures: {
-    classify: 0,
-    extract: 0,
-    bullet: 0.4,
-    summary: 0.4,
-    letter: 0.6,
-  },
-  topP: 0.9,
-  tokenCaps: {
-    bullet: 80,
-    summary: 110,
-    letterBlock: 170,
-    briefRefine: 200,
-    importClassify: 450,
-    jobFact: 80,
-  },
-  stop: ['\n'],
-  keepAlive: '30m',
-  fewShotStyle: 'chat-turns',
-  serverEnv: [
-    'OLLAMA_FLASH_ATTENTION=1',
-    'OLLAMA_KV_CACHE_TYPE=q8_0',
-    'OLLAMA_NUM_PARALLEL=2',
-  ],
-};
-
-/**
- * Fallback profile for any other local model installed by the user.
- */
-export const genericSmallProfile: ModelProfile = {
-  id: 'generic_small',
-  label: 'Generic Small Local Model',
+export const genericProfile: ModelProfile = {
+  id: 'generic',
+  label: 'Generic Local Model',
   isRecommendedDefault: false,
   matches(): boolean {
     return true;
   },
-  numCtx: 4096,
+  maxSeqLength: 1024,
   parallelRecommended: 1,
   disableRawPromptTrimming: false,
   temperatures: {
@@ -115,27 +66,23 @@ export const genericSmallProfile: ModelProfile = {
   },
   topP: 0.85,
   tokenCaps: {
-    bullet: 80,
-    summary: 110,
-    letterBlock: 170,
-    briefRefine: 200,
+    bullet: 120,
+    summary: 160,
+    letterBlock: 220,
+    briefRefine: 240,
     importClassify: 450,
-    jobFact: 80,
+    jobFact: 100,
   },
   stop: ['\n'],
-  keepAlive: '15m',
   fewShotStyle: 'chat-turns',
-  serverEnv: [
-    'OLLAMA_FLASH_ATTENTION=1',
-    'OLLAMA_KV_CACHE_TYPE=q8_0',
-    'OLLAMA_NUM_PARALLEL=1',
-  ],
+  serverEnv: [],
 };
+
+export const genericSmallProfile = genericProfile;
 
 const REGISTERED_MODEL_PROFILES: ModelProfile[] = [
   cevin3bMlxProfile,
-  llama3_1_8bProfile,
-  genericSmallProfile,
+  genericProfile,
 ];
 
 export function createModelProfileCatalog(): ModelProfileCatalog {
@@ -152,8 +99,7 @@ export function createModelProfileCatalog(): ModelProfileCatalog {
           return profile;
         }
       }
-      return genericSmallProfile;
+      return genericProfile;
     },
   };
 }
-
