@@ -30,7 +30,7 @@ interface BenchCliOptions {
 }
 
 function parseCliArgs(argv: string[]): BenchCliOptions {
-  let model = 'cevin-3b-4bit-fused';
+  let model = 'Qwen2.5-1.5B-Instruct-4bit';
   let provider: 'mlx-fastapi' | 'mock' = 'mlx-fastapi';
   let baseUrl = 'http://localhost:8000';
   let slots = 1;
@@ -368,8 +368,8 @@ async function runBenchmark() {
 Generated via \`npm run bench:llm -- --model ${opts.model}\`.
 
 ## Hardware Target & Model Profile
-- **Target Machine**: Apple Silicon M1, 16 GB Unified Memory (~2.73 GB model footprint)
-- **Tuned Model**: \`${opts.model}\` (\`${profile.id}\` profile)
+- **Target Machine**: Apple Silicon M1, 16 GB Unified Memory (~${profile.estimatedMemoryGb ?? 1.15} GB model footprint)
+- **Active Model**: \`${opts.model}\` (\`${profile.id}\` profile)
 - **Max Sequence Length**: \`${profile.maxSeqLength}\` tokens per request
 - **Parallel Slots**: \`${opts.slots}\`
 - **Execution Mode**: \`${modeNote}\`
@@ -392,11 +392,12 @@ Generated via \`npm run bench:llm -- --model ${opts.model}\`.
 ## Reproducing Locally
 
 \`\`\`bash
-# Run against the live local Cevin MLX service (or automatic simulation if offline):
+# Run against the live local Cevin MLX service (default 1.5B model, or switch to cevin-3b-4bit-fused):
+npm run bench:llm -- --model Qwen2.5-1.5B-Instruct-4bit
 npm run bench:llm -- --model cevin-3b-4bit-fused
 
 # Force deterministic simulation mode:
-npm run bench:llm -- --model cevin-3b-4bit-fused --provider mock
+npm run bench:llm -- --model Qwen2.5-1.5B-Instruct-4bit --provider mock
 \`\`\`
 `;
   fs.writeFileSync(readmePath, readmeMd, 'utf-8');

@@ -5,6 +5,7 @@ import {
   CEVIN_MLX_SYSTEM_PROMPT,
   CandidateBankSubsetDto,
   CareerIntelligencePort,
+  DEFAULT_MLX_1_5B_MODEL_PATH,
   EvidenceContextDto,
   ExecutiveSummaryDto,
   ExecutiveSummaryDtoSchema,
@@ -21,6 +22,7 @@ import {
   LlmProviderDescriptor,
   LlmRuntimeStatus,
   LlmUsageMetrics,
+  MlxCareerTaskName,
   ModelInfo,
   RequirementMatchDto,
   RequirementMatchDtoSchema,
@@ -31,13 +33,55 @@ import {
   buildMlxHallucinationAuditPrompt,
   buildMlxRequirementMatchPrompt,
   extractAndRepairJsonString,
+  resolveMlxModelPath,
 } from '../../../core/application';
 import { findUnverifiedSummaryNumbers } from '../../../core/domain';
 
+export const DEFAULT_MLX_MODEL_ID = 'Qwen2.5-1.5B-Instruct-4bit';
+export const LEGACY_CEVIN_3B_MODEL_ID = 'cevin-3b-4bit-fused';
+
+export const INTEGRATED_MLX_MODELS: ModelInfo[] = [
+  {
+    id: DEFAULT_MLX_MODEL_ID,
+    name: 'Qwen2.5 1.5B Fine-Tuned (4-bit)',
+    family: 'qwen2.5-mlx-lora',
+    parameterSize: '1.5B (4-bit fused)',
+    description:
+      'Default fine-tuned Rank-32 LoRA model for fast career reasoning (~1.2 GB unified memory).',
+    estimatedMemoryGb: 1.15,
+    isDefault: true,
+    available: true,
+    supportsEmbeddings: false,
+  },
+  {
+    id: LEGACY_CEVIN_3B_MODEL_ID,
+    name: 'Cevin 3B Fine-Tuned (4-bit)',
+    family: 'qwen2.5-mlx-lora',
+    parameterSize: '3B (4-bit fused)',
+    description:
+      'Fine-tuned Qwen2.5-3B LoRA model trained on structured career reasoning (~2.7 GB unified memory).',
+    estimatedMemoryGb: 2.73,
+    isDefault: false,
+    available: true,
+    supportsEmbeddings: false,
+  },
+];
+
+export function resolveDefaultMlxModelPath(modelId: string): string {
+  return resolveMlxModelPath(modelId);
+}
+
+function estimateMemoryGbForModel(modelId: string): number {
+  const lower = modelId.trim().toLowerCase();
+  if (lower.includes('1.5b')) return 1.15;
+  if (lower.includes('3b') || lower.includes('cevin-3b')) return 2.73;
+  return 2.0;
+}
+
 export const MlxFastApiConfigSchema = z.object({
   baseUrl: z.string().url().default('http://localhost:8000'),
-  model: z.string().min(1).default('cevin-3b-4bit-fused'),
-  modelPath: z.string().default('./cevin-3b-4bit-fused'),
+  model: z.string().min(1).default(DEFAULT_MLX_MODEL_ID),
+  modelPath: z.string().default(DEFAULT_MLX_1_5B_MODEL_PATH),
   maxSeqLength: z.coerce.number().int().min(512).max(4096).default(1024),
 });
 
@@ -56,6 +100,22 @@ interface MlxFastApiInferPayload {
   };
 }
 
+interface MlxFastApiModelEntry {
+  id?: string;
+  name?: string;
+  family?: string;
+  parameter_size?: string;
+  peak_ram_gb?: number;
+  is_default?: boolean;
+  description?: string;
+  available?: boolean;
+}
+
+interface MlxFastApiModelsPayload {
+  data?: MlxFastApiModelEntry[];
+  active_model?: string;
+}
+
 interface MlxFastApiHealthPayload {
   status?: string;
   loaded?: boolean;
@@ -64,7 +124,29 @@ interface MlxFastApiHealthPayload {
   max_seq_length?: number;
   backend?: string;
   peak_ram_gb?: number;
+  available_models?: MlxFastApiModelEntry[];
   error?: string | null;
+}
+
+function mapMlxModelEntry(entry: MlxFastApiModelEntry): ModelInfo | null {
+  const id = entry.id || entry.name;
+  if (!id) return null;
+  const known = INTEGRATED_MLX_MODELS.find((m) => m.id === id);
+  return {
+    id,
+    name: entry.name || known?.name || id,
+    family: entry.family || known?.family || 'qwen2.5-mlx-lora',
+    parameterSize:
+      entry.parameter_size || known?.parameterSize || '4-bit fused MLX',
+    description: entry.description || known?.description,
+    estimatedMemoryGb:
+      entry.peak_ram_gb ??
+      known?.estimatedMemoryGb ??
+      estimateMemoryGbForModel(id),
+    isDefault: entry.is_default ?? known?.isDefault ?? false,
+    available: entry.available ?? true,
+    supportsEmbeddings: false,
+  };
 }
 
 function parseJsonFromMlxPayload(payload: MlxFastApiInferPayload): unknown {
@@ -80,10 +162,12 @@ function parseJsonFromMlxPayload(payload: MlxFastApiInferPayload): unknown {
 }
 
 /**
- * Driven Adapter implementing `CareerIntelligencePort` for the fine-tuned
- * `./cevin-3b-4bit-fused` MLX model served via FastAPI (`http://localhost:8000/v1/cevin/infer`).
+ * Driven Adapter implementing `CareerIntelligencePort` for both fine-tuned Apple Silicon MLX models
+ * (`Qwen2.5-1.5B-Instruct-4bit` [Rank-32 LoRA, default] and `cevin-3b-4bit-fused`) served via FastAPI (`http://localhost:8000/v1/cevin/infer`).
  *
- * Sends exact `CEVIN_MLX_SYSTEM_PROMPT` + `TASK:` headers with structured JSON schemas.
+ * Both models were trained on the exact same dataset with `mask_prompt: true`, so they route through
+ * identical prompt formatting: exact `CEVIN_MLX_SYSTEM_PROMPT` + `TASK:` Chain-of-Thought prompts with
+ * zero schema injections and zero few-shot turns. Only `model: config.model` varies at runtime.
  */
 export function createMlxCareerIntelligenceAdapter(
   rawConfig?: Partial<MlxFastApiConfig>,
@@ -93,15 +177,16 @@ export function createMlxCareerIntelligenceAdapter(
   const baseUrl = config.baseUrl.replace(/\/+$/, '');
 
   const callMlxTask = async <T>(params: {
-    task: string;
+    task: MlxCareerTaskName;
     userPrompt: string;
     temperature: number;
     maxTokens?: number;
     schema: z.ZodType<T>;
     signal?: AbortSignal;
   }): Promise<T> => {
+    const systemPrompt = CEVIN_MLX_SYSTEM_PROMPT;
     const messages: LlmMessage[] = [
-      { role: 'system', content: CEVIN_MLX_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: params.userPrompt },
     ];
 
@@ -110,8 +195,9 @@ export function createMlxCareerIntelligenceAdapter(
       headers: { 'Content-Type': 'application/json' },
       signal: params.signal,
       body: JSON.stringify({
+        model: config.model,
         messages,
-        system_prompt: CEVIN_MLX_SYSTEM_PROMPT,
+        system_prompt: systemPrompt,
         user_prompt: params.userPrompt,
         temperature: params.temperature,
         max_tokens: params.maxTokens ?? 480,
@@ -260,7 +346,7 @@ export function createMlxCareerIntelligenceAdapter(
             };
           }
         } catch {
-          // If audit call fails, strip unverified numbers deterministically
+          // If audit call fails, callers fall back deterministically
         }
       }
 
@@ -271,7 +357,7 @@ export function createMlxCareerIntelligenceAdapter(
 
 /**
  * Full `LlmProvider` adapter wrapping the FastAPI MLX microservice (`http://localhost:8000`)
- * and exposing `careerIntelligence: CareerIntelligencePort`.
+ * and exposing `careerIntelligence: CareerIntelligencePort` plus multi-model discovery & switching.
  */
 export function createMlxFastApiProvider(
   rawConfig?: Partial<MlxFastApiConfig>,
@@ -288,6 +374,27 @@ export function createMlxFastApiProvider(
     careerIntelligence,
 
     async listModels(): Promise<ModelInfo[]> {
+      // Prefer /v1/models when supported by mlx_server.py; fall back cleanly to /health
+      try {
+        const modelsRes = await fetchImpl(`${baseUrl}/v1/models`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+        if (modelsRes.ok) {
+          const payload = (await modelsRes.json()) as MlxFastApiModelsPayload;
+          if (Array.isArray(payload.data) && payload.data.length > 0) {
+            const mapped = payload.data
+              .map(mapMlxModelEntry)
+              .filter((m): m is ModelInfo => m !== null);
+            if (mapped.length > 0) {
+              return mapped;
+            }
+          }
+        }
+      } catch {
+        // Fall through to /health probe so network errors surface consistently
+      }
+
       const response = await fetchImpl(`${baseUrl}/health`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
@@ -298,16 +405,56 @@ export function createMlxFastApiProvider(
         );
       }
       const data = (await response.json()) as MlxFastApiHealthPayload;
-      const modelId = data.model || config.model || 'cevin-3b-4bit-fused';
+      if (data.loaded === false && !data.available_models?.length) {
+        return [];
+      }
+      if (
+        Array.isArray(data.available_models) &&
+        data.available_models.length > 0
+      ) {
+        const mapped = data.available_models
+          .map(mapMlxModelEntry)
+          .filter((m): m is ModelInfo => m !== null);
+        if (mapped.length > 0) return mapped;
+      }
+
+      const modelId = typeof data.model === 'string' ? data.model.trim() : '';
+      if (!modelId) {
+        throw new Error(
+          `Endpoint at ${baseUrl}/health did not identify an MLX model server`,
+        );
+      }
+      const known = INTEGRATED_MLX_MODELS.find((m) => m.id === modelId);
       return [
-        {
+        known ?? {
           id: modelId,
           name: modelId,
-          family: 'qwen2.5-mlx-lora',
-          parameterSize: '3B (4-bit fused)',
+          family: 'qwen2.5-mlx',
+          parameterSize: '4-bit MLX',
+          estimatedMemoryGb:
+            data.peak_ram_gb ?? estimateMemoryGbForModel(modelId),
           supportsEmbeddings: false,
         },
       ];
+    },
+
+    async selectModel(modelId: string): Promise<void> {
+      const target = modelId.trim();
+      if (!target) return;
+      const response = await fetchImpl(`${baseUrl}/v1/cevin/select-model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: target }),
+      });
+      if (response.status === 404) {
+        // Minimal/legacy server without explicit select-model endpoint still receives `model` per inference call
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          `Failed to switch MLX model to "${target}" (HTTP ${response.status})`,
+        );
+      }
     },
 
     async *chat(req: LlmChatRequest): AsyncIterable<string> {
@@ -316,6 +463,7 @@ export function createMlxFastApiProvider(
         headers: { 'Content-Type': 'application/json' },
         signal: req.signal,
         body: JSON.stringify({
+          model: config.model,
           messages: [
             {
               role: 'system',
@@ -348,6 +496,7 @@ export function createMlxFastApiProvider(
         headers: { 'Content-Type': 'application/json' },
         signal: req.signal,
         body: JSON.stringify({
+          model: config.model,
           messages: [
             {
               role: 'system',
@@ -372,22 +521,21 @@ export function createMlxFastApiProvider(
     },
 
     async complete(req: LlmCompletionRequest): Promise<LlmCompletionResponse> {
-      const lastUserMessage =
-        [...req.messages].reverse().find((m) => m.role === 'user')?.content ??
-        '';
-      const systemMessage =
-        req.messages.find((m) => m.role === 'system')?.content ??
-        CEVIN_MLX_SYSTEM_PROMPT;
+      const messagesToSend: LlmMessage[] =
+        req.messages.length > 0
+          ? req.messages
+          : [
+              { role: 'system', content: CEVIN_MLX_SYSTEM_PROMPT },
+              { role: 'user', content: '' },
+            ];
 
       const response = await fetchImpl(`${baseUrl}/v1/cevin/infer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: req.signal,
         body: JSON.stringify({
-          messages: [
-            { role: 'system', content: CEVIN_MLX_SYSTEM_PROMPT || systemMessage },
-            { role: 'user', content: lastUserMessage },
-          ],
+          model: config.model,
+          messages: messagesToSend,
           temperature: req.options.temperature ?? 0.0,
           max_tokens: Math.min(512, req.options.numPredict ?? 380),
         }),
@@ -455,6 +603,13 @@ export function createMlxFastApiProvider(
       };
     },
 
+    async unload(): Promise<void> {
+      await fetchImpl(`${baseUrl}/v1/cevin/unload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+
     async getRuntimeStatus(): Promise<LlmRuntimeStatus> {
       try {
         const response = await fetchImpl(`${baseUrl}/health`, {
@@ -471,15 +626,31 @@ export function createMlxFastApiProvider(
           };
         }
         const data = (await response.json()) as MlxFastApiHealthPayload;
+        const looksLikeMlx =
+          typeof data.model === 'string' ||
+          typeof data.loaded === 'boolean' ||
+          Array.isArray(data.available_models);
+        if (!looksLikeMlx) {
+          return {
+            reachable: false,
+            loadedModels: [],
+            activeModelLoaded: false,
+            partlyOnCpu: false,
+            memorySummary: "Can't reach MLX FastAPI server at localhost:8000",
+          };
+        }
+        const activeModel = data.model || config.model || DEFAULT_MLX_MODEL_ID;
         const loaded = data.loaded !== false;
-        const sizeBytes = Math.round((data.peak_ram_gb ?? 2.73) * 1024 * 1024 * 1024);
+        const peakRamGb =
+          data.peak_ram_gb ?? estimateMemoryGbForModel(activeModel);
+        const sizeBytes = Math.round(peakRamGb * 1024 * 1024 * 1024);
 
         return {
           reachable: true,
           loadedModels: loaded
             ? [
                 {
-                  name: data.model || config.model,
+                  name: activeModel,
                   sizeBytes,
                   sizeVramBytes: sizeBytes,
                   cpuPercent: 0,
@@ -491,8 +662,8 @@ export function createMlxFastApiProvider(
           activeModelLoaded: loaded,
           partlyOnCpu: false,
           memorySummary: loaded
-            ? `100% on Apple Metal GPU (${(data.peak_ram_gb ?? 2.73).toFixed(2)} GB · ~32.5 tok/s)`
-            : `Model not loaded (${data.error ?? 'check ./cevin-3b-4bit-fused'})`,
+            ? `100% on Apple Metal GPU (${activeModel} · ${peakRamGb.toFixed(2)} GB)`
+            : `Model not loaded (${data.error ?? `check ${resolveDefaultMlxModelPath(activeModel)}`})`,
         };
       } catch {
         return {
@@ -512,7 +683,7 @@ export const mlxFastApiProviderDescriptor: LlmProviderDescriptor<MlxFastApiConfi
     id: 'mlx-fastapi',
     label: 'Cevin model (on this Mac)',
     description:
-      'Fine-tuned for resume writing. Runs on this Mac (Apple Silicon).',
+      'Runs locally on this Mac (Apple Silicon MLX). Supports Qwen2.5 1.5B Fine-Tuned (default) and Cevin 3B Fine-Tuned.',
     locality: 'local',
     capabilities: {
       streaming: true,
@@ -534,11 +705,11 @@ export const mlxFastApiProviderDescriptor: LlmProviderDescriptor<MlxFastApiConfi
       },
       {
         key: 'model',
-        label: 'Model ID',
-        type: 'text',
-        placeholder: 'cevin-3b-4bit-fused',
+        label: 'Model name',
+        type: 'select-model',
+        placeholder: DEFAULT_MLX_MODEL_ID,
         helpText:
-          'Fine-tuned local resume model weights directory.',
+          'Integrated Apple Silicon MLX model (Qwen2.5-1.5B-Instruct-4bit or cevin-3b-4bit-fused).',
       },
       {
         key: 'maxSeqLength',
@@ -551,10 +722,10 @@ export const mlxFastApiProviderDescriptor: LlmProviderDescriptor<MlxFastApiConfi
     ],
     defaultConfig: {
       baseUrl: 'http://localhost:8000',
-      model: 'cevin-3b-4bit-fused',
-      modelPath: './cevin-3b-4bit-fused',
+      model: DEFAULT_MLX_MODEL_ID,
+      modelPath: DEFAULT_MLX_1_5B_MODEL_PATH,
       maxSeqLength: 1024,
     },
+    supportedModels: INTEGRATED_MLX_MODELS,
     create: (config) => createMlxFastApiProvider(config),
   };
-

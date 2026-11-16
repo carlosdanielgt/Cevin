@@ -94,6 +94,7 @@ import {
   ResultCache,
   SettingsRepository,
   TemplateCatalog,
+  resolveMlxModelPath,
 } from '../ports/outbound';
 import {
   buildStructureResumePrompt,
@@ -249,16 +250,21 @@ function syncApplicationWithBank(
   return { app: nextApp, changed: true };
 }
 
-const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
-  id: 'cevin_3b_mlx',
-  label: 'Cevin model (3B 4-bit MLX)',
+const DEFAULT_QWEN_1_5B_MLX_PROFILE: ModelProfile = {
+  id: 'qwen25_1_5b_mlx',
+  label: 'Qwen2.5 1.5B Fine-Tuned (4-bit MLX)',
+  description:
+    'Fine-tuned Qwen2.5-1.5B Rank-32 LoRA model trained on structured career reasoning (~1.2 GB RAM).',
+  estimatedMemoryGb: 1.15,
   isRecommendedDefault: true,
   matches: (name: string) => {
     const norm = name.trim().toLowerCase();
     return (
-      norm === 'cevin-3b-4bit-fused' ||
-      norm.includes('cevin-3b') ||
-      norm.includes('qwen2.5-3b') ||
+      norm === 'qwen2.5-1.5b-instruct-4bit' ||
+      norm === 'cevin-1.5b-4bit-fused' ||
+      norm.includes('qwen2.5-1.5b') ||
+      norm.includes('cevin-1.5b') ||
+      norm.includes('1.5b-instruct') ||
       norm === 'demo mode'
     );
   },
@@ -283,7 +289,52 @@ const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
   },
   stop: [],
   fewShotStyle: 'inline',
-  serverEnv: ['CEVIN_MLX_MODEL_PATH=./cevin-3b-4bit-fused'],
+  serverEnv: [
+    'CEVIN_MLX_DEFAULT_MODEL=Qwen2.5-1.5B-Instruct-4bit',
+    'CEVIN_MLX_1_5B_PATH=./cevin-1.5b-4bit-fused',
+  ],
+};
+
+const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
+  id: 'cevin_3b_mlx',
+  label: 'Cevin 3B Fine-Tuned (4-bit MLX)',
+  description:
+    'Fine-tuned Qwen2.5-3B LoRA model trained on structured career reasoning (~2.7 GB RAM).',
+  estimatedMemoryGb: 2.73,
+  isRecommendedDefault: false,
+  matches: (name: string) => {
+    const norm = name.trim().toLowerCase();
+    return (
+      norm === 'cevin-3b-4bit-fused' ||
+      norm.includes('cevin-3b') ||
+      norm.includes('qwen2.5-3b')
+    );
+  },
+  maxSeqLength: 1024,
+  parallelRecommended: 1,
+  disableRawPromptTrimming: true,
+  temperatures: {
+    classify: 0,
+    extract: 0,
+    bullet: 0,
+    summary: 0.2,
+    letter: 0.2,
+  },
+  topP: 0.9,
+  tokenCaps: {
+    bullet: 512,
+    summary: 512,
+    letterBlock: 512,
+    briefRefine: 512,
+    importClassify: 512,
+    jobFact: 512,
+  },
+  stop: [],
+  fewShotStyle: 'inline',
+  serverEnv: [
+    'CEVIN_MLX_3B_PATH=./cevin-3b-4bit-fused',
+    'CEVIN_MLX_MODEL_PATH=./cevin-3b-4bit-fused',
+  ],
 };
 
 const DEFAULT_GENERIC_PROFILE: ModelProfile = {
@@ -410,6 +461,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
     if (deps.modelProfileCatalog) {
       return deps.modelProfileCatalog.resolveForModel(modelName);
     }
+    if (DEFAULT_QWEN_1_5B_MLX_PROFILE.matches(modelName)) {
+      return DEFAULT_QWEN_1_5B_MLX_PROFILE;
+    }
     if (DEFAULT_CEVIN3B_MLX_PROFILE.matches(modelName)) {
       return DEFAULT_CEVIN3B_MLX_PROFILE;
     }
@@ -443,7 +497,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         ? rawConfig.model
         : descriptor.id === 'mock'
           ? 'Demo mode'
-          : 'cevin-3b-4bit-fused';
+          : 'Qwen2.5-1.5B-Instruct-4bit';
     const profile = resolveModelProfile(modelId);
     const parallelSlots =
       descriptor.id === 'mlx-fastapi'
@@ -529,7 +583,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           remediationCommand:
             'uvicorn mlx_server:app --host 127.0.0.1 --port 8000',
           details:
-            'Ensure ./cevin-3b-4bit-fused is present in the project root, then test connection again.',
+            'Ensure ./cevin-1.5b-4bit-fused or ./cevin-3b-4bit-fused is present in the project root, then test connection again.',
         };
       }
 
@@ -1589,6 +1643,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           capabilities: desc.capabilities,
           configFields: desc.configFields,
           defaultConfig: desc.defaultConfig as Record<string, unknown>,
+          supportedModels: desc.supportedModels,
         }));
       },
     },
@@ -1621,6 +1676,47 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
         gateway.runWithActivity('checking', () =>
           testConnectionInternal(providerId, configOverride),
         ),
+      async selectModel(providerId, modelId) {
+        const targetModel = modelId.trim();
+        const currentSettings = await deps.settingsRepo.getSettings();
+        const descriptor = deps.llmCatalog.getById(providerId);
+        const currentCfg = {
+          ...((descriptor?.defaultConfig as Record<string, unknown> | undefined) ??
+            {}),
+          ...(currentSettings.providerConfigs[providerId] ?? {}),
+        };
+        const nextCfg: Record<string, unknown> = {
+          ...currentCfg,
+          model: targetModel,
+        };
+        if (providerId === 'mlx-fastapi') {
+          nextCfg.modelPath = resolveMlxModelPath(targetModel);
+        }
+
+        await deps.settingsRepo.saveSettings({
+          ...currentSettings,
+          activeProviderId: providerId,
+          providerConfigs: {
+            ...currentSettings.providerConfigs,
+            [providerId]: nextCfg,
+          },
+        });
+
+        if (descriptor && targetModel) {
+          try {
+            const instance = descriptor.create(nextCfg);
+            if (instance.selectModel) {
+              await instance.selectModel(targetModel);
+            }
+          } catch {
+            // Preserve persisted model choice even when the local MLX server is offline.
+          }
+        }
+
+        return gateway.runWithActivity('checking', () =>
+          testConnectionInternal(providerId),
+        );
+      },
       async getSidebarStatus(): Promise<SidebarConnectionStatus> {
         const settings = await deps.settingsRepo.getSettings();
         const activity = gateway.getLiveActivity();
@@ -1663,7 +1759,7 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
           const modelName =
             (typeof cfg.model === 'string' && cfg.model) ||
             diag.models[0]?.name ||
-            'cevin-3b-4bit-fused';
+            'Qwen2.5-1.5B-Instruct-4bit';
           const profile = resolveModelProfile(modelName);
 
           if (activity.warmingUp) {

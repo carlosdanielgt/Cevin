@@ -19,6 +19,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppSettings,
   ConnectionDiagnosticResult,
+  ModelInfo,
   PerformanceSummary,
 } from '../../../../../core/application';
 import {
@@ -85,11 +86,17 @@ export function SettingsView({
     null,
   );
   const [isTesting, setIsTesting] = useState(false);
+  const [isSwitchingModel, setIsSwitchingModel] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationStep, setCalibrationStep] = useState('');
   const [calibrationStepIndex, setCalibrationStepIndex] = useState(0);
   const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
   const jsonInputRef = useRef<HTMLInputElement>(null);
+
+  const mlxProviderMeta = useCases.listLlmProviders
+    .execute()
+    .find((p) => p.id === 'mlx-fastapi');
+  const catalogModels: ModelInfo[] = mlxProviderMeta?.supportedModels ?? [];
 
   const loadAll = useCallback(async () => {
     const [loadedSettings, summary, loadedPrefs] = await Promise.all([
@@ -162,11 +169,63 @@ export function SettingsView({
     }
   };
 
+  const handleSelectModel = async (modelId: string) => {
+    setIsSwitchingModel(true);
+    try {
+      const d = await useCases.testLlmConnection.selectModel(
+        'mlx-fastapi',
+        modelId,
+      );
+      const nextSettings = await useCases.manageSettings.getSettings();
+      setSettings(nextSettings);
+      setDiag(d);
+      onConnectionChanged();
+      const targetName =
+        catalogModels.find((m) => m.id === modelId)?.name ?? modelId;
+      addToast(
+        d.connected
+          ? `Switched active model to ${targetName}.`
+          : `Selected ${targetName}. Start the local server to connect.`,
+        d.connected ? 'success' : 'info',
+      );
+    } finally {
+      setIsSwitchingModel(false);
+    }
+  };
+
   const mlxConfig = (settings.providerConfigs['mlx-fastapi'] ?? {
     baseUrl: 'http://localhost:8000',
-    model: 'cevin-3b-4bit-fused',
+    model: 'Qwen2.5-1.5B-Instruct-4bit',
     maxSeqLength: 1024,
   }) as { baseUrl?: string; model?: string; maxSeqLength?: number };
+
+  const activeMlxModel = mlxConfig.model || 'Qwen2.5-1.5B-Instruct-4bit';
+  const modelOptions: ModelInfo[] = (() => {
+    const byId = new Map<string, ModelInfo>();
+    for (const m of catalogModels) {
+      byId.set(m.id, m);
+    }
+    if (diag?.connected) {
+      for (const live of diag.models) {
+        const existing = byId.get(live.id);
+        byId.set(live.id, existing ? { ...existing, ...live } : live);
+      }
+    }
+    return Array.from(byId.values());
+  })();
+  const selectedModelMeta = modelOptions.find(
+    (m) => m.id === activeMlxModel || m.name === activeMlxModel,
+  );
+  const formatApproxGb = (gb: number) =>
+    `~${(Math.round(gb * 10) / 10).toFixed(1)} GB`;
+  const activeMemoryLabel =
+    settings.activeProviderId === 'mock'
+      ? '0 GB'
+      : selectedModelMeta?.estimatedMemoryGb
+        ? formatApproxGb(selectedModelMeta.estimatedMemoryGb)
+        : activeMlxModel.toLowerCase().includes('3b')
+          ? '~2.7 GB'
+          : '~1.2 GB';
 
   const isMlxSelected = settings.activeProviderId !== 'mock';
 
@@ -357,6 +416,94 @@ export function SettingsView({
               </button>
             </div>
 
+            {/* Integrated MLX Model Switcher (visible when local MLX provider is selected) */}
+            {isMlxSelected && modelOptions.length > 0 && (
+              <div className="space-y-2.5 pt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-ink">
+                      Local model
+                    </div>
+                    <p className="text-xs text-ink-muted">
+                      Switch between integrated Apple Silicon models without restarting your workspace.
+                    </p>
+                  </div>
+                  {isSwitchingModel && (
+                    <CevinStatusIndicator
+                      state="thinking"
+                      size={16}
+                      variant="glyph"
+                      label="Switching model"
+                    />
+                  )}
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-label="Local model selection"
+                  className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                >
+                  {modelOptions.map((model) => {
+                    const selected =
+                      activeMlxModel === model.id ||
+                      activeMlxModel === model.name;
+                    const memLabel = model.estimatedMemoryGb
+                      ? `${formatApproxGb(model.estimatedMemoryGb)} RAM`
+                      : undefined;
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={isSwitchingModel}
+                        onClick={() => void handleSelectModel(model.id)}
+                        className={`p-3.5 rounded-lg border text-left transition-all cursor-pointer disabled:opacity-60 ${
+                          selected
+                            ? 'border-accent ring-2 ring-accent bg-accent-50/50'
+                            : 'border-border bg-surface hover:border-border-strong'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs font-semibold text-ink">
+                                {model.name}
+                              </span>
+                              {model.isDefault && (
+                                <Badge tone="info">Default</Badge>
+                              )}
+                            </div>
+                            <div className="text-[11px] font-mono text-ink-subtle mt-0.5 truncate">
+                              {model.id}
+                            </div>
+                          </div>
+                          {selected && (
+                            <span className="w-4 h-4 rounded-full bg-accent text-white flex items-center justify-center shrink-0 mt-0.5">
+                              <Check className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                        </div>
+                        {model.description && (
+                          <p className="text-xs text-ink-muted mt-1.5 leading-snug">
+                            {model.description}
+                          </p>
+                        )}
+                        {(model.parameterSize || memLabel) && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-ink-subtle tabular-nums">
+                            {model.parameterSize && (
+                              <span>{model.parameterSize}</span>
+                            )}
+                            {model.parameterSize && memLabel && <span>·</span>}
+                            {memLabel && <span>{memLabel}</span>}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Tinted Banner for Status */}
             {settings.activeProviderId === 'mock' ? (
               <Banner tone="success" title="Demo mode is active">
@@ -521,12 +668,12 @@ export function SettingsView({
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
                 <span className="text-xs text-ink-muted block">Memory</span>
                 <span className="text-lg font-display font-bold tabular-nums text-ink">
-                  {settings.activeProviderId === 'mock' ? '0 GB' : '~2.7 GB'}
+                  {activeMemoryLabel}
                 </span>
                 <span className="text-[11px] text-ink-subtle block">
                   {settings.activeProviderId === 'mock'
                     ? 'In-browser demo'
-                    : '4-bit Apple Silicon unified memory'}
+                    : `4-bit Apple Silicon (${selectedModelMeta?.name ?? activeMlxModel})`}
                 </span>
               </div>
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
@@ -576,7 +723,8 @@ export function SettingsView({
                     Model name
                   </label>
                   <Input
-                    value={mlxConfig.model ?? 'cevin-3b-4bit-fused'}
+                    value={mlxConfig.model ?? 'Qwen2.5-1.5B-Instruct-4bit'}
+                    placeholder="Qwen2.5-1.5B-Instruct-4bit"
                     onChange={(e) =>
                       void updateSettings({
                         providerConfigs: {

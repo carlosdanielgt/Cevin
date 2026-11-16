@@ -88,14 +88,26 @@ export function createMockProvider(
           id: 'Demo mode',
           name: 'Demo mode (Built-in)',
           family: 'cevin-demo',
-          parameterSize: '3B',
+          parameterSize: '1.5B',
+          estimatedMemoryGb: 0,
+          supportsEmbeddings: false,
+        },
+        {
+          id: 'Qwen2.5-1.5B-Instruct-4bit',
+          name: 'Qwen2.5 1.5B Fine-Tuned (4-bit)',
+          family: 'qwen2.5-mlx-lora',
+          parameterSize: '1.5B (4-bit fused)',
+          estimatedMemoryGb: 1.15,
+          isDefault: true,
           supportsEmbeddings: false,
         },
         {
           id: 'cevin-3b-4bit-fused',
-          name: 'cevin-3b-4bit-fused',
+          name: 'Cevin 3B Fine-Tuned (4-bit)',
           family: 'qwen2.5-mlx-lora',
-          parameterSize: '3B',
+          parameterSize: '3B (4-bit fused)',
+          estimatedMemoryGb: 2.73,
+          isDefault: false,
           supportsEmbeddings: false,
         },
         {
@@ -270,7 +282,10 @@ export function createMockProvider(
         '';
       const isRepairTurn =
         req.messages.filter((m) => m.role === 'user').length > 4 ||
-        lastUserMsg.startsWith('Fix the ');
+        lastUserMsg.startsWith('Fix the ') ||
+        lastUserMsg.startsWith('Return valid JSON') ||
+        lastUserMsg.startsWith('Return ONLY valid JSON') ||
+        lastUserMsg.startsWith('Copy "quote"');
 
       const promptChars = req.messages.reduce(
         (acc, m) => acc + m.content.length,

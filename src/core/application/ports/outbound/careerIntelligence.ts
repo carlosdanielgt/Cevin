@@ -8,10 +8,47 @@ import {
 
 /**
  * Exact system prompt trained with `mask_prompt: true` and `max_seq_length: 1024`
- * on `cevin-3b-4bit-fused` (`mlx-community/Qwen2.5-3B-Instruct-4bit` + `adapters_3b_v4`).
+ * across both fine-tuned Cevin MLX models:
+ * - `Qwen2.5-1.5B-Instruct-4bit` (Rank-32 LoRA, default)
+ * - `cevin-3b-4bit-fused` (`adapters_3b_v4`)
+ *
+ * Both models were trained on the exact same dataset and share this identical
+ * system prompt without extra schema injections or few-shot examples.
  */
 export const CEVIN_MLX_SYSTEM_PROMPT =
   "You are Cevin's specialized Career Intelligence Engine. You operate strictly on structured career evidence. Never invent metrics, technologies, or experience not grounded in the source data. Always respond in valid JSON.";
+
+export const DEFAULT_MLX_1_5B_MODEL_PATH = './cevin-1.5b-4bit-fused';
+export const CEVIN_3B_MODEL_PATH = './cevin-3b-4bit-fused';
+
+/**
+ * Resolves the local fused directory path on Apple Silicon for an integrated MLX model ID or alias.
+ */
+export function resolveMlxModelPath(modelIdOrPath: string): string {
+  const clean = modelIdOrPath.trim();
+  if (!clean) return DEFAULT_MLX_1_5B_MODEL_PATH;
+  const lower = clean.toLowerCase();
+  if (
+    lower === 'qwen2.5-1.5b-instruct-4bit' ||
+    lower === 'cevin-1.5b-4bit-fused' ||
+    lower === './qwen2.5-1.5b-instruct-4bit' ||
+    lower === 'qwen2.5-1.5b'
+  ) {
+    return DEFAULT_MLX_1_5B_MODEL_PATH;
+  }
+  if (lower === 'cevin-3b-4bit-fused') {
+    return CEVIN_3B_MODEL_PATH;
+  }
+  if (clean.startsWith('./') || clean.startsWith('/')) return clean;
+  return `./${clean}`;
+}
+
+export type MlxCareerTaskName =
+  | 'experience_extraction'
+  | 'experience_matching'
+  | 'hallucination_audit'
+  | 'bullet_evaluation_and_rewrite'
+  | 'executive_summary_synthesis';
 
 // ============================================================================
 // Task 1: experience_extraction (temp = 0.0)

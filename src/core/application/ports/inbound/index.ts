@@ -459,6 +459,7 @@ export interface LlmProviderDTO {
   };
   configFields: LlmConfigFieldMeta[];
   defaultConfig: Record<string, unknown>;
+  supportedModels?: ModelInfo[];
 }
 
 export interface ListLlmProvidersUseCase {
@@ -502,6 +503,10 @@ export interface TestLlmConnectionUseCase {
   execute(
     providerId: string,
     configOverride?: Record<string, unknown>,
+  ): Promise<ConnectionDiagnosticResult>;
+  selectModel(
+    providerId: string,
+    modelId: string,
   ): Promise<ConnectionDiagnosticResult>;
   getSidebarStatus(): Promise<SidebarConnectionStatus>;
 }

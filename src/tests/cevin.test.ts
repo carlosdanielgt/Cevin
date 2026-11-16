@@ -22,6 +22,8 @@ import {
   createModelProfileCatalog,
   mlxFastApiProviderDescriptor,
   mockProviderDescriptor,
+  qwen25_1_5bMlxProfile,
+  resolveDefaultMlxModelPath,
 } from '../adapters/driven/llm';
 import {
   DEFAULT_APP_SETTINGS,
@@ -586,8 +588,19 @@ test('LLM Provider Contract Suite passes for Mock provider and MLX FastAPI provi
       return new Response(
         JSON.stringify({
           status: 'ok',
-          model: 'cevin-3b-4bit-fused',
-          data: [{ id: 'cevin-3b-4bit-fused', name: 'cevin-3b-4bit-fused' }],
+          model: 'Qwen2.5-1.5B-Instruct-4bit',
+          data: [
+            {
+              id: 'Qwen2.5-1.5B-Instruct-4bit',
+              name: 'Qwen2.5 1.5B Fine-Tuned (4-bit)',
+              is_default: true,
+            },
+            {
+              id: 'cevin-3b-4bit-fused',
+              name: 'Cevin 3B Fine-Tuned (4-bit)',
+              is_default: false,
+            },
+          ],
         }),
         { status: 200 },
       );
@@ -1102,17 +1115,33 @@ Equal Opportunity Employer: Kestrel Pay is proud to be an equal opportunity work
   assert.ok(estimator.getCharsPerToken() < 3.8);
 });
 
-test('ModelProfileCatalog resolves cevin-3b-4bit-fused with 1024 maxSeqLength and generic fallback', () => {
+test('ModelProfileCatalog resolves Qwen2.5-1.5B-Instruct-4bit (default), cevin-3b-4bit-fused, and generic fallback', () => {
   const catalog = createModelProfileCatalog();
+  const qwen15bProfile = catalog.resolveForModel('Qwen2.5-1.5B-Instruct-4bit');
+  assert.equal(qwen15bProfile.id, 'qwen25_1_5b_mlx');
+  assert.equal(qwen15bProfile.isRecommendedDefault, true);
+  assert.equal(qwen15bProfile.maxSeqLength, 1024);
+  assert.equal(qwen15bProfile.parallelRecommended, 1);
+  assert.equal(qwen15bProfile.fewShotStyle, 'inline');
+  assert.equal(qwen15bProfile.disableRawPromptTrimming, true);
+  assert.equal(
+    catalog.resolveForModel('cevin-1.5b-4bit-fused').id,
+    'qwen25_1_5b_mlx',
+  );
+
   const cevinProfile = catalog.resolveForModel('cevin-3b-4bit-fused');
   assert.equal(cevinProfile.id, 'cevin_3b_mlx');
+  assert.equal(cevinProfile.isRecommendedDefault, false);
   assert.equal(cevinProfile.maxSeqLength, 1024);
   assert.equal(cevinProfile.parallelRecommended, 1);
   assert.equal(cevinProfile.fewShotStyle, 'inline');
+  assert.deepEqual(qwen15bProfile.temperatures, cevinProfile.temperatures);
+  assert.deepEqual(qwen15bProfile.tokenCaps, cevinProfile.tokenCaps);
 
   const otherProfile = catalog.resolveForModel('mistral:7b');
   assert.equal(otherProfile.id, 'generic');
   assert.equal(otherProfile.maxSeqLength, 1024);
+  assert.equal(otherProfile.fewShotStyle, 'chat-turns');
 });
 
 test('LlmGateway enforces caching, 1-shot targeted repair on validator failure, baseline fallback, and extractJobFact snippet task', async () => {
@@ -3476,7 +3505,11 @@ test('MlxFastApiAdapter executes all 5 CareerIntelligencePort tasks with exact T
   };
 
   const adapter = createMlxCareerIntelligenceAdapter(
-    mlxFastApiProviderDescriptor.defaultConfig,
+    {
+      ...mlxFastApiProviderDescriptor.defaultConfig,
+      model: 'cevin-3b-4bit-fused',
+      modelPath: './cevin-3b-4bit-fused',
+    },
     mockFetch,
   );
 
@@ -3735,10 +3768,49 @@ test('Cleanup Round Verification: Dexie v5->v6 migration, Aliases vs Related par
     unknown
   >;
   assert.equal(mlxCfg?.baseUrl, 'http://localhost:8000');
-  assert.equal(mlxCfg?.model, 'cevin-3b-4bit-fused');
+  assert.equal(mlxCfg?.model, 'Qwen2.5-1.5B-Instruct-4bit');
+  assert.equal(mlxCfg?.modelPath, './cevin-1.5b-4bit-fused');
   assert.equal(migrated.applications[0].workingDraft.textAlign, 'left');
   assert.equal(migrated.applications[0].coverLetterDraft?.textAlign, 'left');
-  assert.equal(migrated.versions[0].modelId, 'cevin-3b-4bit-fused');
+  assert.equal(migrated.versions[0].modelId, 'Qwen2.5-1.5B-Instruct-4bit');
+
+  // Stale ./Qwen2.5-1.5B-Instruct-4bit path from earlier builds migrates to ./cevin-1.5b-4bit-fused
+  const stalePathMigrated = migrateV5ToV6Records({
+    settings: {
+      activeProviderId: 'mlx-fastapi',
+      providerConfigs: {
+        'mlx-fastapi': {
+          baseUrl: 'http://localhost:8000',
+          model: 'Qwen2.5-1.5B-Instruct-4bit',
+          modelPath: './Qwen2.5-1.5B-Instruct-4bit',
+        },
+      },
+    },
+  });
+  assert.equal(
+    (stalePathMigrated.settings.providerConfigs['mlx-fastapi'] as Record<string, unknown>)
+      .modelPath,
+    './cevin-1.5b-4bit-fused',
+  );
+
+  // Explicit cevin-3b-4bit-fused selection must be preserved across reads/migrations
+  const preserved3b = migrateV5ToV6Records({
+    settings: {
+      activeProviderId: 'mlx-fastapi',
+      providerConfigs: {
+        'mlx-fastapi': {
+          baseUrl: 'http://localhost:8000',
+          model: 'cevin-3b-4bit-fused',
+          modelPath: './cevin-3b-4bit-fused',
+        },
+      },
+    },
+  });
+  assert.equal(
+    (preserved3b.settings.providerConfigs['mlx-fastapi'] as Record<string, unknown>)
+      .model,
+    'cevin-3b-4bit-fused',
+  );
 
   const msSkill = migrated.bank.skills.find((s) => s.id === 'skill-ms');
   const archSkill = migrated.bank.skills.find((s) => s.id === 'skill-arch');
@@ -3918,4 +3990,317 @@ test('Cleanup Round Verification: Dexie v5->v6 migration, Aliases vs Related par
     );
   }
 });
+
+test('Dual-model integration: Qwen2.5-1.5B-Instruct-4bit (default) and cevin-3b-4bit-fused switching, prompting, persistence, and cache isolation', async () => {
+  // 1. Verify default configuration & descriptor catalog use Qwen2.5-1.5B-Instruct-4bit
+  assert.equal(
+    mlxFastApiProviderDescriptor.defaultConfig.model,
+    'Qwen2.5-1.5B-Instruct-4bit',
+  );
+  assert.equal(
+    (DEFAULT_APP_SETTINGS.providerConfigs['mlx-fastapi'] as Record<string, unknown>)
+      .model,
+    'Qwen2.5-1.5B-Instruct-4bit',
+  );
+  assert.equal(qwen25_1_5bMlxProfile.isRecommendedDefault, true);
+  assert.equal(cevin3bMlxProfile.isRecommendedDefault, false);
+
+  // 2. Verify inbound useCases.listLlmProviders exposes both integrated models
+  const container = buildCevinContainer({ inMemoryOnly: true, seedDemo: true });
+  const providers = container.listLlmProviders.execute();
+  const mlxProviderDto = providers.find((p) => p.id === 'mlx-fastapi');
+  assert.ok(mlxProviderDto, 'mlx-fastapi provider DTO must be registered');
+  assert.equal(mlxProviderDto.supportedModels?.length, 2);
+  assert.equal(
+    mlxProviderDto.supportedModels?.find(
+      (m) => m.id === 'Qwen2.5-1.5B-Instruct-4bit',
+    )?.isDefault,
+    true,
+  );
+  assert.equal(
+    mlxProviderDto.supportedModels?.find((m) => m.id === 'cevin-3b-4bit-fused')
+      ?.isDefault,
+    false,
+  );
+
+  // 3. Verify selectModel persists across manageSettings even when local server is offline
+  const diag3bOffline = await container.testLlmConnection.selectModel(
+    'mlx-fastapi',
+    'cevin-3b-4bit-fused',
+  );
+  assert.equal(diag3bOffline.connected, false);
+  const after3b = await container.manageSettings.getSettings();
+  assert.equal(
+    (after3b.providerConfigs['mlx-fastapi'] as Record<string, unknown>).model,
+    'cevin-3b-4bit-fused',
+  );
+  assert.equal(
+    (after3b.providerConfigs['mlx-fastapi'] as Record<string, unknown>)
+      .modelPath,
+    './cevin-3b-4bit-fused',
+  );
+
+  const diag15bOffline = await container.testLlmConnection.selectModel(
+    'mlx-fastapi',
+    'Qwen2.5-1.5B-Instruct-4bit',
+  );
+  assert.equal(diag15bOffline.connected, false);
+  const after15b = await container.manageSettings.getSettings();
+  assert.equal(
+    (after15b.providerConfigs['mlx-fastapi'] as Record<string, unknown>).model,
+    'Qwen2.5-1.5B-Instruct-4bit',
+  );
+  assert.equal(
+    (after15b.providerConfigs['mlx-fastapi'] as Record<string, unknown>)
+      .modelPath,
+    './cevin-1.5b-4bit-fused',
+  );
+  assert.equal(
+    resolveDefaultMlxModelPath('Qwen2.5-1.5B-Instruct-4bit'),
+    './cevin-1.5b-4bit-fused',
+  );
+  assert.equal(
+    resolveDefaultMlxModelPath('cevin-1.5b-4bit-fused'),
+    './cevin-1.5b-4bit-fused',
+  );
+  assert.equal(
+    resolveDefaultMlxModelPath('cevin-3b-4bit-fused'),
+    './cevin-3b-4bit-fused',
+  );
+
+  // 4. Verify MlxFastApiProvider routes model selection, complete() messages, and model-aware CareerIntelligence prompts
+  const requests: Array<{
+    url: string;
+    body: Record<string, unknown>;
+  }> = [];
+  const stubFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    requests.push({ url, body });
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'Qwen2.5-1.5B-Instruct-4bit',
+              name: 'Qwen2.5 1.5B Fine-Tuned (4-bit)',
+              is_default: true,
+              peak_ram_gb: 1.15,
+            },
+            {
+              id: 'cevin-3b-4bit-fused',
+              name: 'Cevin 3B Fine-Tuned (4-bit)',
+              is_default: false,
+              peak_ram_gb: 2.73,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.endsWith('/v1/cevin/select-model')) {
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          model: body.model,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.endsWith('/v1/cevin/infer')) {
+      if (body.task === 'experience_matching') {
+        return new Response(
+          JSON.stringify({
+            model: body.model,
+            result: {
+              task: 'experience_matching',
+              experience_id: 'ach-1',
+              direct_evidence: 'Ran Kubernetes clusters in Go.',
+              missing_evidence: 'None',
+              reasoning: 'Matched directly.',
+              confidence: 0.9,
+              match_level: 'strong',
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          model: body.model,
+          text: 'Engineered Go ingestion pipelines on Kubernetes, reducing cross-AZ egress spend by 38%.',
+          usage: { prompt_tokens: 160, completion_tokens: 22, total_ms: 95 },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+  };
+
+  const provider15b = createMlxFastApiProvider(
+    { baseUrl: 'http://localhost:8000', model: 'Qwen2.5-1.5B-Instruct-4bit' },
+    stubFetch,
+  );
+  const discovered = await provider15b.listModels();
+  assert.equal(discovered.length, 2);
+  await provider15b.selectModel?.('cevin-3b-4bit-fused');
+  assert.equal(
+    requests.some(
+      (r) =>
+        r.url.endsWith('/v1/cevin/select-model') &&
+        r.body.model === 'cevin-3b-4bit-fused',
+    ),
+    true,
+  );
+
+  // complete() must forward all system + few-shot messages and selected model ID
+  await provider15b.complete?.({
+    messages: [
+      { role: 'system', content: 'Custom system instruction' },
+      { role: 'user', content: 'Draft 1' },
+      { role: 'assistant', content: 'Rewrite 1' },
+      { role: 'user', content: 'Draft 2' },
+    ],
+    options: { maxSeqLength: 1024, temperature: 0.15, topP: 0.9, numPredict: 160 },
+  });
+  const inferCompleteReq = requests.find(
+    (r) => r.url.endsWith('/v1/cevin/infer') && Array.isArray(r.body.messages),
+  );
+  assert.equal(inferCompleteReq?.body.model, 'Qwen2.5-1.5B-Instruct-4bit');
+  assert.equal(
+    (inferCompleteReq?.body.messages as Array<{ role: string }>).length,
+    4,
+  );
+
+  // Unified CareerIntelligenceAdapter sends byte-identical CEVIN_MLX_SYSTEM_PROMPT and TASK prompts
+  // for BOTH fine-tuned 1.5B and 3B MLX models (no JSON schema injections, no few-shot examples).
+  const intel15b = createMlxCareerIntelligenceAdapter(
+    { baseUrl: 'http://localhost:8000', model: 'Qwen2.5-1.5B-Instruct-4bit' },
+    stubFetch,
+  );
+  const intel3b = createMlxCareerIntelligenceAdapter(
+    { baseUrl: 'http://localhost:8000', model: 'cevin-3b-4bit-fused' },
+    stubFetch,
+  );
+  const matchInput = {
+    experience_id: 'ach-1',
+    project: 'Telemetry',
+    role: 'Engineer',
+    action: 'Ran Kubernetes clusters',
+    technologies: ['Kubernetes'],
+    scale: '50 clusters',
+    impact: '99.9% uptime',
+    domain: 'Infrastructure',
+  };
+  await intel15b.classifyRequirementMatch(
+    'Kubernetes experience',
+    matchInput,
+    'Staff Engineer',
+  );
+  const ciReq15b = requests[requests.length - 1];
+
+  await intel3b.classifyRequirementMatch(
+    'Kubernetes experience',
+    matchInput,
+    'Staff Engineer',
+  );
+  const ciReq3b = requests[requests.length - 1];
+
+  assert.equal(ciReq15b.body.model, 'Qwen2.5-1.5B-Instruct-4bit');
+  assert.equal(ciReq3b.body.model, 'cevin-3b-4bit-fused');
+  assert.equal(ciReq15b.body.system_prompt, CEVIN_MLX_SYSTEM_PROMPT);
+  assert.equal(ciReq3b.body.system_prompt, CEVIN_MLX_SYSTEM_PROMPT);
+  assert.equal(
+    String(ciReq15b.body.system_prompt).includes('Return ONLY valid JSON with exact keys'),
+    false,
+    '1.5B fine-tuned MLX model must never receive extra schema injection text',
+  );
+  assert.equal(ciReq15b.body.user_prompt, ciReq3b.body.user_prompt);
+  assert.deepEqual(ciReq15b.body.messages, ciReq3b.body.messages);
+
+  // 5. Verify LlmGateway strips few-shot chat turns for both inline MLX models and isolates ResultCache entries
+  let activeModel = 'Qwen2.5-1.5B-Instruct-4bit';
+  let callCount = 0;
+  const capturedGatewayMessages: Array<Array<{ role: string; content: string }>> = [];
+  const dualCache = createInMemoryResultCache(100);
+  const dualGateway = createLlmGateway({
+    getProviderAndProfile: async () => ({
+      provider: {
+        async listModels() {
+          return discovered;
+        },
+        async *chat() {
+          yield '';
+        },
+        async chatJSON(_req, schema) {
+          return schema.parse({});
+        },
+        async complete(req) {
+          callCount += 1;
+          capturedGatewayMessages.push(req.messages);
+          return {
+            text:
+              activeModel === 'cevin-3b-4bit-fused'
+                ? 'Architected multi-region Kafka ingestion pipeline in Go, sustaining 1.4M events/sec while cutting egress spend by 38%.'
+                : 'Built multi-region Kafka ingestion pipeline in Go, sustaining 1.4M events/sec while reducing egress spend by 38%.',
+            usage: { promptTokens: 150, completionTokens: 25 },
+          };
+        },
+      },
+      providerId: 'mlx-fastapi',
+      modelName: activeModel,
+      profile:
+        activeModel === 'cevin-3b-4bit-fused'
+          ? cevin3bMlxProfile
+          : qwen25_1_5bMlxProfile,
+      parallelSlots: 1,
+    }),
+    resultCache: dualCache,
+    performanceLog: createInMemoryPerformanceLog(20),
+    clock: { nowIso: () => '2026-03-01T00:00:00.000Z' },
+    idGen: { nextId: (p = 'dual') => `${p}-1` },
+  });
+
+  const sampleBank = createDemoBankSnapshot();
+  const bulletInput = {
+    bulletId: 'dual-b1',
+    action: sampleBank.achievements[0].action,
+    result: sampleBank.achievements[0].result,
+    metric: sampleBank.achievements[0].metric,
+    company: sampleBank.experiences[0].company,
+    roleTitle: sampleBank.experiences[0].title,
+    allowedTerms: sampleBank.skills.map((s) => s.name),
+    jdOnlyTerms: [],
+    briefText: 'ROLE: Staff Engineer | MUST-HAVES: Go, Kafka, Kubernetes',
+    briefHash: 'dual-brief',
+    voice: 'balanced' as const,
+  };
+
+  const res15b = await dualGateway.executeTask(rewriteBulletTask, bulletInput, {
+    itemKey: 'dual-b1',
+    priority: 'interactive',
+  });
+  assert.equal(callCount, 1);
+  assert.equal(res15b.cached, false);
+
+  activeModel = 'cevin-3b-4bit-fused';
+  const res3b = await dualGateway.executeTask(rewriteBulletTask, bulletInput, {
+    itemKey: 'dual-b1',
+    priority: 'interactive',
+  });
+  assert.equal(
+    callCount,
+    2,
+    'Switching model must bypass the other model cache entry and invoke the newly selected model',
+  );
+  assert.notEqual(res15b.text, res3b.text);
+  assert.equal(capturedGatewayMessages[0].length, 2);
+  assert.equal(capturedGatewayMessages[1].length, 2);
+  assert.deepEqual(
+    capturedGatewayMessages[0],
+    capturedGatewayMessages[1],
+    'Both fine-tuned MLX models must receive identical gateway messages with zero few-shot turns',
+  );
+});
+
 

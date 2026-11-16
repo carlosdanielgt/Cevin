@@ -1362,7 +1362,14 @@ export function SidebarNav({
 
         {!expanded ? (
           <div className="flex flex-col items-center gap-2">
-            <Tooltip content={`${displayStatusLabel} — Click to open Settings`}>
+            <Tooltip
+              content={
+                connectionStatus.modelName &&
+                connectionStatus.state !== 'offline'
+                  ? `${displayStatusLabel} (${connectionStatus.modelName}) — Click to open Settings`
+                  : `${displayStatusLabel} — Click to open Settings`
+              }
+            >
               <button
                 type="button"
                 aria-label={`Connection status: ${displayStatusLabel}`}
@@ -1399,7 +1406,10 @@ export function SidebarNav({
             </Tooltip>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-md bg-ink-900 border border-ink-800">
+          <div
+            title={connectionStatus.detail}
+            className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-md bg-ink-900 border border-ink-800"
+          >
             <button
               type="button"
               onClick={() => {

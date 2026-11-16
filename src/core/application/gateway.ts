@@ -367,10 +367,15 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         }
       }
 
-      // If provider is Demo mode ('mock') and does not have failure simulation enabled,
-      // still run through provider.complete if available so timings, repair tests, and cache work identically.
+      // Strip chat-turn few-shot examples when the active profile uses 'inline' (fine-tuned MLX models
+      // trained with mask_prompt: true), keeping verbose few-shot turns isolated to 'chat-turns' fallback.
+      const effectivePrefixMessages =
+        profile.fewShotStyle === 'inline'
+          ? builtPrompt.prefixMessages.filter((m) => m.role === 'system')
+          : builtPrompt.prefixMessages;
+
       const baseMessages: LlmMessage[] = [
-        ...builtPrompt.prefixMessages,
+        ...effectivePrefixMessages,
         builtPrompt.suffixMessage,
       ];
 
@@ -689,8 +694,12 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
           briefHash: 'warm',
           voice,
         });
+        const effectivePrefixMessages =
+          profile.fewShotStyle === 'inline'
+            ? dummyPrompt.prefixMessages.filter((m) => m.role === 'system')
+            : dummyPrompt.prefixMessages;
         await provider.warm({
-          prefixMessages: dummyPrompt.prefixMessages,
+          prefixMessages: effectivePrefixMessages,
           maxSeqLength: profile.maxSeqLength,
         });
       } catch {
@@ -778,7 +787,7 @@ export function createLlmGateway(deps: LlmGatewayDependencies): LlmGateway {
         Math.min(3, parallelSlots ?? configuredSlots ?? 2),
       );
 
-      // Estimate per-bullet time from measured reading/writing speeds (defaulting to Apple Silicon 3B MLX numbers)
+      // Estimate per-bullet time from measured reading/writing speeds (defaulting to Apple Silicon MLX numbers)
       const writeSpeed = Math.max(12, summary.writingSpeedTokPerSec || 33);
       const readSpeed = Math.max(60, summary.readingSpeedTokPerSec || 195);
       const perBulletSec = 110 / readSpeed + 32 / writeSpeed + 0.45;

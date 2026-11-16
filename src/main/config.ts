@@ -8,7 +8,7 @@ export const APP_CONFIG = {
   defaultPort: 8080,
   mlxDefaults: {
     baseUrl: 'http://localhost:8000',
-    recommendedGenerationModel: 'cevin-3b-4bit-fused',
+    recommendedGenerationModel: 'Qwen2.5-1.5B-Instruct-4bit',
     defaultMaxSeqLength: 1024,
   },
   storageDbName: 'cevin_local_studio_db',

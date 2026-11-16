@@ -1,7 +1,7 @@
 # Cevin — Local-First Resume & Cover Letter Tailoring Studio
 
 ## 1. What Cevin Is
-Cevin helps you evaluate job postings and tailor your resume and cover letter from one central **Experience Bank** of verified roles, achievements, and skills. Run a **Quick check** (`⌘N`) on any job posting to inspect **Practical fit** (location, work permits, languages, salary, employment type) and **Coverage** (`Needs attention` gaps/partials vs. `Covered` evidence) before you invest time tailoring. In Studio, shape your prose with a 5-stop **Voice knob**, audit deterministic **Job match**, **Recruiter appeal** (with **Skim view**), **ATS readiness**, and **Letter appeal** (`Checks n/6`), and export clean `First_Last_Company_Resume.pdf`, Word (`.docx`), Markdown, or Plain Text documents. Everything runs locally in your browser against the local **Cevin model** (`cevin-3b-4bit-fused` via Apple MLX FastAPI) or built-in **Demo mode** with zero telemetry.
+Cevin helps you evaluate job postings and tailor your resume and cover letter from one central **Experience Bank** of verified roles, achievements, and skills. Run a **Quick check** (`⌘N`) on any job posting to inspect **Practical fit** (location, work permits, languages, salary, employment type) and **Coverage** (`Needs attention` gaps/partials vs. `Covered` evidence) before you invest time tailoring. In Studio, shape your prose with a 5-stop **Voice knob**, audit deterministic **Job match**, **Recruiter appeal** (with **Skim view**), **ATS readiness**, and **Letter appeal** (`Checks n/6`), and export clean `First_Last_Company_Resume.pdf`, Word (`.docx`), Markdown, or Plain Text documents. Everything runs locally in your browser against your integrated fine-tuned Apple MLX models (**`Qwen2.5-1.5B-Instruct-4bit`** default and **`cevin-3b-4bit-fused`** via FastAPI) or built-in **Demo mode** with zero telemetry.
 
 See [`docs/SCORING.md`](docs/SCORING.md) for a full breakdown of how Job match, Recruiter appeal, ATS readiness, and Practical fit are calculated.
 
@@ -71,7 +71,7 @@ npm run dev
 
 ## 5. Start the Cevin Model (Apple Silicon MLX)
 
-Run the fine-tuned Cevin 3B model (`./cevin-3b-4bit-fused`) on your host Mac from the repository root:
+`mlx_server.py` serves both integrated local models from the repository root (`./cevin-1.5b-4bit-fused` by default, and `./cevin-3b-4bit-fused` on demand when selected in Settings):
 
 1. **Create and activate a Python virtual environment (first time):**
    ```bash
@@ -87,8 +87,8 @@ Run the fine-tuned Cevin 3B model (`./cevin-3b-4bit-fused`) on your host Mac fro
    ```bash
    curl http://localhost:8000/v1/models
    ```
-4. **Connect in Settings:**
-   Open Cevin → **Settings → AI connection** → select **Cevin model (on this Mac)** → click **Test connection** and save. The bottom sidebar pill will show `Model ready`.
+4. **Connect & switch models in Settings:**
+   Open Cevin → **Settings → AI connection** → select **Cevin model (on this Mac)** → choose **Qwen2.5 1.5B Fine-Tuned (4-bit)** (default, ~1.2 GB RAM) or **Cevin 3B Fine-Tuned (4-bit)** (~2.7 GB RAM). The server unloads the previous model from unified memory automatically when you switch.
 
 ---
 
@@ -118,11 +118,12 @@ Run the fine-tuned Cevin 3B model (`./cevin-3b-4bit-fused`) on your host Mac fro
 
 ---
 
-## 8. Performance on Apple Silicon (`cevin-3b-4bit-fused`)
+## 8. Performance on Apple Silicon (`Qwen2.5-1.5B-Instruct-4bit` & `cevin-3b-4bit-fused`)
 
-Cevin's LLM harness (see [`docs/LLM_HARNESS.md`](docs/LLM_HARNESS.md)) is tuned around **`cevin-3b-4bit-fused`** (`Qwen2.5-3B-Instruct-4bit` fused with Cevin LoRA adapters):
-- **Memory Footprint**: ~2.73 GB unified memory with a `1024`-token maximum sequence length (`maxSeqLength: 1024`) and sequential GPU lock (`parallelRecommended: 1`).
-- **In-App Calibration**: Open **Settings → Performance** and click **Measure speed** to record your Mac's reading speed (prefill), writing speed (decode), and response cache statistics.
+Cevin's LLM harness (see [`docs/LLM_HARNESS.md`](docs/LLM_HARNESS.md)) integrates both fine-tuned local Apple Silicon MLX models using unified `CEVIN_MLX_SYSTEM_PROMPT` + `TASK:` Chain-of-Thought prompts (`mask_prompt: true`, `1024`-token sequence cap):
+- **Default (`Qwen2.5-1.5B-Instruct-4bit`):** ~1.15 GB unified memory, Rank-32 LoRA fine-tuned on the exact Cevin dataset for fast everyday tailoring.
+- **Higher-Capacity Option (`cevin-3b-4bit-fused`):** ~2.73 GB unified memory, Qwen2.5-3B LoRA weights fine-tuned on the exact same Cevin dataset.
+- **In-App Calibration:** Open **Settings → Performance** and click **Measure speed** to record your Mac's reading speed (prefill), writing speed (decode), and response cache statistics.
 
 ### Troubleshooting Local Model Connection
 
@@ -136,4 +137,4 @@ Cevin's LLM harness (see [`docs/LLM_HARNESS.md`](docs/LLM_HARNESS.md)) is tuned 
 ## 9. True WYSIWYG, Scalable Job Facts & Privacy ("Desk, Paper & Ink")
 - **True WYSIWYG ("The preview is the PDF"):** A single domain mapper (`mapToResumeDocument` / `mapToCoverLetterDocument`) feeds the embedded-font PDF engine (`Plus Jakarta Sans` + `Fraunces` static TrueType subsets). `PdfPreview` renders the exact `Uint8Array` PDF bytes onto `<canvas>` via `pdfjs-dist` with an SVG `PreviewOverlay` for Skim view, keyword cross-highlighting, and hovered-bullet bounding boxes (`locateBlocks`). Clicking **Export PDF** downloads those exact bytes (`PDF · 1 page · 48 KB`).
 - **Word Document (`.docx`) Export:** `renderDocumentToDocxBlob` generates a standards-compliant OpenXML `.docx` archive with real Word paragraph styles (`Heading1`, `Heading2`, `ListBullet`, `Normal`), `word/fontTable.xml` font fallbacks, right-aligned tab stops for dates, and 100% text parity with `documentToPlainText`.
-- **100% Local Client-Browser Storage:** All Experience Bank items, job descriptions, applications, saved resume/cover-letter versions (including stored `pdfBytes`), and cached LLM results stay inside your browser's local IndexedDB (`cevin_local_studio_db`, schema v6 via Dexie). Nothing is ever uploaded to an external database or server. Released under the Apache-2.0 License.
+- **100% Local Client-Browser Storage:** All Experience Bank items, job descriptions, applications, saved resume/cover-letter versions (including stored `pdfBytes`), and cached LLM results stay inside your browser's local IndexedDB (`cevin_local_studio_db`, schema v7 via Dexie). Nothing is ever uploaded to an external database or server. Released under the Apache-2.0 License.

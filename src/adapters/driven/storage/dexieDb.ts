@@ -4,6 +4,7 @@ import {
   ApplicationRepository,
   BankRepository,
   CachedTaskResult,
+  DEFAULT_MLX_1_5B_MODEL_PATH,
   PerformanceCallEntry,
   PerformanceLog,
   PerformanceSummary,
@@ -12,6 +13,7 @@ import {
   SettingsRepository,
   createDemoApplications,
   createDemoBankSnapshot,
+  resolveMlxModelPath,
 } from '../../../core/application';
 import {
   Achievement,
@@ -209,10 +211,11 @@ export function migrateV4ToV5Records(params: {
 }
 
 /**
- * Pure migration helper upgrading v5 records to v6:
+ * Pure migration helper upgrading v5 records to v6/v7:
  * - Migrates persisted settings with legacy provider IDs (`ollama`, `ollama-llama3.1`, `cevin-3b-mlx`)
- *   to `mlx-fastapi` and model IDs (`llama3.1:8b`) to `cevin-3b-4bit-fused`.
- * - Migrates version `modelId` values (`llama3.1:8b`) to `cevin-3b-4bit-fused`.
+ *   to `mlx-fastapi` and legacy model IDs (`llama3.1:8b`) to `Qwen2.5-1.5B-Instruct-4bit`,
+ *   while preserving explicit valid model selections (`Qwen2.5-1.5B-Instruct-4bit` or `cevin-3b-4bit-fused`).
+ * - Migrates legacy version `modelId` values (`llama3.1:8b`) to `Qwen2.5-1.5B-Instruct-4bit`.
  * - Normalizes Bank skills (categories and synonyms vs related skills) and deduplicates placeholder roles.
  * - Normalizes document `textAlign` so `'right'` becomes `'left'`.
  */
@@ -237,6 +240,25 @@ export function migrateV5ToV6Records(params: {
     (rawSettings.providerConfigs?.['cevin-3b-mlx'] as Record<string, unknown> | undefined) ??
     {};
 
+  const rawPrevModel =
+    typeof prevMlxCfg.model === 'string' ? prevMlxCfg.model.trim() : '';
+  const isLegacyModel =
+    !rawPrevModel ||
+    rawPrevModel.toLowerCase().includes('llama') ||
+    rawPrevModel.toLowerCase().includes('ollama');
+  const resolvedModel = isLegacyModel
+    ? 'Qwen2.5-1.5B-Instruct-4bit'
+    : rawPrevModel;
+  const rawPrevPath =
+    typeof prevMlxCfg.modelPath === 'string' ? prevMlxCfg.modelPath.trim() : '';
+  const isStaleDefaultPath =
+    rawPrevPath === './Qwen2.5-1.5B-Instruct-4bit' ||
+    rawPrevPath === 'Qwen2.5-1.5B-Instruct-4bit';
+  const resolvedModelPath =
+    !isLegacyModel && rawPrevPath && !isStaleDefaultPath
+      ? rawPrevPath
+      : resolveMlxModelPath(resolvedModel);
+
   const migratedSettings: AppSettings = {
     ...DEFAULT_APP_SETTINGS,
     ...rawSettings,
@@ -248,9 +270,12 @@ export function migrateV5ToV6Records(params: {
           !prevMlxCfg.baseUrl.includes('11434')
             ? prevMlxCfg.baseUrl
             : 'http://localhost:8000',
-        model: 'cevin-3b-4bit-fused',
-        modelPath: './cevin-3b-4bit-fused',
-        maxSeqLength: 1024,
+        model: resolvedModel,
+        modelPath: resolvedModelPath,
+        maxSeqLength:
+          typeof prevMlxCfg.maxSeqLength === 'number'
+            ? prevMlxCfg.maxSeqLength
+            : 1024,
       },
       mock: {
         ...DEFAULT_APP_SETTINGS.providerConfigs.mock,
@@ -297,7 +322,7 @@ export function migrateV5ToV6Records(params: {
       !ver.modelId ||
       ver.modelId.toLowerCase().includes('llama') ||
       ver.modelId.toLowerCase().includes('ollama')
-        ? 'cevin-3b-4bit-fused'
+        ? 'Qwen2.5-1.5B-Instruct-4bit'
         : ver.modelId,
   }));
 
@@ -499,7 +524,7 @@ export class CevinDexieDatabase extends Dexie {
               mId.toLowerCase().includes('llama') ||
               mId.toLowerCase().includes('ollama')
             ) {
-              ver.modelId = 'cevin-3b-4bit-fused';
+              ver.modelId = 'Qwen2.5-1.5B-Instruct-4bit';
             }
           });
         await tx
@@ -512,6 +537,47 @@ export class CevinDexieDatabase extends Dexie {
             skill.related = norm.related;
           });
       });
+
+    this.version(7)
+      .stores({
+        profiles: 'id',
+        experiences: 'id, company',
+        achievements: 'id, experienceId',
+        skills: 'id, name, category',
+        educations: 'id',
+        projects: 'id',
+        certifications: 'id',
+        applications: 'id, status, updatedAt',
+        versions: 'id, applicationId, kind, number, contentHash, createdAt',
+        settings: 'id',
+        preferences: 'id',
+        resultCache: 'key, taskId, lastAccessedAt',
+        performanceLog: 'id, taskId, createdAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('settings')
+          .toCollection()
+          .modify((rec: { id: string; value?: AppSettings }) => {
+            if (!rec.value) return;
+            const prevCfg = rec.value.providerConfigs?.['mlx-fastapi'] as
+              | Record<string, unknown>
+              | undefined;
+            if (prevCfg?.model === 'cevin-3b-4bit-fused') {
+              rec.value = {
+                ...rec.value,
+                providerConfigs: {
+                  ...rec.value.providerConfigs,
+                  'mlx-fastapi': {
+                    ...prevCfg,
+                    model: 'Qwen2.5-1.5B-Instruct-4bit',
+                    modelPath: DEFAULT_MLX_1_5B_MODEL_PATH,
+                  },
+                },
+              };
+            }
+          });
+      });
   }
 }
 
@@ -520,8 +586,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   providerConfigs: {
     'mlx-fastapi': {
       baseUrl: 'http://localhost:8000',
-      model: 'cevin-3b-4bit-fused',
-      modelPath: './cevin-3b-4bit-fused',
+      model: 'Qwen2.5-1.5B-Instruct-4bit',
+      modelPath: DEFAULT_MLX_1_5B_MODEL_PATH,
       maxSeqLength: 1024,
     },
     mock: {

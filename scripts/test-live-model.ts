@@ -19,7 +19,8 @@ import {
 import { validateBulletGrounding } from '../src/core/domain';
 
 const MLX_ENDPOINT = process.env.CEVIN_MLX_URL || 'http://localhost:8000';
-const MLX_MODEL = process.env.CEVIN_MLX_MODEL || 'cevin-3b-4bit-fused';
+const MLX_MODEL =
+  process.env.CEVIN_MLX_MODEL || 'Qwen2.5-1.5B-Instruct-4bit';
 const RECORD_MODE = process.argv.includes('--record');
 const FIXTURE_PATH = path.resolve(
   process.cwd(),

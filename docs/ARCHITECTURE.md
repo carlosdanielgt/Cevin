@@ -37,7 +37,7 @@ Cevin is structured around a strict **Hexagonal Architecture (Ports and Adapters
                     v                   v                   v
         +---------------+       +---------------+   +---------------+
         | Driven: LLM   |       | Driven: I/O   |   | Driven: Store |
-        | MLX FastAPI,  |       | PDF, DOCX,    |   | Dexie v6: App,|
+        | MLX FastAPI,  |       | PDF, DOCX,    |   | Dexie v7: App,|
         | Mock, Profiles|       | MD, TXT, Imp  |   | Prefs, Cache  |
         +---------------+       +---------------+   +---------------+
 ```

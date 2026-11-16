@@ -30,6 +30,10 @@ export interface ModelInfo {
   name: string;
   family?: string;
   parameterSize?: string;
+  description?: string;
+  estimatedMemoryGb?: number;
+  isDefault?: boolean;
+  available?: boolean;
   supportsEmbeddings?: boolean;
 }
 
@@ -127,6 +131,10 @@ export interface LlmProvider {
    */
   unload?(model?: string): Promise<void>;
   /**
+   * Explicitly switches the active model loaded on a multi-model provider endpoint.
+   */
+  selectModel?(modelId: string): Promise<void>;
+  /**
    * Optional dedicated hexagonal CareerIntelligencePort implementation (Task 1–5 contracts).
    */
   careerIntelligence?: import('./careerIntelligence').CareerIntelligencePort;
@@ -152,15 +160,18 @@ export interface LlmProviderDescriptor<TConfig = Record<string, unknown>> {
   configSchema: z.ZodType<TConfig>;
   configFields: LlmConfigFieldMeta[];
   defaultConfig: TConfig;
+  supportedModels?: ModelInfo[];
   create(config: TConfig): LlmProvider;
 }
 
 /**
- * Tuned parameter profile for a local model family (e.g., `cevin-3b-4bit-fused` on Apple Silicon).
+ * Tuned parameter profile for a local model family (e.g., `Qwen2.5-1.5B-Instruct-4bit` or `cevin-3b-4bit-fused` on Apple Silicon).
  */
 export interface ModelProfile {
   id: string;
   label: string;
+  description?: string;
+  estimatedMemoryGb?: number;
   isRecommendedDefault: boolean;
   matches(modelName: string): boolean;
   /** Maximum sequence length supported per call. */
@@ -186,7 +197,7 @@ export interface ModelProfile {
   fewShotStyle: 'chat-turns' | 'inline';
   serverEnv: string[];
   /**
-   * When true (e.g. for `cevin-3b-4bit-fused` trained with `mask_prompt: true`),
+   * When true (e.g. for Cevin MLX fine-tuned models trained with `mask_prompt: true`),
    * bypasses destructive raw prompt-string truncation in the gateway so structured JSON is never sliced.
    */
   disableRawPromptTrimming?: boolean;

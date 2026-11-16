@@ -15,8 +15,9 @@ import { buildCustomAliasMap, rankBankItemsForJob } from './matching';
 
 
 /**
- * Domain Pre-Processor micro-schemas used by the fine-tuned MLX model (`cevin-3b-4bit-fused`).
- * Strictly decoupled from Llama-3.1 prompt compression so structured JSON is never truncated mid-string.
+ * Domain Pre-Processor micro-schemas shared across Cevin's fine-tuned MLX models
+ * (`Qwen2.5-1.5B-Instruct-4bit` Rank-32 LoRA and `cevin-3b-4bit-fused`).
+ * Strictly decoupled from generic fallback prompt compression so structured JSON is never truncated mid-string.
  */
 
 export interface ExperienceRecordSlice {

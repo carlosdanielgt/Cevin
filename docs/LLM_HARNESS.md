@@ -1,24 +1,29 @@
-# Cevin LLM Harness (`cevin-3b-4bit-fused` on Apple Silicon MLX)
+# Cevin LLM Harness (`Qwen2.5-1.5B-Instruct-4bit` & `cevin-3b-4bit-fused` on Apple Silicon MLX)
 
-Cevin's LLM Harness (`src/core/domain/harness.ts`, `src/core/application/gateway.ts`, `src/core/application/tasks/`, and `src/adapters/driven/llm/profiles.ts`) is engineered so that Cevin's fine-tuned local model—**`cevin-3b-4bit-fused`** (`Qwen2.5-3B-Instruct-4bit` fused with LoRA weights) running via FastAPI (`mlx_server.py`) on Apple Silicon—delivers fast, grounded, zero-failure resume and cover-letter tailoring.
+Cevin's LLM Harness (`src/core/domain/harness.ts`, `src/core/application/gateway.ts`, `src/core/application/tasks/`, and `src/adapters/driven/llm/profiles.ts`) integrates two fine-tuned local 4-bit MLX models served via FastAPI (`mlx_server.py`) on Apple Silicon—with **`Qwen2.5-1.5B-Instruct-4bit`** (Rank-32 LoRA) as the lightweight default and **`cevin-3b-4bit-fused`** (`Qwen2.5-3B-Instruct-4bit` fused with LoRA weights) selectable in Settings.
 
 ---
 
 ## 1. Hardware Constraints & Design Rule
 
 On Apple Silicon unified memory:
-- **Footprint:** `cevin-3b-4bit-fused` uses ~2.73 GB of unified memory with a `1024`-token maximum sequence length (`maxSeqLength: 1024`).
-- **Sequential GPU execution:** Metal inference runs sequentially (`parallelRecommended: 1`) via an `asyncio.Lock()` in `mlx_server.py`.
-- **Exact task schemas:** The model was fine-tuned with prompt-loss masking (`mask_prompt: true`) on exact `TASK:` headers and strict Chain-of-Thought JSON schemas (`_reasoning_trace`, `_fact_audit`, `_alignment_rationale`).
+- **Footprint & Local Directories:**
+  - `Qwen2.5-1.5B-Instruct-4bit` (default, Rank-32 LoRA fine-tuned at `./cevin-1.5b-4bit-fused`) uses ~1.15 GB of unified memory with `maxSeqLength: 1024`.
+  - `cevin-3b-4bit-fused` (3B LoRA fine-tuned at `./cevin-3b-4bit-fused`) uses ~2.73 GB of unified memory with `maxSeqLength: 1024`.
+- **Sequential GPU execution & Hot Swapping:** Metal inference runs sequentially (`parallelRecommended: 1`) via an `asyncio.Lock()` in `mlx_server.py`. Switching models via `POST /v1/cevin/select-model` (or passing `model` in `/v1/cevin/infer`) cleanly unloads the prior model and clears the Metal cache before loading target weights.
+- **Unified Fine-Tuned MLX Prompting:**
+  - Both `Qwen2.5-1.5B-Instruct-4bit` and `cevin-3b-4bit-fused` were fine-tuned on the exact same dataset with `mask_prompt: true` and `max_seq_length: 1024`.
+  - Both models route through the identical `CEVIN_MLX_SYSTEM_PROMPT` and exact `TASK:` Chain-of-Thought prompts with **zero** extra JSON schema injections and **zero** chat-turn few-shot examples (preventing prompt-masking distribution shift).
+  - Verbose few-shot chat-turn prompting (`fewShotStyle: 'chat-turns'`) is isolated exclusively to the `generic` fallback profile for un-tuned custom models.
 
 Therefore, Cevin's harness enforces:
-> **Domain pre-filtering of job descriptions and Experience Bank slices to fit within 1,024 tokens, exact task schemas, 6 domain validators, 1-shot targeted repair, and content-addressed caching.**
+> **Domain pre-filtering of job descriptions and Experience Bank slices to fit within 1,024 tokens, unified fine-tuned MLX prompting, 6 domain validators, 1-shot targeted repair, and content-addressed caching (keyed by model ID).**
 
 ### Target Budgets
 | Budget | Target | How the Harness Achieves It |
 | :--- | :--- | :--- |
 | **Per-request sequence cap** | **≤ 1,024 tokens** (`maxSeqLength: 1024`) | Domain pre-processors strip HR boilerplate and pass only task-relevant Experience Bank items |
-| **Decode speed** | **~32–36 tok/s** on Apple Silicon | 4-bit quantized MLX weights with zero CPU offload |
+| **Decode speed** | **~32–55 tok/s** on Apple Silicon | 4-bit quantized MLX weights (1.5B / 3B) with zero CPU offload |
 | **Unhandled JSON / validation errors** | **0** | Sanitizer + CoT JSON extractor + 6 validators + 1-shot targeted repair + deterministic baseline fallback |
 | **Offline / Demo usability** | **100%** | Every task has a deterministic zero-token baseline in `src/core/domain/` |
 
@@ -26,24 +31,28 @@ Therefore, Cevin's harness enforces:
 
 ## 2. Model Profiles (`profiles.ts`)
 
-1. **Tuned Default (`cevin_3b_mlx` profile)**:
-   - Model ID: `cevin-3b-4bit-fused`
-   - `maxSeqLength: 1024`, `parallelRecommended: 1`, `isFineTunedCevin3B: true`, `fewShotStyle: 'zero-shot-cot'`.
-   - Task-calibrated temperatures (`0.25` for bullet/summary/letter rewrites, `0.0` for JSON extraction/classification).
-2. **Fallback Profile (`generic`)**:
-   - Used for Demo mode (`mock`) or any custom OpenAI-compatible local endpoint.
+1. **Recommended Default (`qwen25_1_5b_mlx` profile)**:
+   - Model ID: `Qwen2.5-1.5B-Instruct-4bit` (Rank-32 LoRA fine-tuned, ~1.15 GB RAM)
+   - `maxSeqLength: 1024`, `parallelRecommended: 1`, `disableRawPromptTrimming: true`, `fewShotStyle: 'inline'`.
+   - Preserves exact fine-tuned system prompt and `TASK:` schema headers (`tokenCaps: 512`, `0.0` extraction/bullet temps, `0.2` prose temps).
+2. **Fine-Tuned 3B Model (`cevin_3b_mlx` profile)**:
+   - Model ID: `cevin-3b-4bit-fused` (3B LoRA fine-tuned, ~2.73 GB RAM)
+   - `maxSeqLength: 1024`, `parallelRecommended: 1`, `disableRawPromptTrimming: true`, `fewShotStyle: 'inline'`.
+   - Shares the exact same unified prompt formatting and temperature/token profile as the 1.5B MLX model.
+3. **Fallback Profile (`generic`)**:
+   - Used for any custom user-specified non-MLX model name; retains `fewShotStyle: 'chat-turns'` and raw prompt trimming.
 
 ---
 
 ## 3. Prompt & Domain Pre-Filtering Architecture
 
 Every task in `src/core/application/tasks/index.ts` splits its messages into:
-1. **`buildPrefixMessages(voice, profile)`**:
-   - For `cevin_3b_mlx` (`isFineTunedCevin3B: true`), emits the exact system instruction and `TASK:` schema header the model was trained on without redundant few-shot turns.
+1. **`prefixMessages` & `fewShotStyle` Routing (`LlmGateway`)**:
+   - Both fine-tuned MLX profiles (`qwen25_1_5b_mlx` and `cevin_3b_mlx`) set `fewShotStyle: 'inline'`, so `LlmGateway` strips `user`/`assistant` few-shot turns and sends only the concise `system` instruction alongside the payload—leaving `chat-turns` few-shot examples isolated to `generic`.
 2. **`buildSuffixMessage(input)`**:
    - Contains only the specific item's verified facts (`action`, `result`, `metric`, `tools`, and matched job keywords) in `<= 200` tokens.
-3. **Chain-of-Thought JSON Parsing (`mlxFastApi.ts` & `tasks/index.ts`)**:
-   - Extracts the target prose or structured fields while discarding internal reasoning keys (`_reasoning_trace`, `_fact_audit`, `_alignment_rationale`).
+3. **Model-Isolated Cache Keys (`ResultCache`)**:
+   - Every cached entry is keyed by `modelName` + `profile.id` + `taskId` + `voice` + `inputHash`, so switching between `Qwen2.5-1.5B-Instruct-4bit` and `cevin-3b-4bit-fused` never serves stale outputs from the other model.
 
 ---
 
