@@ -2,6 +2,7 @@ export * from './entities';
 export * from './keywords';
 export * from './matching';
 export * from './bulletAssembler';
+export * from './draftBullets';
 export * from './voice';
 export * from './linter';
 export * from './grounding';

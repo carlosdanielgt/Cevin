@@ -18,7 +18,7 @@ import {
   Undo2,
   Unlock,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CoverLetterAnalysisResult } from '../../../../../core/application';
 import {
   Achievement,
@@ -55,10 +55,13 @@ import {
   formatAchievementInVoice,
   formatCount,
   formatDocumentDateRange,
+  includeBulletInDraft,
   isPlaceholderExperience,
   mapApplicationToResumeDocument,
   mapToCoverLetterDocument,
+  moveBulletWithinRoleInDraft,
   orderExperiencesForDraft,
+  removeBulletFromDraft,
   sanitizeExportFilenameInput,
   sortExperiencesChronologically,
   validateBulletGrounding,
@@ -365,6 +368,9 @@ export function StudioView({
     await persistApp(nextEntry.app, { skipHistory: true });
     addToast('Redid change.', 'neutral');
   }, [app, bank, redoStack, appliedFixIds, useCases, persistApp, addToast]);
+
+  const handleUndoRef = useRef(handleUndo);
+  handleUndoRef.current = handleUndo;
 
   const handleResetToDefault = useCallback(async () => {
     if (!app || !bank || isResettingDraft) return;
@@ -838,17 +844,50 @@ export function StudioView({
       unverifiedClaims: [],
       origin: 'bank',
     };
-    const nextBullets = [...app.workingDraft.bullets, newBullet];
-    const nextSelectedIds = Array.from(
-      new Set([...app.workingDraft.selectedAchievementIds, ach.id]),
-    );
+    const nextWorkingDraft = includeBulletInDraft(app.workingDraft, newBullet);
     await persistApp({
       ...app,
-      workingDraft: {
-        ...app.workingDraft,
-        selectedAchievementIds: nextSelectedIds,
-        bullets: nextBullets,
+      workingDraft: nextWorkingDraft,
+    });
+  };
+
+  const handleRemoveBullet = async (bulletId: string) => {
+    const target = app.workingDraft.bullets.find((b) => b.id === bulletId);
+    if (!target) return;
+
+    setHoveredBlockId((prev) => (prev === bulletId ? null : prev));
+    setHighlightedSourceId((prev) =>
+      prev && target.sourceIds.includes(prev) ? null : prev,
+    );
+
+    const nextWorkingDraft = removeBulletFromDraft(app.workingDraft, bulletId);
+    await persistApp({
+      ...app,
+      workingDraft: nextWorkingDraft,
+    });
+
+    addToast('Removed bullet from resume.', {
+      variant: 'info',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void handleUndoRef.current();
       },
+    });
+  };
+
+  const handleMoveBullet = async (
+    bulletId: string,
+    direction: 'up' | 'down',
+  ) => {
+    const nextWorkingDraft = moveBulletWithinRoleInDraft(
+      app.workingDraft,
+      bulletId,
+      direction,
+    );
+    if (nextWorkingDraft === app.workingDraft) return;
+    await persistApp({
+      ...app,
+      workingDraft: nextWorkingDraft,
     });
   };
 
@@ -2032,60 +2071,15 @@ export function StudioView({
                                     },
                                   });
                                 }}
-                                onMoveUp={() => {
-                                  const globalIdx =
-                                    app.workingDraft.bullets.findIndex(
-                                      (b) => b.id === bullet.id,
-                                    );
-                                  if (globalIdx <= 0) return;
-                                  const copy = [...app.workingDraft.bullets];
-                                  const temp = copy[globalIdx - 1];
-                                  copy[globalIdx - 1] = copy[globalIdx];
-                                  copy[globalIdx] = temp;
-                                  void persistApp({
-                                    ...app,
-                                    workingDraft: {
-                                      ...app.workingDraft,
-                                      bullets: copy,
-                                    },
-                                  });
-                                }}
-                                onMoveDown={() => {
-                                  const globalIdx =
-                                    app.workingDraft.bullets.findIndex(
-                                      (b) => b.id === bullet.id,
-                                    );
-                                  if (
-                                    globalIdx === -1 ||
-                                    globalIdx >=
-                                      app.workingDraft.bullets.length - 1
-                                  )
-                                    return;
-                                  const copy = [...app.workingDraft.bullets];
-                                  const temp = copy[globalIdx + 1];
-                                  copy[globalIdx + 1] = copy[globalIdx];
-                                  copy[globalIdx] = temp;
-                                  void persistApp({
-                                    ...app,
-                                    workingDraft: {
-                                      ...app.workingDraft,
-                                      bullets: copy,
-                                    },
-                                  });
-                                }}
-                                onRemove={() => {
-                                  const nextBullets =
-                                    app.workingDraft.bullets.filter(
-                                      (b) => b.id !== bullet.id,
-                                    );
-                                  void persistApp({
-                                    ...app,
-                                    workingDraft: {
-                                      ...app.workingDraft,
-                                      bullets: nextBullets,
-                                    },
-                                  });
-                                }}
+                                onMoveUp={() =>
+                                  void handleMoveBullet(bullet.id, 'up')
+                                }
+                                onMoveDown={() =>
+                                  void handleMoveBullet(bullet.id, 'down')
+                                }
+                                onRemove={() =>
+                                  void handleRemoveBullet(bullet.id)
+                                }
                               />
                             );
                           })}

@@ -2366,8 +2366,8 @@ export function GroupHeader({
 /**
  * BulletRow for the Studio Build step:
  * Checkbox, 3-bar relevance meter with tooltip, auto-growing text, provenance marker (sparkle/pencil),
- * inline cliché popover ("architected → built [Apply] [Dismiss]"), and at most 2 visible actions:
- * `Rewrite` and `⋯` menu (Lock, Show sources, Compare with original, Move up/down).
+ * inline cliché popover ("architected → built [Apply] [Dismiss]"), and compact header actions:
+ * `Rewrite`, `Remove bullet`, and `⋯` menu (Lock, Show sources, Compare with original, Move up/down, Remove).
  */
 export function BulletRow({
   bulletText,
@@ -2539,6 +2539,15 @@ export function BulletRow({
             <span>Rewrite</span>
           </Button>
 
+          <IconButton
+            variant="danger"
+            size="sm"
+            label="Remove bullet"
+            onClick={onRemove}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </IconButton>
+
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger asChild>
               <IconButton label="More bullet actions" size="sm">
@@ -2624,6 +2633,21 @@ export function BulletRow({
                 >
                   <ArrowDown className="w-3.5 h-3.5" />
                   <span>Move bullet down</span>
+                </button>
+
+                <div className="my-1 border-t border-hairline" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRemove();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-danger-700 rounded-sm hover:bg-danger-50 text-left cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove bullet</span>
                 </button>
               </div>
             </PopoverContent>
