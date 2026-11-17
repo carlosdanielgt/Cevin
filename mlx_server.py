@@ -48,6 +48,13 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
+def _get_env_model_override() -> str:
+    return (
+        os.environ.get("CEVIN_MODEL_PATH", "").strip()
+        or os.environ.get("CEVIN_MLX_MODEL_PATH", "").strip()
+    )
+
+
 @dataclass(frozen=True)
 class RegisteredModelSpec:
     id: str
@@ -62,8 +69,8 @@ class RegisteredModelSpec:
     description: str
 
     def resolve_load_target(self) -> str:
-        # Honor explicit CEVIN_MLX_MODEL_PATH override if targeting this model
-        override_path = os.environ.get("CEVIN_MLX_MODEL_PATH", "").strip()
+        # Honor explicit CEVIN_MODEL_PATH / CEVIN_MLX_MODEL_PATH override if targeting this model
+        override_path = _get_env_model_override()
         local_dir_name = os.path.basename(self.local_path.rstrip("/"))
         if override_path and (
             os.path.basename(override_path.rstrip("/")) in (self.id, local_dir_name)
@@ -79,7 +86,7 @@ class RegisteredModelSpec:
     def is_available_locally(self) -> bool:
         if os.path.exists(self.local_path):
             return True
-        override_path = os.environ.get("CEVIN_MLX_MODEL_PATH", "").strip()
+        override_path = _get_env_model_override()
         local_dir_name = os.path.basename(self.local_path.rstrip("/"))
         if override_path and os.path.exists(override_path):
             if os.path.basename(override_path.rstrip("/")) in (self.id, local_dir_name):
@@ -90,31 +97,31 @@ class RegisteredModelSpec:
 REGISTERED_MODELS: Dict[str, RegisteredModelSpec] = {
     "Qwen2.5-1.5B-Instruct-4bit": RegisteredModelSpec(
         id="Qwen2.5-1.5B-Instruct-4bit",
-        name="Qwen2.5 1.5B Fine-Tuned (4-bit)",
+        name="Cevin 1.5B",
         local_path=os.environ.get(
             "CEVIN_MLX_1_5B_PATH", "./cevin-1.5b-4bit-fused"
         ),
         hf_fallback=None,
         family="qwen2.5-mlx-lora",
-        parameter_size="1.5B (4-bit fused)",
+        parameter_size="1.5B (4-bit MLX)",
         peak_ram_gb=1.15,
         is_default=True,
         fine_tuned=True,
-        description="Fine-tuned Qwen2.5-1.5B Rank-32 LoRA model trained on structured career reasoning (~1.2 GB RAM).",
+        description="Default fine-tuned local model for fast everyday tailoring (~1.2 GB RAM).",
     ),
     "cevin-3b-4bit-fused": RegisteredModelSpec(
         id="cevin-3b-4bit-fused",
-        name="Cevin 3B Fine-Tuned (4-bit)",
+        name="Cevin 3B",
         local_path=os.environ.get(
             "CEVIN_MLX_3B_PATH", "./cevin-3b-4bit-fused"
         ),
         hf_fallback=None,
         family="qwen2.5-mlx-lora",
-        parameter_size="3B (4-bit fused)",
+        parameter_size="3B (4-bit MLX)",
         peak_ram_gb=2.73,
         is_default=False,
         fine_tuned=True,
-        description="Fine-tuned Qwen2.5-3B LoRA model for higher nuance (~2.7 GB RAM).",
+        description="Higher-capacity fine-tuned local model for complex resumes (~2.7 GB RAM).",
     ),
 }
 
@@ -127,6 +134,9 @@ def _lookup_registered_model(
         return None
     if normalized in REGISTERED_MODELS:
         return REGISTERED_MODELS[normalized]
+    # Hugging Face repo IDs (e.g., mlx-community/Qwen2.5-1.5B-Instruct-4bit) are public base models
+    if "/" in normalized and not normalized.startswith(("./", "/", "../")):
+        return None
     base = os.path.basename(normalized.rstrip("/"))
     if base in REGISTERED_MODELS:
         return REGISTERED_MODELS[base]
@@ -138,11 +148,12 @@ def _lookup_registered_model(
 
 
 def _resolve_initial_model_id() -> str:
-    env_model_path = os.environ.get("CEVIN_MLX_MODEL_PATH", "").strip()
+    env_model_path = _get_env_model_override()
     if env_model_path:
         matched = _lookup_registered_model(env_model_path)
         if matched is not None:
             return matched.id
+        return env_model_path
     matched_default = _lookup_registered_model(DEFAULT_MODEL_ID)
     if matched_default is not None:
         return matched_default.id
@@ -203,10 +214,11 @@ class ModelState:
         self.load_error: Optional[str] = None
         self.active_model_id: str = _resolve_initial_model_id()
         spec = REGISTERED_MODELS.get(self.active_model_id)
+        override = _get_env_model_override()
         self.model_path: str = (
             spec.resolve_load_target()
             if spec
-            else os.environ.get("CEVIN_MLX_MODEL_PATH", "./cevin-1.5b-4bit-fused")
+            else (override or self.active_model_id or "./cevin-1.5b-4bit-fused")
         )
         self.lock: asyncio.Lock = asyncio.Lock()
 
@@ -267,16 +279,17 @@ def _model_catalog_payload() -> List[Dict[str, Any]]:
             }
         )
     if state.active_model_id not in REGISTERED_MODELS:
-        items.append(
+        items.insert(
+            0,
             {
                 "id": state.active_model_id,
                 "name": state.active_model_id,
-                "family": "custom-mlx",
-                "parameter_size": "custom",
-                "peak_ram_gb": 2.0,
+                "family": "qwen2.5-mlx-base",
+                "parameter_size": "4-bit MLX (public base)",
+                "peak_ram_gb": 1.15 if "1.5b" in state.active_model_id.lower() else 2.0,
                 "is_default": False,
                 "fine_tuned": False,
-                "description": "Custom local MLX model.",
+                "description": "Public 4-bit MLX instruct model loaded via CEVIN_MODEL_PATH.",
                 "model_path": state.model_path,
                 "active": state.loaded,
                 "available": True,

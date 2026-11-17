@@ -1,7 +1,26 @@
 {
-  "name": "react-example",
+  "name": "cevin",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "description": "Tailor your resume and cover letter to every job in minutes, using only your real experience.",
+  "homepage": "https://github.com/cevin/cevin#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cevin/cevin.git"
+  },
+  "keywords": [
+    "resume",
+    "cover-letter",
+    "ats",
+    "local-first",
+    "apple-silicon",
+    "mlx",
+    "fine-tuned-llm",
+    "privacy",
+    "typescript",
+    "react"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
@@ -15,6 +34,9 @@
     "test:golden": "tsx scripts/test-golden.ts",
     "check": "npm run typecheck && npm run lint && npm run test",
     "screenshots": "tsx scripts/capture-screenshots.ts",
+    "demo-gif": "tsx scripts/capture-demo-gif.ts",
+    "validate:sample-data": "tsx scripts/validate-sample-data.ts",
+    "check:repo": "tsx scripts/check-repo.ts",
     "bench:llm": "tsx scripts/bench-llm.ts",
     "test:live-llm": "tsx scripts/test-live-model.ts"
   },

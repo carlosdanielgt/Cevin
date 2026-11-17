@@ -5,7 +5,7 @@ import { TemplateId } from '../../../core/domain';
  * Registry of ATS-safe single-column resume templates.
  * Extension point: add a new template entry here to make it available across Studio & Exporters.
  */
-export const REGISTERED_TEMPLATES: ResumeTemplate[] = [
+const REGISTERED_TEMPLATES: ResumeTemplate[] = [
   {
     id: 'classic',
     label: 'Classic Editorial',
@@ -34,10 +34,10 @@ export const REGISTERED_TEMPLATES: ResumeTemplate[] = [
 
 export function createTemplateCatalog(): TemplateCatalog {
   return {
-    list() {
+    list(): ResumeTemplate[] {
       return [...REGISTERED_TEMPLATES];
     },
-    getById(id: TemplateId) {
+    getById(id: TemplateId): ResumeTemplate {
       return (
         REGISTERED_TEMPLATES.find((t) => t.id === id) ?? REGISTERED_TEMPLATES[0]
       );

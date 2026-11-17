@@ -11,7 +11,6 @@ import {
   LlmChatRequest,
   LlmCompletionRequest,
   LlmCompletionResponse,
-  LlmMessage,
   LlmProvider,
   LlmProviderDescriptor,
   LlmRuntimeStatus,
@@ -31,7 +30,7 @@ import {
 export const MockConfigSchema = z.object({
   model: z.string().default('Demo mode'),
   embeddingModel: z.string().optional().default('mock-embed-v1'),
-  simulatedLatencyMs: z.coerce.number().int().min(0).max(2000).default(15),
+  simulatedLatencyMs: z.number().int().min(0).max(2000).default(15),
   simulatePartlyOnCpu: z.boolean().optional().default(false),
   failValidationFirstAttempt: z.boolean().optional().default(false),
   alwaysFailValidation: z.boolean().optional().default(false),
@@ -40,8 +39,6 @@ export const MockConfigSchema = z.object({
     .optional()
     .default('valid'),
 });
-
-export type MockConfig = z.infer<typeof MockConfigSchema>;
 
 function parseFactsFromPrompt(userMessage: string): {
   action: string;
@@ -53,7 +50,6 @@ function parseFactsFromPrompt(userMessage: string): {
   const resultMatch = userMessage.match(/RESULT:\s*(.+)/i);
   const metricMatch = userMessage.match(/METRIC:\s*(.+)/i);
   const voiceMatch = userMessage.match(/VOICE:\s*(\w+)/i);
-
   const action =
     actionMatch?.[1]?.trim() ||
     'Built multi-region Kubernetes metric ingestion in Go and Kafka';
@@ -61,21 +57,18 @@ function parseFactsFromPrompt(userMessage: string): {
     resultMatch?.[1]?.trim() ||
     'sustaining 1.4M events/sec and cutting cross-AZ egress spend by 38%';
   const metric = metricMatch?.[1]?.trim();
-  const rawVoice = (voiceMatch?.[1]?.toLowerCase() ?? 'balanced') as VoiceLevel;
-  const validVoices: VoiceLevel[] = [
-    'polished',
-    'professional',
-    'balanced',
-    'natural',
-    'plain',
-  ];
-  const voice = validVoices.includes(rawVoice) ? rawVoice : 'balanced';
+  const rawVoice = voiceMatch?.[1]?.toLowerCase() ?? 'balanced';
+  const voice: VoiceLevel = (
+    ['polished', 'professional', 'balanced', 'natural', 'plain'] as const
+  ).includes(rawVoice as VoiceLevel)
+    ? (rawVoice as VoiceLevel)
+    : 'balanced';
 
   return { action, result, metric, voice };
 }
 
 export function createMockProvider(
-  rawConfig?: Partial<MockConfig>,
+  rawConfig?: Record<string, unknown>,
 ): LlmProvider {
   const config = MockConfigSchema.parse(rawConfig ?? {});
   let memoryLoaded = true;
@@ -94,18 +87,18 @@ export function createMockProvider(
         },
         {
           id: 'Qwen2.5-1.5B-Instruct-4bit',
-          name: 'Qwen2.5 1.5B Fine-Tuned (4-bit)',
+          name: 'Cevin 1.5B',
           family: 'qwen2.5-mlx-lora',
-          parameterSize: '1.5B (4-bit fused)',
+          parameterSize: '1.5B (4-bit MLX)',
           estimatedMemoryGb: 1.15,
           isDefault: true,
           supportsEmbeddings: false,
         },
         {
           id: 'cevin-3b-4bit-fused',
-          name: 'Cevin 3B Fine-Tuned (4-bit)',
+          name: 'Cevin 3B',
           family: 'qwen2.5-mlx-lora',
-          parameterSize: '3B (4-bit fused)',
+          parameterSize: '3B (4-bit MLX)',
           estimatedMemoryGb: 2.73,
           isDefault: false,
           supportsEmbeddings: false,
@@ -121,15 +114,12 @@ export function createMockProvider(
     },
 
     async *chat(req: LlmChatRequest): AsyncIterable<string> {
-      const tokens = [
+      for (const token of [
         '{"bullet": ',
         '"Re-architected multi-region Kubernetes ingestion in Go and Kafka, ',
         'cutting cross-AZ egress spend by 38% at 1.4M events/sec."}',
-      ];
-      for (const token of tokens) {
-        if (req.signal?.aborted) {
-          throw new Error('Request aborted');
-        }
+      ]) {
+        if (req.signal?.aborted) throw new Error('Request aborted');
         if (config.simulatedLatencyMs > 0) {
           await new Promise((r) => setTimeout(r, config.simulatedLatencyMs));
         }
@@ -137,11 +127,11 @@ export function createMockProvider(
       }
     },
 
-    async chatJSON<T>(req: LlmChatRequest, schema: z.ZodType<T>): Promise<T> {
-      if (req.signal?.aborted) {
-        throw new Error('Request aborted');
-      }
-
+    async chatJSON<T>(
+      req: LlmChatRequest,
+      schema: z.ZodType<T>,
+    ): Promise<T> {
+      if (req.signal?.aborted) throw new Error('Request aborted');
       const sys = req.systemPrompt.toLowerCase();
       let candidate: unknown = {};
 
@@ -213,7 +203,11 @@ export function createMockProvider(
       } else if (sys.includes('cover letter writer')) {
         candidate = {
           blocks: [
-            { type: 'greeting', text: 'Dear Hiring Team,', sourceIds: [] },
+            {
+              type: 'greeting',
+              text: 'Dear Hiring Team,',
+              sourceIds: [],
+            },
             {
               type: 'opening',
               text: 'At Vanguard Telemetry Systems, I re-architected our multi-region Kubernetes metric ingestion pipeline in Go and Kafka, sustaining 1.4M events/sec while cutting cross-AZ egress spend by 38%. I am applying to bring this hands-on distributed systems experience to your engineering team.',
@@ -261,22 +255,19 @@ export function createMockProvider(
     },
 
     async complete(req: LlmCompletionRequest): Promise<LlmCompletionResponse> {
-      if (req.signal?.aborted) {
-        throw new Error('Request aborted');
-      }
+      if (req.signal?.aborted) throw new Error('Request aborted');
       if (config.simulatedLatencyMs > 0) {
         await new Promise((r) => setTimeout(r, config.simulatedLatencyMs));
       }
-      if (req.signal?.aborted) {
-        throw new Error('Request aborted');
-      }
+      if (req.signal?.aborted) throw new Error('Request aborted');
 
       callCounter += 1;
       memoryLoaded = true;
 
       const systemMsg =
-        req.messages.find((m) => m.role === 'system')?.content.toLowerCase() ??
-        '';
+        req.messages
+          .find((m) => m.role === 'system')
+          ?.content.toLowerCase() ?? '';
       const lastUserMsg =
         [...req.messages].reverse().find((m) => m.role === 'user')?.content ??
         '';
@@ -293,7 +284,6 @@ export function createMockProvider(
       );
       const promptTokens = Math.max(24, Math.round(promptChars / 3.8));
 
-      // Handle simulated validation failures for testing the 1-shot repair + baseline fallback loop
       if (config.alwaysFailValidation) {
         return {
           text: 'I synergized 9999% world-class Databricks magic.',
@@ -306,7 +296,6 @@ export function createMockProvider(
           },
         };
       }
-
       if (config.failValidationFirstAttempt && !isRepairTurn) {
         return {
           text: 'I synergized 9999% world-class magic.',
@@ -350,7 +339,7 @@ export function createMockProvider(
             });
           } else {
             const sourceUserMsg = isRepairTurn
-              ? req.messages[req.messages.length - 3]?.content ?? lastUserMsg
+              ? (req.messages[req.messages.length - 3]?.content ?? lastUserMsg)
               : lastUserMsg;
             const factMatch = sourceUserMsg.match(/FACT:\s*(\w+)/i);
             const textMatch = sourceUserMsg.match(/TEXT:\s*([\s\S]+)$/i);
@@ -380,23 +369,39 @@ export function createMockProvider(
             } else if (factKey === 'location') {
               if (lower.includes('hybrid') || lower.includes('hybride')) {
                 val = 'hybrid';
-              } else if (lower.includes('remote') || lower.includes('télétravail')) {
+              } else if (
+                lower.includes('remote') ||
+                lower.includes('télétravail')
+              ) {
                 val = 'remote';
-              } else if (lower.includes('on-site') || lower.includes('onsite') || lower.includes('présentiel')) {
+              } else if (
+                lower.includes('on-site') ||
+                lower.includes('onsite') ||
+                lower.includes('présentiel')
+              ) {
                 val = 'onsite';
               }
             } else if (factKey === 'languages') {
               if (lower.includes('bilingual') || lower.includes('bilingue')) {
                 val = 'bilingual';
-              } else if (lower.includes('french') || lower.includes('français')) {
+              } else if (
+                lower.includes('french') ||
+                lower.includes('français')
+              ) {
                 val = 'french';
-              } else if (lower.includes('english') || lower.includes('anglais')) {
+              } else if (
+                lower.includes('english') ||
+                lower.includes('anglais')
+              ) {
                 val = 'english';
               }
             } else if (factKey === 'employmentType') {
               if (lower.includes('contract') || lower.includes('pigiste')) {
                 val = 'contract';
-              } else if (lower.includes('full-time') || lower.includes('temps plein')) {
+              } else if (
+                lower.includes('full-time') ||
+                lower.includes('temps plein')
+              ) {
                 val = 'full-time';
               }
             }
@@ -412,30 +417,16 @@ export function createMockProvider(
         const headlineMatch = lastUserMsg.match(/HEADLINE:\s*(.+)/i);
         const skillsMatch = lastUserMsg.match(/SKILLS:\s*(.+)/i);
         const metricMatch = lastUserMsg.match(/TOP_OUTCOME:\s*(.+)/i);
-        const headline =
-          headlineMatch?.[1]?.trim() ||
-          'Staff Distributed Systems & Platform Engineer';
-        const skills =
-          skillsMatch?.[1]?.trim() || 'Kubernetes, Go, PostgreSQL, and Kafka';
-        const outcome =
-          metricMatch?.[1]?.trim() ||
-          'cutting p99 latency from 420ms to 68ms across multi-region clusters';
-        outputText = `${headline} specializing in ${skills}. Proven track record of ${outcome} while maintaining high production reliability.`;
+        outputText = `${headlineMatch?.[1]?.trim() || 'Staff Distributed Systems & Platform Engineer'} specializing in ${skillsMatch?.[1]?.trim() || 'Kubernetes, Go, PostgreSQL, and Kafka'}. Proven track record of ${metricMatch?.[1]?.trim() || 'cutting p99 latency from 420ms to 68ms across multi-region clusters'} while maintaining high production reliability.`;
       } else if (systemMsg.includes('cover letter paragraph writer')) {
         const proofMatch = lastUserMsg.match(/PROOF:\s*(.+)/i);
         const companyMatch = lastUserMsg.match(/COMPANY:\s*(.+)/i);
         const roleMatch = lastUserMsg.match(/ROLE:\s*(.+)/i);
-        const proof =
-          proofMatch?.[1]?.trim() ||
-          'built multi-region Kubernetes metric ingestion in Go and Kafka sustaining 1.4M events/sec';
-        const company = companyMatch?.[1]?.trim() || 'your team';
-        const role = roleMatch?.[1]?.trim() || 'Staff Platform Engineer';
-        outputText = `In my recent platform work, ${proof}. Bringing this hands-on systems background to ${company} will help the ${role} team deliver reliable low-latency infrastructure from day one.`;
+        outputText = `In my recent platform work, ${proofMatch?.[1]?.trim() || 'built multi-region Kubernetes metric ingestion in Go and Kafka sustaining 1.4M events/sec'}. Bringing this hands-on systems background to ${companyMatch?.[1]?.trim() || 'your team'} will help the ${roleMatch?.[1]?.trim() || 'Staff Platform Engineer'} team deliver reliable low-latency infrastructure from day one.`;
       } else {
-        // Bullet rewrite task
         const facts = parseFactsFromPrompt(
           isRepairTurn
-            ? req.messages[req.messages.length - 3]?.content ?? lastUserMsg
+            ? (req.messages[req.messages.length - 3]?.content ?? lastUserMsg)
             : lastUserMsg,
         );
         outputText = assembleBullet(
@@ -465,22 +456,15 @@ export function createMockProvider(
       };
     },
 
-    async warm(req: {
-      prefixMessages: LlmMessage[];
-      maxSeqLength: number;
-      signal?: AbortSignal;
-    }): Promise<LlmUsageMetrics> {
-      if (req.signal?.aborted) {
-        throw new Error('Request aborted');
-      }
+    async warm(req): Promise<LlmUsageMetrics> {
+      if (req.signal?.aborted) throw new Error('Request aborted');
       memoryLoaded = true;
       const chars = req.prefixMessages.reduce(
         (acc, m) => acc + m.content.length,
         0,
       );
-      const promptTokens = Math.max(30, Math.round(chars / 3.8));
       return {
-        promptTokens,
+        promptTokens: Math.max(30, Math.round(chars / 3.8)),
         completionTokens: 0,
         loadMs: 45,
         promptEvalMs: 65,
@@ -531,7 +515,7 @@ export function createMockProvider(
     async embed(texts: string[]): Promise<number[][]> {
       return texts.map((text) => {
         const lower = text.toLowerCase();
-        const dims = [
+        return [
           lower.includes('kubernetes') || lower.includes('k8s') ? 1 : 0.1,
           lower.includes('postgres') || lower.includes('sql') ? 1 : 0.1,
           lower.includes('go') || lower.includes('golang') ? 1 : 0.1,
@@ -541,7 +525,6 @@ export function createMockProvider(
           lower.includes('observability') || lower.includes('otel') ? 1 : 0.1,
           0.5,
         ];
-        return dims;
       });
     },
   };
@@ -564,11 +547,12 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
           ? cleaned.slice(parts[0].length).replace(/^,\s*/, '').trim()
           : 'delivering measurable production reliability';
       const nums = extractNormalizedNumbers(cleaned);
-
       return {
         task: 'experience_extraction',
         evidence_quote: cleaned,
-        domain: kws[0] ? `${kws[0]} & Systems Engineering` : 'Distributed Systems & Infrastructure',
+        domain: kws[0]
+          ? `${kws[0]} & Systems Engineering`
+          : 'Distributed Systems & Infrastructure',
         company: 'Prior Organization',
         role_context: 'Senior Software Engineer',
         timeframe: timeframe || 'Unspecified',
@@ -599,13 +583,11 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
       ]
         .join(' ')
         .toLowerCase();
-
       const matched = reqKws.filter((kw) => expCorpus.includes(kw));
       const missing = reqKws.filter((kw) => !expCorpus.includes(kw));
       const directHit =
         matched.length > 0 ||
         expCorpus.includes(reqClean.toLowerCase().slice(0, 12));
-
       const matchLevel =
         matched.length > 0 && missing.length === 0
           ? 'strong'
@@ -619,12 +601,12 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
         direct_evidence: directHit
           ? `${experience.action} (${experience.technologies.join(', ')})`
           : '',
-        missing_evidence:
-          missing.length > 0 ? missing.join(', ') : 'None',
+        missing_evidence: missing.length > 0 ? missing.join(', ') : 'None',
         reasoning: directHit
           ? `Covers ${matched.join(', ') || reqClean} directly in ${experience.project}.`
           : `No direct evidence of ${reqClean} in ${experience.project}.`,
-        confidence: matchLevel === 'strong' ? 0.94 : matchLevel === 'partial' ? 0.78 : 0.9,
+        confidence:
+          matchLevel === 'strong' ? 0.94 : matchLevel === 'partial' ? 0.78 : 0.9,
         match_level: matchLevel,
       };
     },
@@ -642,14 +624,16 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
       ].join(' ');
       const sourceNums = extractNormalizedNumbers(sourceCorpus);
       const bulletNums = extractNormalizedNumbers(generatedBullet);
-
       const violations: string[] = [];
+
       for (const bNum of bulletNums) {
         const bDigits = bNum.replace(/[^0-9.]/g, '');
-        const found = sourceNums.some(
-          (sNum) => sNum === bNum || sNum.replace(/[^0-9.]/g, '') === bDigits,
-        );
-        if (!found) {
+        if (
+          !sourceNums.some(
+            (sNum) =>
+              sNum === bNum || sNum.replace(/[^0-9.]/g, '') === bDigits,
+          )
+        ) {
           violations.push(
             `Metric distortion: bullet claims '${bNum}', whereas source record states '${sourceRecord.scale || sourceRecord.impact}'.`,
           );
@@ -685,7 +669,7 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
         explanation: supported
           ? 'All technologies and metrics in the generated bullet trace directly to the source Experience Bank record.'
           : `Detected ${violations.length} unverified claim(s) not grounded in the source record.`,
-        factual_consistency_score: supported ? 1.0 : 0.0,
+        factual_consistency_score: supported ? 1 : 0,
         verdict: supported ? 'supported' : 'unsupported',
         corrected_bullet: corrected,
       };
@@ -698,7 +682,6 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
       const hasScale = Boolean(evidence.scale && evidence.scale.trim());
       const hasImpact = Boolean(evidence.impact && evidence.impact.trim());
       const questions: string[] = [];
-
       if (!hasScale) {
         questions.push(
           `What was the concrete scale or volume for "${evidence.project}" (e.g., requests/sec, cluster count, or team size)?`,
@@ -709,23 +692,18 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
           `What measurable outcome resulted from "${evidence.action}" (e.g., latency reduction, cost savings, or uptime)?`,
         );
       }
-
       const groundedRewrite =
         hasScale && hasImpact
           ? assembleBullet(
               {
                 action: evidence.action,
-                result: evidence.impact!,
-                metric: evidence.scale!,
+                result: evidence.impact ?? '',
+                metric: evidence.scale ?? undefined,
               },
               'balanced',
               0,
             )
-          : `${evidence.action.replace(/[.]+$/, '')}${
-              evidence.technologies.length > 0
-                ? ` using ${evidence.technologies.join(', ')}`
-                : ''
-            }${hasImpact ? `, ${evidence.impact}` : ''}.`;
+          : `${evidence.action.replace(/[.]+$/, '')}${evidence.technologies.length > 0 ? ` using ${evidence.technologies.join(', ')}` : ''}${hasImpact ? `, ${evidence.impact}` : ''}.`;
 
       return {
         task: 'bullet_evaluation_and_rewrite',
@@ -755,36 +733,27 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
         .map((s) => s.name);
       const jdKws = extractDomainKeywordsFromText(jdExcerpt).map((k) => k.term);
       const selectedLower = new Set(selectedSkills.map((s) => s.toLowerCase()));
-      const omitted = jdKws.filter(
-        (k) => !selectedLower.has(k.toLowerCase()),
-      );
-
+      const omitted = jdKws.filter((k) => !selectedLower.has(k.toLowerCase()));
       const topAchs = candidateBank.top_achievements.slice(0, 2);
       const verifiedMetrics = topAchs
         .map((a) => a.metric || a.result)
         .filter(Boolean);
-
       const skillClause =
         selectedSkills.length > 0
           ? selectedSkills.join(', ')
           : 'distributed systems and reliable cloud infrastructure';
-
       const firstAch = topAchs[0];
       const secondAch = topAchs[1];
       let outcomeSentence =
         'Proven track record of delivering resilient production architecture and measurable reliability improvements.';
       if (firstAch && secondAch) {
-        outcomeSentence = `Proven track record of ${
-          firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result
-        } while ${secondAch.result}.`;
+        outcomeSentence = `Proven track record of ${firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result} while ${secondAch.result}.`;
       } else if (firstAch) {
-        outcomeSentence = `Proven track record of ${
-          firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result
-        }.`;
+        outcomeSentence = `Proven track record of ${firstAch.metric ? `${firstAch.metric} (${firstAch.result})` : firstAch.result}.`;
       }
-
       const headline =
-        candidateBank.profile.headline || 'Senior Systems & Platform Engineer';
+        candidateBank.profile.headline ||
+        'Senior Systems & Platform Engineer';
       const tailoredSummary = `${headline} specializing in ${skillClause}. ${outcomeSentence}`;
 
       return {
@@ -802,11 +771,12 @@ export function createDeterministicCareerIntelligenceAdapter(): CareerIntelligen
   };
 }
 
-export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> = {
+export const mockProviderDescriptor: LlmProviderDescriptor<
+  z.input<typeof MockConfigSchema>
+> = {
   id: 'mock',
   label: 'Demo mode',
-  description:
-    'Runs in your browser with sample responses.',
+  description: 'Runs in your browser with sample responses.',
   locality: 'local',
   capabilities: {
     streaming: true,
@@ -816,7 +786,9 @@ export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> 
     runtimeStatus: true,
     parallel: true,
   },
-  configSchema: MockConfigSchema,
+  configSchema: MockConfigSchema as unknown as z.ZodType<
+    z.input<typeof MockConfigSchema>
+  >,
   configFields: [],
   defaultConfig: {
     model: 'Demo mode',
@@ -827,11 +799,8 @@ export const mockProviderDescriptor: LlmProviderDescriptor<Partial<MockConfig>> 
     alwaysFailValidation: false,
     mockJobFactMode: 'valid',
   },
-  create: (config) => {
-    const base = createMockProvider(config);
-    return {
-      ...base,
-      careerIntelligence: createDeterministicCareerIntelligenceAdapter(),
-    };
-  },
+  create: (config) => ({
+    ...createMockProvider(config),
+    careerIntelligence: createDeterministicCareerIntelligenceAdapter(),
+  }),
 };

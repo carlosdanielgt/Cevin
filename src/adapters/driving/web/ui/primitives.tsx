@@ -1,7 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import * as SwitchPrimitive from '@radix-ui/react-switch';
-import * as TabsPrimitive from '@radix-ui/react-tabs';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import {
   Check,
@@ -12,22 +11,27 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import React from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type FocusEventHandler,
+  type HTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from 'react';
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
 }
 
-export type ButtonVariant =
-  | 'primary'
-  | 'secondary'
-  | 'tonal'
-  | 'ghost'
-  | 'danger'
-  | 'outline-danger';
-export type ButtonSize = 'sm' | 'md' | 'lg';
-
-const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
+const BUTTON_VARIANTS = {
   primary:
     'bg-accent text-white hover:bg-accent-hover shadow-xs border border-transparent',
   secondary:
@@ -36,24 +40,24 @@ const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
     'bg-accent-50 text-accent-700 hover:bg-accent-subtle border border-accent/20',
   ghost:
     'bg-transparent text-ink-muted hover:text-ink hover:bg-surface-raised border border-transparent',
-  danger: 'bg-danger text-white hover:opacity-95 border border-transparent shadow-xs',
+  danger:
+    'bg-danger text-white hover:opacity-95 border border-transparent shadow-xs',
   'outline-danger':
     'bg-surface text-danger-700 hover:bg-danger-50 border border-danger/35',
-};
+} as const;
 
-const BUTTON_SIZES: Record<ButtonSize, string> = {
+const BUTTON_SIZES = {
   sm: 'px-2.5 py-1.5 text-xs gap-1.5 rounded-sm',
   md: 'px-3.5 py-2 text-sm gap-2 rounded-md',
   lg: 'px-5 py-2.5 text-base gap-2.5 rounded-md',
-};
+} as const;
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  size?: ButtonSize;
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: keyof typeof BUTTON_VARIANTS;
+  size?: keyof typeof BUTTON_SIZES;
 }
 
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {
       className,
@@ -84,13 +88,6 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 );
 Button.displayName = 'Button';
 
-export interface IconButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  label: string;
-  variant?: 'ghost' | 'secondary' | 'danger' | 'subtle' | 'ink';
-  size?: 'sm' | 'md';
-}
-
 const ICON_BUTTON_VARIANTS = {
   ghost:
     'text-ink-muted hover:text-ink hover:bg-surface-raised border border-transparent',
@@ -103,7 +100,14 @@ const ICON_BUTTON_VARIANTS = {
   ink: 'text-ink-400 hover:text-ink-100 hover:bg-ink-800 border border-transparent',
 } as const;
 
-export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
+export interface IconButtonProps
+  extends ButtonHTMLAttributes<HTMLButtonElement> {
+  label: string;
+  variant?: keyof typeof ICON_BUTTON_VARIANTS;
+  size?: 'sm' | 'md';
+}
+
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   (
     {
       label,
@@ -137,22 +141,16 @@ export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
 );
 IconButton.displayName = 'IconButton';
 
-export type BadgeTone =
-  | 'neutral'
-  | 'accent'
-  | 'success'
-  | 'warning'
-  | 'danger'
-  | 'info';
-
-const BADGE_TONES: Record<BadgeTone, string> = {
+const BADGE_TONES = {
   neutral: 'bg-surface-sunken text-ink-muted border-hairline',
   accent: 'bg-accent-50 text-accent-700 border-accent/20',
   success: 'bg-success-50 text-success-700 border-success/25',
   warning: 'bg-warning-50 text-warning-700 border-warning/25',
   danger: 'bg-danger-50 text-danger-700 border-danger/25',
   info: 'bg-info-50 text-info-700 border-info/25',
-};
+} as const;
+
+export type BadgeTone = keyof typeof BADGE_TONES;
 
 export function Badge({
   tone = 'neutral',
@@ -161,7 +159,7 @@ export function Badge({
 }: {
   tone?: BadgeTone;
   className?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <span
@@ -176,33 +174,11 @@ export function Badge({
   );
 }
 
-export function Pill({
-  tone = 'neutral',
-  className,
-  children,
-}: {
-  tone?: BadgeTone;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border whitespace-nowrap shrink-0',
-        BADGE_TONES[tone],
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
 export function MetricChip({
   children,
   className,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
@@ -221,7 +197,7 @@ export function TagChip({
   children,
   className,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
@@ -277,7 +253,7 @@ export function StatTile({
   onClick,
   className,
 }: {
-  value: number | string;
+  value: string | number;
   label: string;
   subtext?: string;
   tone?: 'neutral' | 'warning' | 'info' | 'success' | 'accent';
@@ -287,7 +263,6 @@ export function StatTile({
 }) {
   const isZero = value === 0 || value === '0';
   const effectiveTone = isZero ? 'neutral' : tone;
-
   const toneClasses = {
     neutral: 'bg-surface border-border text-ink',
     warning: 'bg-warning-50 border-warning/40 text-warning-700',
@@ -296,7 +271,7 @@ export function StatTile({
     accent: 'bg-accent-50 border-accent/30 text-accent-700',
   } as const;
 
-  const numberToneClasses = {
+  const valueToneClasses = {
     neutral: isZero ? 'text-ink-muted' : 'text-ink',
     warning: 'text-warning-700',
     info: 'text-info-700',
@@ -309,7 +284,7 @@ export function StatTile({
       <div
         className={cn(
           'text-[28px] leading-tight font-display font-bold tabular-nums tracking-tight',
-          numberToneClasses[effectiveTone],
+          valueToneClasses[effectiveTone],
         )}
       >
         {value}
@@ -373,13 +348,13 @@ export function Sparkline({
   const height = 24;
   const pad = 3;
   const points = values.map((v, idx) => {
-    const x =
-      pad + (idx / Math.max(1, values.length - 1)) * (width - pad * 2);
-    const y =
-      height - pad - ((v - min) / Math.max(1, max - min)) * (height - pad * 2);
-    return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
+    const x = pad + (idx / Math.max(1, values.length - 1)) * 78;
+    const y = 21 - ((v - min) / Math.max(1, max - min)) * 18;
+    return {
+      x: Number(x.toFixed(1)),
+      y: Number(y.toFixed(1)),
+    };
   });
-
   const polyline = points.map((p) => `${p.x},${p.y}`).join(' ');
   const last = points[points.length - 1];
 
@@ -401,20 +376,15 @@ export function Sparkline({
         className="text-accent"
       />
       {last && (
-        <circle
-          cx={last.x}
-          cy={last.y}
-          r="2.5"
-          className="fill-accent"
-        />
+        <circle cx={last.x} cy={last.y} r="2.5" className="fill-accent" />
       )}
     </svg>
   );
 }
 
-export const Input = React.forwardRef<
+export const Input = forwardRef<
   HTMLInputElement,
-  React.InputHTMLAttributes<HTMLInputElement>
+  InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => (
   <input
     ref={ref}
@@ -430,9 +400,9 @@ export const Input = React.forwardRef<
 ));
 Input.displayName = 'Input';
 
-export const Textarea = React.forwardRef<
+export const Textarea = forwardRef<
   HTMLTextAreaElement,
-  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+  TextareaHTMLAttributes<HTMLTextAreaElement>
 >(({ className, ...props }, ref) => (
   <textarea
     ref={ref}
@@ -453,50 +423,38 @@ Textarea.displayName = 'Textarea';
  * DOM rows measurement fallback (ResizeObserver + document.fonts.ready + value changes)
  * so bullets, summaries, and cover letter paragraphs never clip.
  */
-export const AutoGrowTextarea = React.forwardRef<
+export const AutoGrowTextarea = forwardRef<
   HTMLTextAreaElement,
-  React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  TextareaHTMLAttributes<HTMLTextAreaElement> & {
     minRows?: number;
     maxRows?: number;
     charsPerRow?: number;
   }
 >(
   (
-    {
-      value,
-      minRows = 2,
-      maxRows = 28,
-      charsPerRow = 52,
-      className,
-      ...props
-    },
+    { value, minRows = 2, maxRows = 28, charsPerRow = 52, className, ...props },
     forwardedRef,
   ) => {
-    const innerRef = React.useRef<HTMLTextAreaElement | null>(null);
-    const setRefs = React.useCallback(
+    const innerRef = useRef<HTMLTextAreaElement | null>(null);
+    const setRefs = useCallback(
       (node: HTMLTextAreaElement | null) => {
         innerRef.current = node;
-        if (typeof forwardedRef === 'function') {
-          forwardedRef(node);
-        } else if (forwardedRef) {
-          forwardedRef.current = node;
-        }
+        if (typeof forwardedRef === 'function') forwardedRef(node);
+        else if (forwardedRef) forwardedRef.current = node;
       },
       [forwardedRef],
     );
 
     const text = typeof value === 'string' ? value : String(value ?? '');
-    const explicitLines = text.split('\n');
-    const initialEstimatedRows = explicitLines.reduce((sum, line) => {
-      const wrapped = Math.max(1, Math.ceil(line.length / charsPerRow));
-      return sum + wrapped;
+    const initialEstimatedRows = text.split('\n').reduce((sum, line) => {
+      return sum + Math.max(1, Math.ceil(line.length / charsPerRow));
     }, 0);
     const initialRows = Math.max(
       minRows,
       Math.min(maxRows, initialEstimatedRows),
     );
 
-    const syncRowsToScrollHeight = React.useCallback(() => {
+    const syncRowsToScrollHeight = useCallback(() => {
       const el = innerRef.current;
       if (!el) return;
       let targetRows = Math.max(1, minRows);
@@ -507,22 +465,19 @@ export const AutoGrowTextarea = React.forwardRef<
       }
     }, [minRows, maxRows]);
 
-    React.useLayoutEffect(() => {
+    useLayoutEffect(() => {
       syncRowsToScrollHeight();
     }, [text, syncRowsToScrollHeight]);
 
-    React.useEffect(() => {
+    useEffect(() => {
       const el = innerRef.current;
       if (!el) return;
-
       syncRowsToScrollHeight();
-
       if (typeof document !== 'undefined' && document.fonts?.ready) {
-        void document.fonts.ready.then(() => {
+        document.fonts.ready.then(() => {
           syncRowsToScrollHeight();
         });
       }
-
       if (typeof ResizeObserver !== 'undefined') {
         const ro = new ResizeObserver(() => {
           syncRowsToScrollHeight();
@@ -530,7 +485,6 @@ export const AutoGrowTextarea = React.forwardRef<
         ro.observe(el);
         return () => ro.disconnect();
       }
-      return undefined;
     }, [syncRowsToScrollHeight]);
 
     return (
@@ -556,7 +510,7 @@ export function Card({
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
@@ -577,7 +531,7 @@ export function Panel({
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
@@ -595,13 +549,10 @@ export function PanelSection({
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLElement>) {
   return (
     <section
-      className={cn(
-        'p-5 border-b border-hairline last:border-b-0',
-        className,
-      )}
+      className={cn('p-5 border-b border-hairline last:border-b-0', className)}
       {...props}
     >
       {children}
@@ -613,7 +564,7 @@ export function StickyFooterBar({
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
@@ -636,11 +587,11 @@ export function Banner({
   children,
 }: {
   tone?: 'info' | 'success' | 'warning' | 'danger' | 'accent';
-  icon?: React.ReactNode;
+  icon?: ReactNode;
   title?: string;
-  actions?: React.ReactNode;
+  actions?: ReactNode;
   className?: string;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }) {
   const toneClasses = {
     info: 'bg-info-50 text-info-700 border-info/25',
@@ -665,7 +616,9 @@ export function Banner({
           {children && <div className="leading-relaxed">{children}</div>}
         </div>
       </div>
-      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+      {actions && (
+        <div className="flex items-center gap-2 shrink-0">{actions}</div>
+      )}
     </div>
   );
 }
@@ -743,7 +696,7 @@ export function SpotIllustration({
   kind = 'applications',
   className,
 }: {
-  kind?: 'applications' | 'bank' | 'job' | 'versions';
+  kind?: string;
   className?: string;
 }) {
   return (
@@ -755,7 +708,6 @@ export function SpotIllustration({
       aria-hidden="true"
       className={cn('mx-auto select-none', className)}
     >
-      {/* Recessed desk mat */}
       <rect
         x="14"
         y="12"
@@ -765,7 +717,6 @@ export function SpotIllustration({
         className="fill-surface-sunken stroke-border"
         strokeWidth="1.5"
       />
-      {/* Paper sheet */}
       <rect
         x="32"
         y="18"
@@ -775,7 +726,6 @@ export function SpotIllustration({
         className="fill-paper stroke-border-strong"
         strokeWidth="1.5"
       />
-      {/* Accent header bar on paper */}
       <rect
         x="40"
         y="26"
@@ -898,8 +848,8 @@ export function Checkbox({
   );
 }
 
-export interface SelectOption<T extends string = string> {
-  value: T;
+export interface SelectOption {
+  value: string;
   label: string;
   description?: string;
 }
@@ -907,7 +857,7 @@ export interface SelectOption<T extends string = string> {
 /**
  * Custom accessible Select dropdown built on Radix Popover (never uses a native browser dropdown tag).
  */
-export function Select<T extends string = string>({
+export function Select({
   value,
   onValueChange,
   options,
@@ -916,15 +866,15 @@ export function Select<T extends string = string>({
   className,
   disabled,
 }: {
-  value: T;
-  onValueChange: (value: T) => void;
-  options: SelectOption<T>[];
+  value: string;
+  onValueChange: (value: string) => void;
+  options: SelectOption[];
   ariaLabel: string;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
 
   return (
@@ -1044,50 +994,7 @@ export function SegmentedControl<T extends string = string>({
   );
 }
 
-export const Tabs = TabsPrimitive.Root;
-
-export function TabsList({
-  className,
-  children,
-  ...props
-}: React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>) {
-  return (
-    <TabsPrimitive.List
-      className={cn(
-        'inline-flex items-center gap-1 bg-surface-sunken p-1 rounded-md border border-hairline',
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </TabsPrimitive.List>
-  );
-}
-
-export function TabsTrigger({
-  className,
-  children,
-  ...props
-}: React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>) {
-  return (
-    <TabsPrimitive.Trigger
-      className={cn(
-        'px-3 py-1.5 text-xs font-medium text-ink-muted rounded-sm transition-all duration-140 cursor-pointer whitespace-nowrap shrink-0',
-        'hover:text-ink data-[state=active]:bg-surface data-[state=active]:text-ink data-[state=active]:shadow-xs data-[state=active]:font-semibold',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </TabsPrimitive.Trigger>
-  );
-}
-
-export const TabsContent = TabsPrimitive.Content;
-
 export const Dialog = DialogPrimitive.Root;
-export const DialogTrigger = DialogPrimitive.Trigger;
 
 export function DialogContent({
   title,
@@ -1097,7 +1004,7 @@ export function DialogContent({
 }: {
   title: string;
   description?: string;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
@@ -1143,7 +1050,7 @@ export function Drawer({
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -1182,7 +1089,7 @@ export function PopoverContent({
   className,
   align = 'end',
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
   align?: 'start' | 'center' | 'end';
 }) {
@@ -1208,8 +1115,8 @@ export function Tooltip({
   content,
   children,
 }: {
-  content: React.ReactNode;
-  children: React.ReactNode;
+  content: ReactNode;
+  children: ReactNode;
 }) {
   return (
     <TooltipPrimitive.Root delayDuration={180}>
@@ -1262,8 +1169,8 @@ export function EmptyState({
   secondaryActionLabel,
   onSecondaryAction,
 }: {
-  icon?: React.ReactNode;
-  illustrationKind?: 'applications' | 'bank' | 'job' | 'versions';
+  icon?: ReactNode;
+  illustrationKind?: string;
   title: string;
   description: string;
   actionLabel?: string;
@@ -1306,25 +1213,23 @@ export function EmptyState({
   );
 }
 
-export interface ToastMessage {
+export interface ToastBannerItem {
   id: string;
   title?: string;
   message?: string;
-  variant?: 'info' | 'success' | 'warning' | 'danger' | 'neutral';
-  tone?: 'neutral' | 'success' | 'danger';
+  variant?: 'info' | 'success' | 'danger' | 'warning';
+  tone?: 'danger' | 'info' | 'success' | 'warning';
   actionLabel?: string;
-  onAction?: () => void;
   undoLabel?: string;
+  onAction?: () => void;
   onUndo?: () => void;
 }
-
-export type ToastItem = ToastMessage;
 
 export function ToastBanner({
   toasts,
   onDismiss,
 }: {
-  toasts: ToastMessage[];
+  toasts: ToastBannerItem[];
   onDismiss: (id: string) => void;
 }) {
   if (toasts.length === 0) return null;
@@ -1385,10 +1290,10 @@ export function Disclosure({
 }: {
   title: string;
   defaultOpen?: boolean;
-  badge?: React.ReactNode;
-  children: React.ReactNode;
+  badge?: ReactNode;
+  children: ReactNode;
 }) {
-  const [open, setOpen] = React.useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="border border-hairline rounded-lg bg-surface-sunken/50 overflow-hidden">
       <button
@@ -1428,12 +1333,12 @@ export function ConfirmDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  description: string;
+  description?: string;
   confirmLabel?: string;
   requireTypedText?: string;
   onConfirm: () => void;
 }) {
-  const [typed, setTyped] = React.useState('');
+  const [typed, setTyped] = useState('');
   const canConfirm = !requireTypedText || typed.trim() === requireTypedText;
 
   return (
@@ -1485,7 +1390,7 @@ export function SplitButton({
   disabled,
 }: {
   primaryLabel: string;
-  primaryIcon?: React.ReactNode;
+  primaryIcon?: ReactNode;
   onPrimaryClick: () => void;
   items: Array<{
     id: string;
@@ -1495,7 +1400,7 @@ export function SplitButton({
   }>;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="inline-flex items-center rounded-md shadow-xs">
@@ -1555,7 +1460,8 @@ export function SplitButton({
 }
 
 export function CopyCommandField({ command }: { command: string }) {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+
   return (
     <div className="flex items-center justify-between gap-2 bg-surface-sunken border border-border rounded-md px-3 py-2 font-mono text-xs text-ink">
       <code className="truncate select-all">{command}</code>
@@ -1563,7 +1469,7 @@ export function CopyCommandField({ command }: { command: string }) {
         type="button"
         onClick={() => {
           if (typeof navigator !== 'undefined' && navigator.clipboard) {
-            void navigator.clipboard.writeText(command);
+            navigator.clipboard.writeText(command);
           }
           setCopied(true);
           setTimeout(() => setCopied(false), 1600);
@@ -1597,7 +1503,8 @@ export function FileDropzone({
   onFileSelected: (file: File) => void;
   isBusy?: boolean;
 }) {
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -1672,23 +1579,23 @@ export function TypeaheadField({
 }: {
   id?: string;
   value: string;
-  onChange: (nextValue: string) => void;
+  onChange: (value: string) => void;
   onSelectOption?: (option: TypeaheadOption) => void;
-  onSelect?: (selectedValue: string) => void;
-  onBlur?: () => void;
+  onSelect?: (value: string) => void;
+  onBlur?: FocusEventHandler<HTMLInputElement>;
   options: TypeaheadOption[];
   placeholder?: string;
-  ariaLabel?: string;
+  ariaLabel: string;
   unrecognizedMessage?: string;
   isRecognized?: boolean;
   className?: string;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const [activeIndex, setActiveIndex] = React.useState(0);
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const query = value.trim().toLowerCase();
-  const filtered = React.useMemo(() => {
+  const filtered = useMemo(() => {
     if (!query) return options.slice(0, 8);
     return options
       .filter((opt) => {
@@ -1696,18 +1603,16 @@ export function TypeaheadField({
         if (opt.label.toLowerCase().includes(query)) return true;
         if (opt.sublabel?.toLowerCase().includes(query)) return true;
         if (keyId.toLowerCase().includes(query)) return true;
-        return (opt.keywords ?? []).some((k) =>
-          k.toLowerCase().includes(query),
-        );
+        return (opt.keywords ?? []).some((k) => k.toLowerCase().includes(query));
       })
       .slice(0, 8);
   }, [options, query]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     setActiveIndex(0);
   }, [query]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
       if (
         containerRef.current &&
@@ -1823,24 +1728,22 @@ export function MultiSelectChips({
 }: {
   id?: string;
   values: string[];
-  onChange: (nextValues: string[]) => void;
+  onChange: (values: string[]) => void;
   options: TypeaheadOption[];
   placeholder?: string;
-  ariaLabel?: string;
+  ariaLabel: string;
 }) {
-  const [inputVal, setInputVal] = React.useState('');
+  const [inputVal, setInputVal] = useState('');
 
-  const availableOptions = React.useMemo(() => {
+  const availableOptions = useMemo(() => {
     const lowerSelected = new Set(values.map((v) => v.toLowerCase()));
     return options.filter((opt) => {
       const keyId = (opt.id ?? opt.value ?? opt.label).toLowerCase();
       return (
-        !lowerSelected.has(opt.label.toLowerCase()) &&
-        !lowerSelected.has(keyId)
+        !lowerSelected.has(opt.label.toLowerCase()) && !lowerSelected.has(keyId)
       );
     });
   }, [options, values]);
-
 
   const handleAdd = (raw: string) => {
     const clean = raw.trim();
@@ -1894,40 +1797,28 @@ export function MultiSelectChips({
   );
 }
 
-export type CevinMarkTone = 'paper' | 'ink' | 'mono';
-export type CevinMarkState = 'idle' | 'thinking' | 'writing' | 'done' | 'error';
-export type CevinMarkVariant = 'glyph' | 'tile';
-
 const STANDARD_RING_PATH = 'M48.85 46.14A22 22 0 1 1 48.85 17.86';
 const STANDARD_BULLET = { cx: 24, cy: 32, r: 4 };
 const STANDARD_LINE = { x1: 33, y1: 32, x2: 58, y2: 32 };
-
 const SMALL_BULLET = { cx: 24, cy: 32, r: 4.5 };
 const SMALL_LINE = { x1: 34, y1: 32, x2: 57, y2: 32 };
 
-export interface CevinMarkProps {
-  state?: CevinMarkState;
-  tone?: CevinMarkTone;
-  size?: number;
-  variant?: CevinMarkVariant;
-  progress?: number;
-  onThinkingLoopIteration?: () => void;
-  className?: string;
-}
-
-const CEVIN_STATE_CLASSES: Record<CevinMarkState, string> = {
+const CEVIN_STATE_CLASSES = {
   idle: 'is-idle',
   thinking: 'is-thinking',
   writing: 'is-writing',
   done: 'is-done',
   error: 'is-error',
-};
+} as const;
 
-const CEVIN_TONE_CLASSES: Record<CevinMarkTone, string> = {
+const CEVIN_TONE_CLASSES = {
   paper: 'tone-paper',
   ink: 'tone-ink',
   mono: 'tone-mono',
-};
+} as const;
+
+export type CevinMarkStateProp = keyof typeof CEVIN_STATE_CLASSES;
+export type CevinMarkToneProp = keyof typeof CEVIN_TONE_CLASSES;
 
 /**
  * Pure-geometry animated Cevin brand mark.
@@ -1938,11 +1829,19 @@ export function CevinMark({
   state = 'idle',
   tone = 'paper',
   size = 24,
-  variant,
-  progress,
+  variant: _variant,
+  progress: _progress,
   onThinkingLoopIteration,
   className,
-}: CevinMarkProps) {
+}: {
+  state?: CevinMarkStateProp;
+  tone?: CevinMarkToneProp;
+  size?: number;
+  variant?: string;
+  progress?: number;
+  onThinkingLoopIteration?: () => void;
+  className?: string;
+}) {
   const isSmall = size <= 20;
   const bullet = isSmall ? SMALL_BULLET : STANDARD_BULLET;
   const line = isSmall ? SMALL_LINE : STANDARD_LINE;
@@ -1976,23 +1875,9 @@ export function CevinMark({
           state === 'thinking' ? onThinkingLoopIteration : undefined
         }
       />
-      <line
-        id="line"
-        x1={line.x1}
-        y1={line.y1}
-        x2={line.x2}
-        y2={line.y2}
-      />
+      <line id="line" x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} />
     </svg>
   );
-}
-
-export interface LogoProps {
-  variant?: 'mark' | 'lockup';
-  tone?: CevinMarkTone;
-  size?: number;
-  fontSize?: number;
-  className?: string;
 }
 
 /**
@@ -2007,7 +1892,13 @@ export function Logo({
   size,
   fontSize = 24,
   className,
-}: LogoProps) {
+}: {
+  variant?: 'mark' | 'lockup';
+  tone?: CevinMarkToneProp;
+  size?: number;
+  fontSize?: number;
+  className?: string;
+}) {
   if (variant === 'mark') {
     return (
       <CevinMark
@@ -2020,16 +1911,14 @@ export function Logo({
   }
 
   const effectiveFontSize = fontSize ?? 24;
-  const markHeight = size ?? Math.round(effectiveFontSize * 1.08); // 26px for 24px font
+  const markHeight = size ?? Math.round(effectiveFontSize * 1.08);
   const gapClass = effectiveFontSize >= 24 ? 'gap-2' : 'gap-1.5';
-
   const textColorClass =
     tone === 'ink'
       ? 'text-[#F4F1EB]'
       : tone === 'mono'
         ? 'text-current'
         : 'text-ink';
-
   const textSizeClass =
     effectiveFontSize >= 24
       ? 'text-2xl'
@@ -2038,18 +1927,8 @@ export function Logo({
         : 'text-lg';
 
   return (
-    <div
-      className={cn(
-        'inline-flex items-center select-none',
-        gapClass,
-        className,
-      )}
-    >
-      <CevinMark
-        state="idle"
-        tone={tone}
-        size={markHeight}
-      />
+    <div className={cn('inline-flex items-center select-none', gapClass, className)}>
+      <CevinMark state="idle" tone={tone} size={markHeight} />
       <span
         className={cn(
           'font-display font-semibold tracking-[-0.02em] leading-none select-none',
@@ -2060,37 +1939,6 @@ export function Logo({
         Cevin
       </span>
     </div>
-  );
-}
-
-/**
- * Convenience CevinLogo wrapper around Logo.
- */
-export function CevinLogo({
-  scheme = 'color',
-  iconOnly = false,
-  height = 28,
-  className,
-}: {
-  option?: 'A' | 'B';
-  scheme?: 'color' | 'dark' | 'mono';
-  iconOnly?: boolean;
-  height?: number;
-  className?: string;
-}) {
-  const tone: CevinMarkTone =
-    scheme === 'dark' ? 'ink' : scheme === 'mono' ? 'mono' : 'paper';
-  if (iconOnly) {
-    return <Logo variant="mark" tone={tone} size={height} className={className} />;
-  }
-  return (
-    <Logo
-      variant="lockup"
-      tone={tone}
-      size={Math.round(height * 0.92)}
-      fontSize={Math.round(height * 0.85)}
-      className={className}
-    />
   );
 }
 
@@ -2108,10 +1956,10 @@ export function CevinStatusIndicator({
   className,
   labelClassName,
 }: {
-  state?: CevinMarkState;
+  state?: CevinMarkStateProp;
   label: string;
   size?: number;
-  variant?: CevinMarkVariant;
+  variant?: string;
   progress?: number;
   onThinkingLoopIteration?: () => void;
   className?: string;
@@ -2126,12 +1974,13 @@ export function CevinStatusIndicator({
       <CevinMark
         state={state}
         size={size}
+        variant={variant}
         progress={progress}
         onThinkingLoopIteration={onThinkingLoopIteration}
       />
-      <span className={cn('text-xs font-medium', labelClassName)}>{label}</span>
+      <span className={cn('text-xs font-medium', labelClassName)}>
+        {label}
+      </span>
     </span>
   );
 }
-
-

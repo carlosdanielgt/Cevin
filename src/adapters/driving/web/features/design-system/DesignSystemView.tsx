@@ -2,88 +2,145 @@ import React, { useState } from 'react';
 import {
   DEFAULT_USER_PREFERENCES,
   DocumentKind,
-  FactImportance,
-  StudioStep,
-  VoiceLevel,
   evaluateFit,
   extractJobFactsByRules,
+  type FactImportance as ImportanceLevel,
+  StudioStep,
+  VoiceLevel,
 } from '../../../../../core/domain';
+import { PageThumbnail } from '../../ui/pdfPreview';
 import {
-  AttentionToken,
   Avatar,
   Badge,
   Banner,
-  BulletRow,
   Button,
   Card,
-  CevinLogo,
   CevinMark,
   CevinStatusIndicator,
   Checkbox,
-  CompactStepper,
+  DeltaChip,
+  EmptyState,
+  Input,
   Logo,
+  MetricChip,
+  MultiSelectChips,
+  Panel,
+  PanelSection,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  SplitButton,
+  Switch,
+  TagChip,
+  TypeaheadField,
+} from '../../ui/primitives';
+import {
+  AttentionToken,
+  BulletRow,
+  CompactStepper,
   CoverageBar,
   CoveredChip,
-  DeltaChip,
   DiffText,
   DocumentSwitch,
-  EmptyState,
   EstimateRing,
   FactChip,
   FitStrip,
   GapChip,
   HeroScoreBand,
+  ScoreChip,
   ImportanceControl,
-  Input,
   JobFactsTable,
   LensBars,
-  MetricChip,
   MiniKnobBar,
-  MultiSelectChips,
   PageHeader,
-  PageThumbnail,
-  Panel,
-  PanelSection,
   PartialChip,
   PreviewToolbar,
   ProspectBadge,
-  ScoreChip,
   ScoreRing,
-  SegmentedControl,
-  Select,
-  Skeleton,
   SkimLegend,
   SkimToggle,
-  SplitButton,
   StatusBadge,
-  Switch,
-  TagChip,
   TakeawayCard,
   TimelineRail,
-  TypeaheadField,
   ViewMenu,
   VoiceControl,
-} from '../../ui';
+} from '../../ui/signatures';
 
 const COLOR_TOKENS = [
-  { name: 'canvas', bgClass: 'bg-canvas', desc: 'Warm stone / carbon slate canvas' },
-  { name: 'surface', bgClass: 'bg-surface', desc: 'Elevated work panel surface' },
-  { name: 'surface-sunken', bgClass: 'bg-surface-sunken', desc: 'Recessed desk & wells' },
-  { name: 'paper', bgClass: 'bg-paper', desc: 'True white WYSIWYG paper' },
-  { name: 'sidebar', bgClass: 'bg-sidebar', desc: 'Deep ink navigation anchor' },
-  { name: 'accent', bgClass: 'bg-accent', desc: 'Primary action cobalt' },
-  { name: 'success', bgClass: 'bg-success', desc: 'Verified & covered state' },
-  { name: 'warning', bgClass: 'bg-warning', desc: 'Partial match / notice' },
-  { name: 'danger', bgClass: 'bg-danger', desc: 'Unverified claim / gap' },
-] as const;
+  {
+    name: 'canvas',
+    bgClass: 'bg-canvas',
+    desc: 'Warm stone / carbon slate canvas',
+  },
+  {
+    name: 'surface',
+    bgClass: 'bg-surface',
+    desc: 'Elevated work panel surface',
+  },
+  {
+    name: 'surface-sunken',
+    bgClass: 'bg-surface-sunken',
+    desc: 'Recessed desk & wells',
+  },
+  {
+    name: 'paper',
+    bgClass: 'bg-paper',
+    desc: 'True white WYSIWYG paper',
+  },
+  {
+    name: 'sidebar',
+    bgClass: 'bg-sidebar',
+    desc: 'Deep ink navigation anchor',
+  },
+  {
+    name: 'accent',
+    bgClass: 'bg-accent',
+    desc: 'Primary action cobalt',
+  },
+  {
+    name: 'success',
+    bgClass: 'bg-success',
+    desc: 'Verified & covered state',
+  },
+  {
+    name: 'warning',
+    bgClass: 'bg-warning',
+    desc: 'Partial match / notice',
+  },
+  {
+    name: 'danger',
+    bgClass: 'bg-danger',
+    desc: 'Unverified claim / gap',
+  },
+];
 
 const SHADOW_SPECIMENS = [
-  { name: 'shadow-xs', shadowClass: 'shadow-xs', desc: 'Inputs, buttons & chips' },
-  { name: 'shadow-sm', shadowClass: 'shadow-sm', desc: 'Elevated work panels' },
-  { name: 'shadow-md', shadowClass: 'shadow-md', desc: 'Hero band & floating toolbar' },
-  { name: 'shadow-lg', shadowClass: 'shadow-lg', desc: 'Popovers, modals & drawers' },
-  { name: 'shadow-paper', shadowClass: 'shadow-paper', desc: 'Physical paper sheet on desk' },
-] as const;
+  {
+    name: 'shadow-xs',
+    shadowClass: 'shadow-xs',
+    desc: 'Inputs, buttons & chips',
+  },
+  {
+    name: 'shadow-sm',
+    shadowClass: 'shadow-sm',
+    desc: 'Elevated work panels',
+  },
+  {
+    name: 'shadow-md',
+    shadowClass: 'shadow-md',
+    desc: 'Hero band & floating toolbar',
+  },
+  {
+    name: 'shadow-lg',
+    shadowClass: 'shadow-lg',
+    desc: 'Popovers, modals & drawers',
+  },
+  {
+    name: 'shadow-paper',
+    shadowClass: 'shadow-paper',
+    desc: 'Physical paper sheet on desk',
+  },
+];
 
 const AVATAR_COMPANIES = [
   'Kestrel Pay',
@@ -94,14 +151,10 @@ const AVATAR_COMPANIES = [
   'Boreal Cloud',
   'Aether Foundry',
   'Cinder Queue',
-] as const;
+];
 
 const SAMPLE_FACTS = extractJobFactsByRules(
-  `Location: New York, NY (Hybrid, 3 days in office).
-Must be authorized to work in the US without visa sponsorship.
-Compensation: $180,000 - $215,000 USD annual base.
-Employment type: Full-time permanent position.
-Fluent in English required.`,
+  `Location: New York, NY (Hybrid, 3 days in office).Must be authorized to work in the US without visa sponsorship.Compensation: $180,000 - $215,000 USD annual base.Employment type: Full-time permanent position.Fluent in English required.`,
 ).facts;
 
 export function DesignSystemView() {
@@ -112,12 +165,15 @@ export function DesignSystemView() {
   const [demoSwitch, setDemoSwitch] = useState(true);
   const [demoSelect, setDemoSelect] = useState('classic');
   const [demoSkim, setDemoSkim] = useState(false);
-  const [demoImportance, setDemoImportance] = useState<FactImportance>('dealbreaker');
+  const [demoImportance, setDemoImportance] =
+    useState<ImportanceLevel>('dealbreaker');
   const [demoFactsExpanded, setDemoFactsExpanded] = useState(false);
-  const [demoSortMode, setDemoSortMode] = useState<'best-fit' | 'recent'>('best-fit');
+  const [demoSortMode, setDemoSortMode] = useState<'best-fit' | 'recent'>(
+    'best-fit',
+  );
   const [demoHideConflicts, setDemoHideConflicts] = useState(false);
   const [demoCity, setDemoCity] = useState('San Francisco');
-  const [demoCountries, setDemoCountries] = useState<string[]>(['US', 'CA']);
+  const [demoCountries, setDemoCountries] = useState(['US', 'CA']);
   const [demoBulletText, setDemoBulletText] = useState(
     'Built multi-region Kubernetes metric ingestion in Go and Kafka, sustaining 1.4M events/sec while cutting cross-AZ egress spend by 38%.',
   );
@@ -134,7 +190,6 @@ export function DesignSystemView() {
         subtitle="Tokens, typography, surfaces, and components."
       />
 
-      {/* 01. Elevation & 4-Level Surface Ladder (Light & Dark Side-by-Side) */}
       <Panel>
         <PanelSection className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -145,7 +200,6 @@ export function DesignSystemView() {
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {/* Light Preview Frame */}
             <div className="rounded-xl border border-border p-5 bg-[#F5F3EE] text-[#151A22] space-y-4">
               <div className="text-xs font-bold uppercase tracking-wider text-[#525B6C]">
                 Light Theme — Warm Stone Desk & Crisp Paper
@@ -170,7 +224,6 @@ export function DesignSystemView() {
               </div>
             </div>
 
-            {/* Dark Preview Frame */}
             <div className="dark rounded-xl border border-[#252D3B] p-5 bg-[#0F1319] text-[#EEF0F4] space-y-4">
               <div className="text-xs font-bold uppercase tracking-wider text-[#9CA5B5]">
                 Dark Theme — Carbon Slate Desk & True White Paper
@@ -196,7 +249,6 @@ export function DesignSystemView() {
             </div>
           </div>
 
-          {/* Shadow scale specimens */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-2">
             {SHADOW_SPECIMENS.map((s) => (
               <div
@@ -213,7 +265,6 @@ export function DesignSystemView() {
         </PanelSection>
       </Panel>
 
-      {/* 02. Semantic Color Tokens & Company Avatar Hues */}
       <Card className="p-6 space-y-5">
         <h2 className="text-base font-display font-semibold text-ink">
           02. Semantic Color Tokens (@theme) & Deterministic Company Avatars
@@ -236,7 +287,6 @@ export function DesignSystemView() {
             </div>
           ))}
         </div>
-
         <div className="pt-3 border-t border-hairline flex flex-wrap items-center gap-4">
           <span className="text-xs font-semibold text-ink-muted">
             8 Curated Company Avatar Hues:
@@ -250,7 +300,6 @@ export function DesignSystemView() {
         </div>
       </Card>
 
-      {/* 03. Typography Scale */}
       <Card className="p-6 space-y-3">
         <h2 className="text-base font-display font-semibold text-ink">
           03. Typography Scale
@@ -266,10 +315,12 @@ export function DesignSystemView() {
           </div>
           <div>
             <span className="text-xs font-mono text-ink-subtle">
-              --font-sans (Plus Jakarta Sans — UI Controls, Tabular Numbers & Resume Prose)
+              --font-sans (Plus Jakarta Sans — UI Controls, Tabular Numbers &
+              Resume Prose)
             </span>
             <p className="text-sm font-sans text-ink">
-              Designed zero-downtime PostgreSQL partition routing, dropping p99 query latency from 420ms to 68ms across 120+ enterprise tenants.
+              Designed zero-downtime PostgreSQL partition routing, dropping p99
+              query latency from 420ms to 68ms across 120+ enterprise tenants.
             </p>
           </div>
           <div>
@@ -277,19 +328,18 @@ export function DesignSystemView() {
               --font-mono (JetBrains Mono — Terminal commands & paths)
             </span>
             <p className="text-sm font-mono text-ink">
-              http://localhost:8000 · uvicorn mlx_server:app --host 127.0.0.1 --port 8000
+              http://localhost:8000 · uvicorn mlx_server:app --host 127.0.0.1
+              --port 8000
             </p>
           </div>
         </div>
       </Card>
 
-      {/* 04. Signature Components */}
       <Card className="p-6 space-y-6">
         <h2 className="text-base font-display font-semibold text-ink">
           04. Signature Components
         </h2>
 
-        {/* Studio Header Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-lg bg-surface-sunken border border-hairline">
           <DocumentSwitch value={demoDoc} onChange={setDemoDoc} />
           <CompactStepper
@@ -306,7 +356,6 @@ export function DesignSystemView() {
           />
         </div>
 
-        {/* Three-Score Hero Band + Recruiter Appeal Lenses + TakeawayCard */}
         <HeroScoreBand
           jobMatch={92}
           recruiterAppeal={88}
@@ -319,7 +368,12 @@ export function DesignSystemView() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <LensBars
-            lenses={{ skim: 90, proof: 88, clarity: 85, voice: 88 }}
+            lenses={{
+              skim: 90,
+              proof: 88,
+              clarity: 85,
+              voice: 88,
+            }}
             weakestHints={{
               skim: 'First role, headline, and metrics appear above the fold',
               proof: 'Strongest quantified bullet leads the recent role',
@@ -334,14 +388,14 @@ export function DesignSystemView() {
             />
             <PreviewToolbar
               templateId="classic"
-              onChangeTemplate={() => undefined}
+              onChangeTemplate={() => void 0}
               textAlign="left"
-              onChangeTextAlign={() => undefined}
+              onChangeTextAlign={() => void 0}
               currentPage={1}
               totalPages={1}
-              onChangePage={() => undefined}
+              onChangePage={() => void 0}
               zoom="md"
-              onChangeZoom={() => undefined}
+              onChangeZoom={() => void 0}
               skimMode={demoSkim}
               onToggleSkimMode={() => setDemoSkim((s) => !s)}
               byteSize={49152}
@@ -358,11 +412,11 @@ export function DesignSystemView() {
           </div>
         </div>
 
-        {/* FitStrip + JobFactsTable + AttentionToken + ImportanceControl */}
         <div className="space-y-3 p-4 rounded-xl border border-border bg-surface-sunken/50">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs font-semibold text-ink">
-              Job Facts Hierarchy: FitStrip (1 line) · AttentionToken (max 1 per row) · ImportanceControl
+              Job Facts Hierarchy: FitStrip (1 line) · AttentionToken (max 1 per
+              row) · ImportanceControl
             </div>
             <div className="flex items-center gap-2">
               <AttentionToken token={demoFit.attentionToken} />
@@ -372,13 +426,11 @@ export function DesignSystemView() {
               />
             </div>
           </div>
-
           <FitStrip
             evaluation={demoFit}
             expanded={demoFactsExpanded}
             onToggleExpanded={() => setDemoFactsExpanded((prev) => !prev)}
           />
-
           {demoFactsExpanded && (
             <JobFactsTable
               facts={SAMPLE_FACTS}
@@ -389,8 +441,6 @@ export function DesignSystemView() {
           )}
         </div>
 
-
-        {/* MiniKnobBar & Expandable Rotary VoiceControl */}
         <div className="space-y-3">
           <MiniKnobBar
             value={demoVoice}
@@ -406,7 +456,6 @@ export function DesignSystemView() {
           </div>
         </div>
 
-        {/* Uncropped Full-Width BulletRow */}
         <BulletRow
           bulletText={demoBulletText}
           originalText="Engineered multi-region Kubernetes metric ingestion pipeline in Go and Kafka, sustaining 1.4M events/sec."
@@ -416,14 +465,13 @@ export function DesignSystemView() {
           relevanceReason="Strong match for distributed systems & Go"
           sourceSummary="Vanguard Telemetry Systems · Staff Platform Engineer"
           onChangeText={setDemoBulletText}
-          onRewrite={() => undefined}
-          onToggleLock={() => undefined}
-          onMoveUp={() => undefined}
-          onMoveDown={() => undefined}
-          onRemove={() => undefined}
+          onRewrite={() => void 0}
+          onToggleLock={() => void 0}
+          onMoveUp={() => void 0}
+          onMoveDown={() => void 0}
+          onRemove={() => void 0}
         />
 
-        {/* Coverage Bar + Quiet Covered / Tinted Partial / Loud Gap Chips + FactChips */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
           <CoverageBar coveredCount={8} partialCount={2} gapCount={1} />
           <div className="flex flex-wrap gap-2">
@@ -437,13 +485,12 @@ export function DesignSystemView() {
             <GapChip
               term="Rust / eBPF"
               priority="must-have"
-              onAddToBank={() => undefined}
+              onAddToBank={() => void 0}
             />
             <FactChip fit="conflict" label="✕ Work permit" />
           </div>
         </div>
 
-        {/* Page Thumbnails & TimelineRail */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
           <div className="space-y-2">
             <div className="text-xs font-semibold text-ink">
@@ -455,7 +502,6 @@ export function DesignSystemView() {
               <PageThumbnail templateId="compact" size="md" />
             </div>
           </div>
-
           <div className="space-y-2">
             <div className="text-xs font-semibold text-ink">
               Experience Bank TimelineRail + MetricChip & TagChip
@@ -481,12 +527,10 @@ export function DesignSystemView() {
         />
       </Card>
 
-      {/* 05. Interactive Primitives & States */}
       <Card className="p-6 space-y-5">
         <h2 className="text-base font-display font-semibold text-ink">
           05. Interactive Primitives, Typeahead & States
         </h2>
-
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="primary">Primary Action</Button>
           <Button variant="secondary">Secondary</Button>
@@ -496,24 +540,24 @@ export function DesignSystemView() {
           <Button variant="danger">Danger</Button>
           <SplitButton
             primaryLabel="Export Resume PDF"
-            onPrimaryClick={() => undefined}
+            onPrimaryClick={() => void 0}
             items={[
               {
                 id: 'docx',
                 label: 'Word document (.docx)',
                 tooltip:
                   'Editable Word file. Layout can differ slightly from the PDF.',
-                onSelect: () => undefined,
+                onSelect: () => void 0,
               },
               {
                 id: 'md',
                 label: 'Markdown (.md)',
-                onSelect: () => undefined,
+                onSelect: () => void 0,
               },
               {
                 id: 'txt',
                 label: 'Plain text (.txt)',
-                onSelect: () => undefined,
+                onSelect: () => void 0,
               },
             ]}
           />
@@ -566,9 +610,21 @@ export function DesignSystemView() {
               value={demoCity}
               onChange={setDemoCity}
               options={[
-                { value: 'San Francisco', label: 'San Francisco', sublabel: 'SF Bay Area' },
-                { value: 'New York', label: 'New York', sublabel: 'NYC Metro' },
-                { value: 'Paris', label: 'Paris', sublabel: 'Île-de-France' },
+                {
+                  value: 'San Francisco',
+                  label: 'San Francisco',
+                  sublabel: 'SF Bay Area',
+                },
+                {
+                  value: 'New York',
+                  label: 'New York',
+                  sublabel: 'NYC Metro',
+                },
+                {
+                  value: 'Paris',
+                  label: 'Paris',
+                  sublabel: 'Île-de-France',
+                },
               ]}
             />
           </div>
@@ -609,7 +665,8 @@ export function DesignSystemView() {
         </div>
 
         <Banner tone="info" title="Local-first privacy guarantee">
-          All Experience Bank records, preferences, and application snapshots remain inside your browser’s IndexedDB database.
+          All Experience Bank records, preferences, and application snapshots
+          remain inside your browser’s IndexedDB database.
         </Banner>
 
         <EmptyState
@@ -617,11 +674,10 @@ export function DesignSystemView() {
           title="Example Empty State with SpotIllustration"
           description="Calm density with 120px 1-color line art and one clear primary action."
           actionLabel="Primary Action"
-          onAction={() => undefined}
+          onAction={() => void 0}
         />
       </Card>
 
-      {/* 07. Pure-Geometry Cevin Logo & Animated Working Mark */}
       <Card className="p-6 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -629,13 +685,13 @@ export function DesignSystemView() {
               07. Pure-Geometry Cevin Logo & Animated Working Mark
             </h2>
             <p className="text-xs text-ink-muted mt-0.5">
-              Constructed purely from SVG geometric primitives (arcs, lines, circles) with zero fonts or transforms on static shapes.
+              Constructed purely from SVG geometric primitives (arcs, lines,
+              circles) with zero fonts or transforms on static shapes.
             </p>
           </div>
           <Badge tone="accent">5 States × 4 Sizes × Tile & Glyph</Badge>
         </div>
 
-        {/* Pure-Geometry Brand Logo & Lockups */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="p-5 rounded-xl bg-[#F4F1EB] border border-border space-y-4">
             <div className="text-xs font-bold uppercase tracking-wider text-[#525B6C]">
@@ -670,7 +726,6 @@ export function DesignSystemView() {
           </div>
         </div>
 
-        {/* CevinMark All States × Sizes × Variants */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {(['tile', 'glyph'] as const).map((variant) => (
             <div
@@ -681,56 +736,70 @@ export function DesignSystemView() {
                 CevinMark — {variant} rendition (Light & Dark)
               </div>
               <div className="grid grid-cols-5 gap-3">
-                {(['idle', 'thinking', 'writing', 'done', 'error'] as const).map(
-                  (st) => (
-                    <div
-                      key={st}
-                      className="p-3 rounded-lg bg-surface border border-border flex flex-col items-center gap-2.5"
-                    >
-                      <span className="text-[11px] font-mono font-semibold text-ink-muted">
-                        {st}
-                      </span>
-                      <div className="flex items-end gap-2">
-                        {([16, 24, 40, 64] as const).map((sz) => (
-                          <CevinMark
-                            key={sz}
-                            state={st}
-                            size={sz}
-                            variant={variant}
-                          />
-                        ))}
-                      </div>
-                      <div className="w-full pt-2 border-t border-hairline flex items-center justify-center gap-2 bg-[#151A22] text-[#F4F1EB] rounded-sm py-1.5">
+                {(
+                  ['idle', 'thinking', 'writing', 'done', 'error'] as const
+                ).map((st) => (
+                  <div
+                    key={st}
+                    className="p-3 rounded-lg bg-surface border border-border flex flex-col items-center gap-2.5"
+                  >
+                    <span className="text-[11px] font-mono font-semibold text-ink-muted">
+                      {st}
+                    </span>
+                    <div className="flex items-end gap-2">
+                      {([16, 24, 40, 64] as const).map((sz) => (
                         <CevinMark
+                          key={sz}
                           state={st}
-                          size={16}
+                          size={sz}
                           variant={variant}
-                          className="text-[#F4F1EB]"
                         />
-                        <CevinMark
-                          state={st}
-                          size={24}
-                          variant={variant}
-                          className="text-[#F4F1EB]"
-                        />
-                      </div>
+                      ))}
                     </div>
-                  ),
-                )}
+                    <div className="w-full pt-2 border-t border-hairline flex items-center justify-center gap-2 bg-[#151A22] text-[#F4F1EB] rounded-sm py-1.5">
+                      <CevinMark
+                        state={st}
+                        size={16}
+                        variant={variant}
+                        className="text-[#F4F1EB]"
+                      />
+                      <CevinMark
+                        state={st}
+                        size={24}
+                        variant={variant}
+                        className="text-[#F4F1EB]"
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
         </div>
 
-        {/* Determinate Progress & Touchpoint Copy Specimens */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-hairline">
           <div className="flex flex-wrap items-center gap-4">
             <span className="text-xs font-semibold text-ink-muted">
               Determinate Progress (0.25 / 0.50 / 0.75):
             </span>
-            <CevinMark state="thinking" size={24} variant="tile" progress={0.25} />
-            <CevinMark state="thinking" size={24} variant="tile" progress={0.5} />
-            <CevinMark state="thinking" size={24} variant="tile" progress={0.75} />
+            <CevinMark
+              state="thinking"
+              size={24}
+              variant="tile"
+              progress={0.25}
+            />
+            <CevinMark
+              state="thinking"
+              size={24}
+              variant="tile"
+              progress={0.5}
+            />
+            <CevinMark
+              state="thinking"
+              size={24}
+              variant="tile"
+              progress={0.75}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <CevinStatusIndicator
@@ -757,4 +826,3 @@ export function DesignSystemView() {
     </div>
   );
 }
-

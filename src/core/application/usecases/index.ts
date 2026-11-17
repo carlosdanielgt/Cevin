@@ -250,15 +250,53 @@ function syncApplicationWithBank(
   return { app: nextApp, changed: true };
 }
 
+const DEFAULT_BASE_INSTRUCT_MLX_PROFILE: ModelProfile = {
+  id: 'base_instruct_mlx',
+  label: 'Public Base Instruct (4-bit MLX)',
+  description:
+    'Un-tuned public 4-bit MLX instruct model using explicit JSON schema and few-shot prompts.',
+  estimatedMemoryGb: 1.15,
+  isRecommendedDefault: false,
+  matches: (name: string) => {
+    const norm = name.trim().toLowerCase();
+    return norm.startsWith('mlx-community/') || norm.includes('base-instruct');
+  },
+  maxSeqLength: 1024,
+  parallelRecommended: 1,
+  disableRawPromptTrimming: false,
+  temperatures: {
+    classify: 0,
+    extract: 0,
+    bullet: 0.25,
+    summary: 0.3,
+    letter: 0.35,
+  },
+  topP: 0.9,
+  tokenCaps: {
+    bullet: 256,
+    summary: 300,
+    letterBlock: 320,
+    briefRefine: 320,
+    importClassify: 450,
+    jobFact: 200,
+  },
+  stop: [],
+  fewShotStyle: 'chat-turns',
+  serverEnv: ['CEVIN_MODEL_PATH=mlx-community/Qwen2.5-1.5B-Instruct-4bit'],
+};
+
 const DEFAULT_QWEN_1_5B_MLX_PROFILE: ModelProfile = {
   id: 'qwen25_1_5b_mlx',
-  label: 'Qwen2.5 1.5B Fine-Tuned (4-bit MLX)',
+  label: 'Cevin 1.5B',
   description:
-    'Fine-tuned Qwen2.5-1.5B Rank-32 LoRA model trained on structured career reasoning (~1.2 GB RAM).',
+    'Default fine-tuned 4-bit MLX model for fast everyday tailoring (~1.2 GB RAM).',
   estimatedMemoryGb: 1.15,
   isRecommendedDefault: true,
   matches: (name: string) => {
     const norm = name.trim().toLowerCase();
+    if (norm.startsWith('mlx-community/') || norm.includes('base-instruct')) {
+      return false;
+    }
     return (
       norm === 'qwen2.5-1.5b-instruct-4bit' ||
       norm === 'cevin-1.5b-4bit-fused' ||
@@ -297,9 +335,9 @@ const DEFAULT_QWEN_1_5B_MLX_PROFILE: ModelProfile = {
 
 const DEFAULT_CEVIN3B_MLX_PROFILE: ModelProfile = {
   id: 'cevin_3b_mlx',
-  label: 'Cevin 3B Fine-Tuned (4-bit MLX)',
+  label: 'Cevin 3B',
   description:
-    'Fine-tuned Qwen2.5-3B LoRA model trained on structured career reasoning (~2.7 GB RAM).',
+    'Higher-capacity fine-tuned 4-bit MLX model for complex resumes (~2.7 GB RAM).',
   estimatedMemoryGb: 2.73,
   isRecommendedDefault: false,
   matches: (name: string) => {
@@ -460,6 +498,9 @@ export function createCevinUseCases(deps: UseCaseDependencies): CevinUseCases {
   const resolveModelProfile = (modelName: string): ModelProfile => {
     if (deps.modelProfileCatalog) {
       return deps.modelProfileCatalog.resolveForModel(modelName);
+    }
+    if (DEFAULT_BASE_INSTRUCT_MLX_PROFILE.matches(modelName)) {
+      return DEFAULT_BASE_INSTRUCT_MLX_PROFILE;
     }
     if (DEFAULT_QWEN_1_5B_MLX_PROFILE.matches(modelName)) {
       return DEFAULT_QWEN_1_5B_MLX_PROFILE;

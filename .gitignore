@@ -12,3 +12,31 @@ dist/
 artifacts/
 .tempmediaStorage/
 *.Artifact.json
+
+# Python virtual environments & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Local MLX model weights and adapters (never commit weights)
+*.safetensors
+*.bin
+*.gguf
+*.npz
+*.pt
+*.pth
+/models/
+/adapters/
+/adapters-*/
+/adapters_*/
+!/src/adapters/
+/cevin-1.5b-4bit-fused/
+/cevin-3b-4bit-fused/
+/Qwen2.5-*/
+
+# Private training datasets (only synthetic data/sample/ is tracked)
+/training_data/
+/data/private/
+*.jsonl
+!data/sample/*.jsonl

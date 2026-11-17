@@ -17,7 +17,6 @@ export const markdownResumeImporter: ResumeImporter = {
     const processor = remark();
     const tree = processor.parse(rawText);
     const cleaned = processor.stringify(tree).trim() || rawText.trim();
-
     return {
       fileName: file.name,
       formatId: 'markdown',

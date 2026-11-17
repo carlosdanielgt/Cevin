@@ -1,3 +1,1 @@
-export * from './context';
-export * from './ui';
-export * from './WebShell';
+export { CevinWebApp } from './WebShell';

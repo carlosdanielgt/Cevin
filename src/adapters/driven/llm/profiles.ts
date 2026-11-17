@@ -1,21 +1,63 @@
 import { ModelProfile, ModelProfileCatalog } from '../../../core/application';
 
+export const baseInstructMlxProfile: ModelProfile = {
+  id: 'base_instruct_mlx',
+  label: 'Public Base Instruct (4-bit MLX)',
+  description:
+    'Un-tuned public 4-bit MLX instruct model using explicit JSON schema and few-shot prompts.',
+  estimatedMemoryGb: 1.15,
+  isRecommendedDefault: false,
+  matches(modelName: string): boolean {
+    const normalized = modelName.trim().toLowerCase();
+    return (
+      normalized.startsWith('mlx-community/') ||
+      normalized.includes('base-instruct')
+    );
+  },
+  maxSeqLength: 1024,
+  parallelRecommended: 1,
+  disableRawPromptTrimming: false,
+  temperatures: {
+    classify: 0.0,
+    extract: 0.0,
+    bullet: 0.25,
+    summary: 0.3,
+    letter: 0.35,
+  },
+  topP: 0.9,
+  tokenCaps: {
+    bullet: 256,
+    summary: 300,
+    letterBlock: 320,
+    briefRefine: 320,
+    importClassify: 450,
+    jobFact: 200,
+  },
+  stop: [],
+  fewShotStyle: 'chat-turns',
+  serverEnv: ['CEVIN_MODEL_PATH=mlx-community/Qwen2.5-1.5B-Instruct-4bit'],
+};
+
 /**
- * New recommended default fine-tuned model profile: `Qwen2.5-1.5B-Instruct-4bit`
- * (Qwen2.5-1.5B fused with Rank-32 LoRA weights trained with `mask_prompt: true`
- * and `max_seq_length: 1024` on the exact same Cevin dataset, ~1.15 GB unified memory).
+ * Default fine-tuned model profile: `Cevin 1.5B` (`Qwen2.5-1.5B-Instruct-4bit` / `./cevin-1.5b-4bit-fused`, ~1.15 GB unified memory).
  * - Uses identical `inline` prompt formatting (no few-shot turns, no extra JSON schema hints).
  * - Raw string truncation is strictly disabled (`disableRawPromptTrimming: true`).
  */
 export const qwen25_1_5bMlxProfile: ModelProfile = {
   id: 'qwen25_1_5b_mlx',
-  label: 'Qwen2.5 1.5B Fine-Tuned (4-bit MLX)',
+  label: 'Cevin 1.5B',
   description:
-    'Fine-tuned Qwen2.5-1.5B Rank-32 LoRA model trained on structured career reasoning (~1.2 GB RAM).',
+    'Default fine-tuned 4-bit MLX model for fast everyday tailoring (~1.2 GB RAM).',
   estimatedMemoryGb: 1.15,
   isRecommendedDefault: true,
   matches(modelName: string): boolean {
     const normalized = modelName.trim().toLowerCase();
+    if (
+      normalized.startsWith('mlx-community/') ||
+      normalized.includes('base-instruct')
+    ) {
+      return false;
+    }
     return (
       normalized === 'qwen2.5-1.5b-instruct-4bit' ||
       normalized === 'cevin-1.5b-4bit-fused' ||
@@ -53,17 +95,15 @@ export const qwen25_1_5bMlxProfile: ModelProfile = {
 };
 
 /**
- * Fine-tuned Cevin 3B model profile: `cevin-3b-4bit-fused`
- * (based on `mlx-community/Qwen2.5-3B-Instruct-4bit` fine-tuned with Apple MLX LoRA across all
- * layers with `mask_prompt: true` and `max_seq_length: 1024`, ~2.73 GB unified memory).
+ * Fine-tuned `Cevin 3B` model profile: `cevin-3b-4bit-fused` (~2.73 GB unified memory).
  * - Raw string truncation is strictly disabled (`disableRawPromptTrimming: true`) so structured
  *   `TASK:` headers and JSON payloads are never clipped mid-object.
  */
 export const cevin3bMlxProfile: ModelProfile = {
   id: 'cevin_3b_mlx',
-  label: 'Cevin 3B Fine-Tuned (4-bit MLX)',
+  label: 'Cevin 3B',
   description:
-    'Fine-tuned Qwen2.5-3B LoRA model trained on structured career reasoning (~2.7 GB RAM).',
+    'Higher-capacity fine-tuned 4-bit MLX model for complex resumes (~2.7 GB RAM).',
   estimatedMemoryGb: 2.73,
   isRecommendedDefault: false,
   matches(modelName: string): boolean {
@@ -107,7 +147,7 @@ export const cevin3bMlxProfile: ModelProfile = {
 export const genericProfile: ModelProfile = {
   id: 'generic',
   label: 'Generic Local Model',
-  estimatedMemoryGb: 2.0,
+  estimatedMemoryGb: 2,
   isRecommendedDefault: false,
   matches(): boolean {
     return true;
@@ -116,8 +156,8 @@ export const genericProfile: ModelProfile = {
   parallelRecommended: 1,
   disableRawPromptTrimming: false,
   temperatures: {
-    classify: 0,
-    extract: 0,
+    classify: 0.0,
+    extract: 0.0,
     bullet: 0.35,
     summary: 0.35,
     letter: 0.5,
@@ -136,9 +176,8 @@ export const genericProfile: ModelProfile = {
   serverEnv: [],
 };
 
-export const genericSmallProfile = genericProfile;
-
 const REGISTERED_MODEL_PROFILES: ModelProfile[] = [
+  baseInstructMlxProfile,
   qwen25_1_5bMlxProfile,
   cevin3bMlxProfile,
   genericProfile,
@@ -146,17 +185,15 @@ const REGISTERED_MODEL_PROFILES: ModelProfile[] = [
 
 export function createModelProfileCatalog(): ModelProfileCatalog {
   return {
-    list() {
+    list(): ModelProfile[] {
       return [...REGISTERED_MODEL_PROFILES];
     },
-    getById(id: string) {
+    getById(id: string): ModelProfile | undefined {
       return REGISTERED_MODEL_PROFILES.find((p) => p.id === id);
     },
     resolveForModel(modelName: string): ModelProfile {
       for (const profile of REGISTERED_MODEL_PROFILES) {
-        if (profile.matches(modelName)) {
-          return profile;
-        }
+        if (profile.matches(modelName)) return profile;
       }
       return genericProfile;
     },

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 132 40" width="132" height="40" fill="none" role="img" aria-label="Cevin">
+  <g transform="translate(2, 4.88) scale(0.4725)">
+    <path d="M48.85 46.14A22 22 0 1 1 48.85 17.86" stroke="#151A22" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="24" cy="32" r="4" fill="#1D4ED8"/>
+    <line x1="33" y1="32" x2="58" y2="32" stroke="#1D4ED8" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <text x="39" y="29" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-size="28" font-weight="600" letter-spacing="-0.02em" fill="#151A22">Cevin</text>
+</svg>

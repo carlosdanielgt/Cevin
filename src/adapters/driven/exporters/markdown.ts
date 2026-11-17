@@ -14,13 +14,12 @@ export function renderCoverLetterToMarkdown(doc: CoverLetterDocument): string {
   if (doc.header.headline.trim()) {
     lines.push(`**${doc.header.headline.trim()}**`);
   }
-  if (contact.line1.length > 0) {
-    lines.push(contact.line1.join(' · '));
-  }
+  if (contact.line1.length > 0) lines.push(contact.line1.join(' · '));
   if (contact.line2.length > 0) {
     lines.push(contact.line2.map((l) => l.display).join(' · '));
   }
   lines.push('');
+
   lines.push(doc.dateLine);
   lines.push(`**${doc.recipientLine}**`);
   lines.push('');
@@ -32,7 +31,7 @@ export function renderCoverLetterToMarkdown(doc: CoverLetterDocument): string {
     }
   }
 
-  return lines.join('\n').trim() + '\n';
+  return `${lines.join('\n').trim()}\n`;
 }
 
 export function renderResumeToMarkdown(doc: ResumeDocument): string {
@@ -43,10 +42,7 @@ export function renderResumeToMarkdown(doc: ResumeDocument): string {
   if (doc.header.headline.trim()) {
     lines.push(`**${doc.header.headline.trim()}**`);
   }
-
-  if (contact.line1.length > 0) {
-    lines.push(contact.line1.join(' · '));
-  }
+  if (contact.line1.length > 0) lines.push(contact.line1.join(' · '));
   if (contact.line2.length > 0) {
     lines.push(contact.line2.map((l) => l.display).join(' · '));
   }
@@ -77,13 +73,9 @@ export function renderResumeToMarkdown(doc: ResumeDocument): string {
       if (proj.role.trim()) headerParts.push(`— ${proj.role.trim()}`);
       if (proj.link?.trim()) headerParts.push(`· ${proj.link.trim()}`);
       lines.push(`### ${headerParts.join(' ')}`);
-      if (proj.description.trim()) {
-        lines.push(proj.description.trim());
-      }
+      if (proj.description.trim()) lines.push(proj.description.trim());
       for (const h of proj.highlights) {
-        if (h.trim()) {
-          lines.push(`- ${h.trim()}`);
-        }
+        if (h.trim()) lines.push(`- ${h.trim()}`);
       }
       lines.push('');
     }
@@ -102,9 +94,7 @@ export function renderResumeToMarkdown(doc: ResumeDocument): string {
     for (const edu of doc.educations) {
       const eduLeft = `${edu.institution} — ${edu.degreeLine}${edu.location ? ` · ${edu.location}` : ''}`;
       lines.push(`**${eduLeft}** ${edu.dateRange}`);
-      if (edu.highlights?.trim()) {
-        lines.push(edu.highlights.trim());
-      }
+      if (edu.highlights?.trim()) lines.push(edu.highlights.trim());
     }
     lines.push('');
   }
@@ -117,7 +107,7 @@ export function renderResumeToMarkdown(doc: ResumeDocument): string {
     lines.push('');
   }
 
-  return lines.join('\n').trim() + '\n';
+  return `${lines.join('\n').trim()}\n`;
 }
 
 export function renderDocumentToMarkdown(doc: ExportableDocument): string {
@@ -141,10 +131,7 @@ export const markdownResumeExporter: DocumentExporter = {
     templates: false,
     atsRoundTrip: false,
   },
-  async export(
-    doc: ExportableDocument,
-    _options: ExportOptions,
-  ): Promise<Blob> {
+  async export(doc: ExportableDocument, _options: ExportOptions): Promise<Blob> {
     const markdown = renderDocumentToMarkdown(doc);
     return new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
   },

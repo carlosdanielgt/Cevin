@@ -11,16 +11,16 @@ import { mockProviderDescriptor } from './mock';
  * with `mock` for Demo mode.
  */
 const REGISTERED_PROVIDERS: LlmProviderDescriptor[] = [
-  mlxFastApiProviderDescriptor as unknown as LlmProviderDescriptor,
-  mockProviderDescriptor as unknown as LlmProviderDescriptor,
+  mlxFastApiProviderDescriptor as LlmProviderDescriptor,
+  mockProviderDescriptor as LlmProviderDescriptor,
 ];
 
 export function createLlmProviderCatalog(): LlmProviderCatalog {
   return {
-    list() {
+    list(): LlmProviderDescriptor[] {
       return [...REGISTERED_PROVIDERS];
     },
-    getById(id: string) {
+    getById(id: string): LlmProviderDescriptor | undefined {
       if (id === 'cevin-3b-mlx') {
         return REGISTERED_PROVIDERS.find((p) => p.id === 'mlx-fastapi');
       }

@@ -16,6 +16,7 @@ import {
   pdfResumeImporter,
 } from '../adapters/driven/importers';
 import {
+  baseInstructMlxProfile,
   cevin3bMlxProfile,
   createMlxCareerIntelligenceAdapter,
   createMlxFastApiProvider,
@@ -2507,7 +2508,7 @@ test('Tier 2 Golden Record-Replay: Recorded Cevin 3B completions pass through Ll
   );
   assert.equal(importRes.ok, true);
   if (importRes.ok) {
-    assert.equal(importRes.value.proposedProfile.name, 'Carlos Garcia');
+    assert.equal(importRes.value.proposedProfile.name, 'Elena Rostova');
     assert.equal(importRes.value.proposedExperiences.length, 2);
     assert.equal(importRes.value.proposedEducations.length, 1);
     assert.equal(importRes.value.proposedProjects.length, 1);
@@ -2525,21 +2526,21 @@ test('Experience reordering (Move Up/Down & Sort Chronological), Top Fixes Trim 
   const outOfOrderExperiences = [
     {
       id: 'exp-older',
-      company: 'Genpact International',
+      company: 'Meridian Clearing Corp',
       title: 'Senior Software Engineer',
       start: '2018-04',
       end: '2021-10',
       current: false,
-      location: 'Atlanta, USA',
+      location: 'Denver, CO',
     },
     {
       id: 'exp-newest',
-      company: 'AlayaCare',
+      company: 'Vanguard Telemetry',
       title: 'Senior Software Engineer',
       start: '2024-10',
       end: '2026-10',
       current: true,
-      location: 'Montreal, Canada',
+      location: 'Seattle, WA',
     },
     {
       id: 'exp-middle',
@@ -4300,6 +4301,36 @@ test('Dual-model integration: Qwen2.5-1.5B-Instruct-4bit (default) and cevin-3b-
     capturedGatewayMessages[0],
     capturedGatewayMessages[1],
     'Both fine-tuned MLX models must receive identical gateway messages with zero few-shot turns',
+  );
+
+  // 6. Verify public un-tuned 4-bit MLX instruct model resolves to base_instruct_mlx profile
+  // and receives explicit JSON key guidance without affecting fine-tuned Cevin 1.5B / Cevin 3B prompts
+  const catalog = createModelProfileCatalog();
+  const resolvedBase = catalog.resolveForModel(
+    'mlx-community/Qwen2.5-1.5B-Instruct-4bit',
+  );
+  assert.equal(resolvedBase.id, baseInstructMlxProfile.id);
+  assert.equal(resolvedBase.fewShotStyle, 'chat-turns');
+
+  const baseIntel = createMlxCareerIntelligenceAdapter(
+    {
+      baseUrl: 'http://localhost:8000',
+      model: 'mlx-community/Qwen2.5-1.5B-Instruct-4bit',
+    },
+    stubFetch,
+  );
+  await baseIntel.classifyRequirementMatch(
+    'Kubernetes experience',
+    matchInput,
+    'Staff Engineer',
+  );
+  const baseReq = requests[requests.length - 1];
+  assert.equal(baseReq.body.model, 'mlx-community/Qwen2.5-1.5B-Instruct-4bit');
+  assert.ok(
+    String(baseReq.body.system_prompt).includes(
+      'Return ONLY a JSON object with exact keys:',
+    ),
+    'Public base instruct MLX model should receive explicit JSON key schema guidance',
   );
 });
 

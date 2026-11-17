@@ -1,21 +1,21 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
+  CircleQuestionMark,
   Cpu,
   Database,
   Download,
   Gauge as GaugeIcon,
-  HelpCircle,
   Monitor,
   Moon,
   RefreshCw,
   ShieldCheck,
-  Sliders,
+  SlidersVertical,
   Sparkles,
   Sun,
   Trash2,
   Upload,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppSettings,
   ConnectionDiagnosticResult,
@@ -29,6 +29,7 @@ import {
   VoiceLevel,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
+import { PageThumbnail } from '../../ui/pdfPreview';
 import {
   Badge,
   Banner,
@@ -42,7 +43,6 @@ import {
 } from '../../ui/primitives';
 import {
   PageHeader,
-  PageThumbnail,
   PreferencesForm,
   VoiceControl,
 } from '../../ui/signatures';
@@ -59,6 +59,11 @@ function triggerJsonDownload(jsonStr: string, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+interface SettingsViewProps {
+  onThemeChange: (theme: AppSettings['theme']) => void;
+  onConnectionChanged: () => void;
+}
+
 type SettingsSectionId =
   | 'preferences'
   | 'ai'
@@ -70,13 +75,9 @@ type SettingsSectionId =
 export function SettingsView({
   onThemeChange,
   onConnectionChanged,
-}: {
-  onThemeChange: (theme: 'light' | 'dark' | 'system') => void;
-  onConnectionChanged: () => void;
-}) {
+}: SettingsViewProps) {
   const useCases = useCevinUseCases();
   const addToast = useUiStore((s) => s.addToast);
-
   const [activeSection, setActiveSection] =
     useState<SettingsSectionId>('preferences');
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -91,12 +92,12 @@ export function SettingsView({
   const [calibrationStep, setCalibrationStep] = useState('');
   const [calibrationStepIndex, setCalibrationStepIndex] = useState(0);
   const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
-  const jsonInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement | null>(null);
 
-  const mlxProviderMeta = useCases.listLlmProviders
-    .execute()
-    .find((p) => p.id === 'mlx-fastapi');
-  const catalogModels: ModelInfo[] = mlxProviderMeta?.supportedModels ?? [];
+  const catalogModels =
+    useCases.listLlmProviders
+      .execute()
+      .find((p) => p.id === 'mlx-fastapi')?.supportedModels ?? [];
 
   const loadAll = useCallback(async () => {
     const [loadedSettings, summary, loadedPrefs] = await Promise.all([
@@ -118,19 +119,17 @@ export function SettingsView({
   }, [loadAll]);
 
   if (!settings || !preferences) {
-    return <div className="p-8 text-sm text-ink-muted">Loading settings…</div>;
+    return (
+      <div className="p-8 text-sm text-ink-muted">Loading settings…</div>
+    );
   }
 
   const updateSettings = async (partial: Partial<AppSettings>) => {
     const saved = await useCases.manageSettings.saveSettings(partial);
     setSettings(saved);
-    if (partial.theme) {
-      onThemeChange(partial.theme);
-    }
+    if (partial.theme) onThemeChange(partial.theme);
     if (partial.activeProviderId || partial.providerConfigs) {
-      const d = await useCases.testLlmConnection.execute(
-        saved.activeProviderId,
-      );
+      const d = await useCases.testLlmConnection.execute(saved.activeProviderId);
       setDiag(d);
       onConnectionChanged();
     }
@@ -197,14 +196,17 @@ export function SettingsView({
     baseUrl: 'http://localhost:8000',
     model: 'Qwen2.5-1.5B-Instruct-4bit',
     maxSeqLength: 1024,
-  }) as { baseUrl?: string; model?: string; maxSeqLength?: number };
-
+  }) as {
+    baseUrl?: string;
+    model?: string;
+    maxSeqLength?: number;
+    [key: string]: unknown;
+  };
   const activeMlxModel = mlxConfig.model || 'Qwen2.5-1.5B-Instruct-4bit';
+
   const modelOptions: ModelInfo[] = (() => {
     const byId = new Map<string, ModelInfo>();
-    for (const m of catalogModels) {
-      byId.set(m.id, m);
-    }
+    for (const m of catalogModels) byId.set(m.id, m);
     if (diag?.connected) {
       for (const live of diag.models) {
         const existing = byId.get(live.id);
@@ -213,6 +215,7 @@ export function SettingsView({
     }
     return Array.from(byId.values());
   })();
+
   const selectedModelMeta = modelOptions.find(
     (m) => m.id === activeMlxModel || m.name === activeMlxModel,
   );
@@ -226,7 +229,6 @@ export function SettingsView({
         : activeMlxModel.toLowerCase().includes('3b')
           ? '~2.7 GB'
           : '~1.2 GB';
-
   const isMlxSelected = settings.activeProviderId !== 'mock';
 
   const navItems: Array<{
@@ -237,9 +239,13 @@ export function SettingsView({
     {
       id: 'preferences',
       label: 'My preferences',
-      icon: <Sliders className="w-4 h-4" />,
+      icon: <SlidersVertical className="w-4 h-4" />,
     },
-    { id: 'ai', label: 'AI connection', icon: <Cpu className="w-4 h-4" /> },
+    {
+      id: 'ai',
+      label: 'AI connection',
+      icon: <Cpu className="w-4 h-4" />,
+    },
     {
       id: 'performance',
       label: 'Performance',
@@ -258,7 +264,7 @@ export function SettingsView({
     {
       id: 'about',
       label: 'Help & about',
-      icon: <HelpCircle className="w-4 h-4" />,
+      icon: <CircleQuestionMark className="w-4 h-4" />,
     },
   ];
 
@@ -274,9 +280,7 @@ export function SettingsView({
     <div className="space-y-6 pb-16">
       <PageHeader title="Settings" />
 
-      {/* Two-Column Layout at >=1280px */}
       <div className="xl:grid xl:grid-cols-12 xl:gap-8 items-start space-y-6 xl:space-y-0">
-        {/* Left Sticky Section Nav (200px / 3 cols) */}
         <aside className="xl:col-span-3 xl:sticky xl:top-6 bg-surface border border-border rounded-xl p-2 shadow-xs">
           <nav aria-label="Settings sections" className="space-y-1">
             {navItems.map((item) => {
@@ -302,9 +306,7 @@ export function SettingsView({
           </nav>
         </aside>
 
-        {/* Right Content Column (max-w-760px / 9 cols) */}
         <div className="xl:col-span-9 max-w-[760px] space-y-6">
-          {/* 0. My Preferences (Job Facts & Practical Fit) */}
           <section
             id="settings-preferences"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-5"
@@ -314,10 +316,10 @@ export function SettingsView({
                 My preferences
               </h2>
               <p className="text-xs text-ink-muted mt-0.5">
-                Used to check job postings for practical fit (location, work permits, languages, compensation, and contract type).
+                Used to check job postings for practical fit (location, work
+                permits, languages, compensation, and contract type).
               </p>
             </div>
-
             <PreferencesForm
               preferences={preferences}
               onSave={async (next) => {
@@ -329,7 +331,6 @@ export function SettingsView({
             />
           </section>
 
-          {/* 1. AI Connection */}
           <section
             id="settings-ai"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-5"
@@ -355,7 +356,6 @@ export function SettingsView({
               </Badge>
             </div>
 
-            {/* 2 Cards Only: Cevin model (on this Mac) and Demo mode */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
               <button
                 type="button"
@@ -382,7 +382,8 @@ export function SettingsView({
                   Cevin model (on this Mac)
                 </div>
                 <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                  Fine-tuned for resume writing. Runs on this Mac (Apple Silicon).
+                  Fine-tuned for resume writing. Runs on this Mac (Apple
+                  Silicon).
                 </p>
               </button>
 
@@ -407,16 +408,13 @@ export function SettingsView({
                     </span>
                   )}
                 </div>
-                <div className="text-sm font-semibold text-ink">
-                  Demo mode
-                </div>
+                <div className="text-sm font-semibold text-ink">Demo mode</div>
                 <p className="text-xs text-ink-muted mt-1 leading-relaxed">
                   Works immediately in any browser with sample responses.
                 </p>
               </button>
             </div>
 
-            {/* Integrated MLX Model Switcher (visible when local MLX provider is selected) */}
             {isMlxSelected && modelOptions.length > 0 && (
               <div className="space-y-2.5 pt-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -425,7 +423,8 @@ export function SettingsView({
                       Local model
                     </div>
                     <p className="text-xs text-ink-muted">
-                      Switch between integrated Apple Silicon models without restarting your workspace.
+                      Switch between integrated Apple Silicon models without
+                      restarting your workspace.
                     </p>
                   </div>
                   {isSwitchingModel && (
@@ -437,6 +436,7 @@ export function SettingsView({
                     />
                   )}
                 </div>
+
                 <div
                   role="radiogroup"
                   aria-label="Local model selection"
@@ -504,10 +504,10 @@ export function SettingsView({
               </div>
             )}
 
-            {/* Tinted Banner for Status */}
             {settings.activeProviderId === 'mock' ? (
               <Banner tone="success" title="Demo mode is active">
-                All features work immediately without running a local model server.
+                All features work immediately without running a local model
+                server.
               </Banner>
             ) : diag?.connected ? (
               <Banner
@@ -595,7 +595,6 @@ export function SettingsView({
             )}
           </section>
 
-          {/* 2. Performance */}
           <section
             id="settings-performance"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-4"
@@ -650,13 +649,14 @@ export function SettingsView({
                   <span className="text-xs font-medium text-ink-muted block mt-1">
                     Demo mode (instant)
                   </span>
-                ) : (perfSummary?.writingSpeedTokPerSec ?? 0) > 0 ? (
+                ) : (perfSummary?.writingSpeedTokPerSec ?? 0) > 0 &&
+                  perfSummary ? (
                   <>
                     <span className="text-lg font-display font-bold tabular-nums text-ink">
-                      {perfSummary!.writingSpeedTokPerSec} tok/s
+                      {perfSummary.writingSpeedTokPerSec} tok/s
                     </span>
                     <span className="text-[11px] text-ink-subtle block tabular-nums">
-                      Read {perfSummary!.readingSpeedTokPerSec} tok/s on this Mac
+                      Read {perfSummary.readingSpeedTokPerSec} tok/s on this Mac
                     </span>
                   </>
                 ) : (
@@ -665,6 +665,7 @@ export function SettingsView({
                   </span>
                 )}
               </div>
+
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
                 <span className="text-xs text-ink-muted block">Memory</span>
                 <span className="text-lg font-display font-bold tabular-nums text-ink">
@@ -676,14 +677,15 @@ export function SettingsView({
                     : `4-bit Apple Silicon (${selectedModelMeta?.name ?? activeMlxModel})`}
                 </span>
               </div>
+
               <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline">
                 <span className="text-xs text-ink-muted block">
                   Response cache
                 </span>
-                {(perfSummary?.totalCalls ?? 0) > 0 ? (
+                {(perfSummary?.totalCalls ?? 0) > 0 && perfSummary ? (
                   <>
                     <span className="text-lg font-display font-bold tabular-nums text-ink">
-                      {perfSummary!.cacheHits} / {perfSummary!.totalCalls}
+                      {perfSummary.cacheHits} / {perfSummary.totalCalls}
                     </span>
                     <span className="text-[11px] text-ink-subtle block">
                       Saved responses reused
@@ -742,7 +744,6 @@ export function SettingsView({
             </Disclosure>
           </section>
 
-          {/* 3. Appearance & Defaults */}
           <section
             id="settings-appearance"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6"
@@ -757,29 +758,34 @@ export function SettingsView({
               </p>
             </div>
 
-            {/* 3 Theme Mini-Preview Tiles */}
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-ink">
                 Workspace theme
               </label>
               <div className="grid grid-cols-3 gap-3">
-                {[
-                  {
-                    id: 'light' as const,
-                    label: 'Light (Warm stone)',
-                    icon: <Sun className="w-4 h-4" />,
-                  },
-                  {
-                    id: 'dark' as const,
-                    label: 'Dark (Carbon slate)',
-                    icon: <Moon className="w-4 h-4" />,
-                  },
-                  {
-                    id: 'system' as const,
-                    label: 'System',
-                    icon: <Monitor className="w-4 h-4" />,
-                  },
-                ].map((t) => {
+                {(
+                  [
+                    {
+                      id: 'light',
+                      label: 'Light (Warm stone)',
+                      icon: <Sun className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'dark',
+                      label: 'Dark (Carbon slate)',
+                      icon: <Moon className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'system',
+                      label: 'System',
+                      icon: <Monitor className="w-4 h-4" />,
+                    },
+                  ] as Array<{
+                    id: AppSettings['theme'];
+                    label: string;
+                    icon: React.ReactNode;
+                  }>
+                ).map((t) => {
                   const selected = settings.theme === t.id;
                   return (
                     <button
@@ -809,7 +815,9 @@ export function SettingsView({
                           {t.icon}
                           <span>{t.label}</span>
                         </span>
-                        {selected && <Check className="w-3.5 h-3.5 text-accent" />}
+                        {selected && (
+                          <Check className="w-3.5 h-3.5 text-accent" />
+                        )}
                       </div>
                     </button>
                   );
@@ -817,7 +825,6 @@ export function SettingsView({
               </div>
             </div>
 
-            {/* Paper Size Control (Letter vs A4) */}
             <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-hairline">
               <div>
                 <div className="text-xs font-semibold text-ink">Page size</div>
@@ -839,7 +846,6 @@ export function SettingsView({
               />
             </div>
 
-            {/* Default Template Cards with Real Scaled PageThumbnails */}
             <div className="space-y-2.5 pt-4 border-t border-hairline">
               <label className="block text-xs font-semibold text-ink">
                 Default resume template
@@ -848,21 +854,21 @@ export function SettingsView({
                 {(
                   [
                     {
-                      id: 'classic' as TemplateId,
+                      id: 'classic',
                       name: 'Classic',
                       desc: 'Editorial serif headings with single-column flow.',
                     },
                     {
-                      id: 'modern' as TemplateId,
+                      id: 'modern',
                       name: 'Modern',
                       desc: 'Crisp sans-serif hierarchy with cobalt accents.',
                     },
                     {
-                      id: 'compact' as TemplateId,
+                      id: 'compact',
                       name: 'Compact',
                       desc: 'High-density layout for 10+ years of experience.',
                     },
-                  ] as const
+                  ] as Array<{ id: TemplateId; name: string; desc: string }>
                 ).map((tpl) => {
                   const selected = settings.defaultTemplateId === tpl.id;
                   return (
@@ -898,7 +904,6 @@ export function SettingsView({
               </div>
             </div>
 
-            {/* Default Writing Voice Dial */}
             <div className="pt-4 border-t border-hairline">
               <VoiceControl
                 value={settings.defaultVoice ?? 'balanced'}
@@ -910,7 +915,6 @@ export function SettingsView({
             </div>
           </section>
 
-          {/* 4. Your Data (Local-first IndexedDB) */}
           <section
             id="settings-data"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-5"
@@ -933,15 +937,15 @@ export function SettingsView({
               <Button
                 variant="secondary"
                 onClick={async () => {
-                  const json = await useCases.manageBank.exportAllDataJson();
-                  triggerJsonDownload(json, 'cevin-workspace-backup.json');
+                  const jsonStr =
+                    await useCases.manageBank.exportAllDataJson();
+                  triggerJsonDownload(jsonStr, 'cevin-workspace-backup.json');
                   addToast('Exported JSON backup.', 'success');
                 }}
               >
                 <Download className="w-4 h-4" />
                 <span>Export backup (.json)</span>
               </Button>
-
               <input
                 ref={jsonInputRef}
                 type="file"
@@ -969,7 +973,6 @@ export function SettingsView({
                   e.target.value = '';
                 }}
               />
-
               <Button
                 variant="secondary"
                 onClick={() => jsonInputRef.current?.click()}
@@ -977,7 +980,6 @@ export function SettingsView({
                 <Upload className="w-4 h-4" />
                 <span>Import backup (.json)</span>
               </Button>
-
               <Button
                 variant="secondary"
                 onClick={async () => {
@@ -990,7 +992,6 @@ export function SettingsView({
               </Button>
             </div>
 
-            {/* Visually separated Danger Zone in tinted danger-50 container */}
             <div className="p-4 rounded-lg bg-danger-50 border border-danger/25 flex flex-wrap items-center justify-between gap-4">
               <div className="space-y-0.5">
                 <div className="text-xs font-semibold text-danger-700">
@@ -1012,7 +1013,6 @@ export function SettingsView({
             </div>
           </section>
 
-          {/* 5. Help & About */}
           <section
             id="settings-about"
             className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-2"
@@ -1023,8 +1023,8 @@ export function SettingsView({
             <p className="text-xs text-ink-muted leading-relaxed">
               Cevin is a local-first resume and cover-letter tailoring studio.
               Every generated bullet and paragraph traces directly to your
-              Experience Bank so your applications stay accurate, verifiable,
-              and human.
+              Experience Bank so your applications stay accurate, verifiable, and
+              human.
             </p>
           </section>
         </div>

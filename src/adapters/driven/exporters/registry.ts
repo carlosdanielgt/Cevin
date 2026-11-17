@@ -1,8 +1,29 @@
-import { DocumentExporter, ExporterCatalog } from '../../../core/application';
+import {
+  DocumentExporter,
+  ExportOptions,
+  ExporterCatalog,
+} from '../../../core/application';
+import { ExportableDocument } from '../../../core/domain';
 import { docxDocumentExporter } from './docx';
 import { markdownResumeExporter } from './markdown';
 import { pdfResumeExporter } from './pdf';
-import { plainTextDocumentExporter } from './text';
+import { renderDocumentToText } from './text';
+
+export const plainTextDocumentExporter: DocumentExporter = {
+  id: 'text',
+  label: 'Plain Text (.txt)',
+  fileExtension: 'txt',
+  mimeType: 'text/plain;charset=utf-8',
+  supports: ['resume', 'coverLetter'],
+  capabilities: {
+    templates: false,
+    atsRoundTrip: false,
+  },
+  async export(doc: ExportableDocument, _options: ExportOptions): Promise<Blob> {
+    const text = renderDocumentToText(doc);
+    return new Blob([text], { type: 'text/plain;charset=utf-8' });
+  },
+};
 
 /**
  * Registry of DocumentExporters.
@@ -17,10 +38,10 @@ const REGISTERED_EXPORTERS: DocumentExporter[] = [
 
 export function createExporterCatalog(): ExporterCatalog {
   return {
-    list() {
+    list(): DocumentExporter[] {
       return [...REGISTERED_EXPORTERS];
     },
-    getById(id: string) {
+    getById(id: string): DocumentExporter | undefined {
       return REGISTERED_EXPORTERS.find((e) => e.id === id);
     },
   };

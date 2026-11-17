@@ -1,12 +1,9 @@
+import { DocumentExporter, ExportOptions } from '../../../core/application';
 import {
   ExportableDocument,
   extractTextFromDocxBlob,
   renderDocumentToDocxBytes,
 } from '../../../core/domain';
-import {
-  DocumentExporter,
-  ExportOptions,
-} from '../../../core/application/ports/outbound';
 
 export const docxDocumentExporter: DocumentExporter = {
   id: 'docx',
@@ -19,10 +16,7 @@ export const docxDocumentExporter: DocumentExporter = {
     templates: true,
     atsRoundTrip: true,
   },
-  async export(
-    doc: ExportableDocument,
-    options: ExportOptions,
-  ): Promise<Blob> {
+  async export(doc: ExportableDocument, options: ExportOptions): Promise<Blob> {
     const bytes = renderDocumentToDocxBytes(doc, {
       templateId: options.templateId,
       pageSize: options.pageSize,

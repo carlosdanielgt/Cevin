@@ -1,55 +1,40 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowUpDown,
   BookmarkCheck,
   Check,
   ChevronLeft,
   ChevronRight,
   Download,
-  Loader2,
+  Ellipsis,
+  LoaderCircle,
   Lock,
-  MoreHorizontal,
+  LockOpen,
   Pencil,
   Plus,
   Redo2,
   RefreshCw,
   RotateCcw,
   Sparkles,
+  TriangleAlert,
   Undo2,
-  Unlock,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CoverLetterAnalysisResult } from '../../../../../core/application';
 import {
   Achievement,
   Application,
+  assembleBulletText,
   BankRankingResult,
   BankSnapshot,
-  CoverageFilter,
-  CoverLetterBlockType,
-  CoverLetterDraft,
-  CoverLetterLength,
-  CoverLetterPrioritizedFix,
-  DocumentKind,
-  DocumentVersion,
-  Experience,
-  JobFactKey,
-  PageSize,
-  PrioritizedFix,
-  RequirementPriority,
-  SkillCategory,
-  StudioStep,
-  TailoredBullet,
-  TemplateId,
-  TextAlign,
-  UserPreferences,
-  VoiceLevel,
-  assembleBulletText,
   buildGroupedCoverageSummary,
   computeRecruiterAppeal,
+  CoverLetterBlockType,
+  CoverLetterLength,
   createDefaultCoverLetterDraft,
-  documentToPlainText,
+  DocumentKind,
+  DocumentVersion,
   evaluateFit,
+  Experience,
   exportFilename,
   extractJobFactsByRules,
   formatAchievementInVoice,
@@ -61,16 +46,24 @@ import {
   mapToCoverLetterDocument,
   moveBulletWithinRoleInDraft,
   orderExperiencesForDraft,
+  PageSize,
+  PrioritizedFix,
   removeBulletFromDraft,
+  RequirementPriority,
   sanitizeExportFilenameInput,
   sortExperiencesChronologically,
+  StudioStep,
+  TextAlign,
+  UserPreferences,
   validateBulletGrounding,
+  VoiceLevel,
 } from '../../../../../core/domain';
 import {
   useCevinActivity,
   useCevinUseCases,
   useUiStore,
 } from '../../context';
+import { RenderedPdfArtifact } from '../../ui/pdfPreview';
 import {
   AutoGrowTextarea,
   Badge,
@@ -104,11 +97,10 @@ import {
   GroupHeader,
   HeroScoreBand,
   IHaveThisModal,
+  IHaveThisPayload,
   JobFactsStrip,
   LensBars,
   LetterBlock,
-  PdfPreviewArtifactInfo,
-  PracticalFitSummary,
   RequirementGroup,
   ScoreChip,
   TakeawayCard,
@@ -116,6 +108,7 @@ import {
 } from '../../ui/signatures';
 
 const SAMPLE_JOB_DESCRIPTION = `Staff Infrastructure & Platform Engineer — Kestrel Pay
+
 Location: San Francisco, CA (Hybrid, 2 days in office)
 Visa sponsorship available for qualified candidates.
 Compensation: $195,000 - $230,000 USD base + equity.
@@ -153,19 +146,23 @@ function cloneHistoryEntry(entry: StudioHistoryEntry): StudioHistoryEntry {
   return JSON.parse(JSON.stringify(entry)) as StudioHistoryEntry;
 }
 
+interface StudioViewProps {
+  applicationId: string;
+  activeDoc: DocumentKind;
+  activeStep: StudioStep;
+  onNavigateStudio: (doc: DocumentKind, step: StudioStep) => void;
+  onBackToApplications: () => void;
+}
+
+type CoverageFilterValue = 'all' | 'covered' | 'partial' | 'gap';
+
 export function StudioView({
   applicationId,
   activeDoc,
   activeStep,
   onNavigateStudio,
   onBackToApplications,
-}: {
-  applicationId: string;
-  activeDoc: DocumentKind;
-  activeStep: StudioStep;
-  onNavigateStudio: (doc: DocumentKind, step: StudioStep) => void;
-  onBackToApplications: () => void;
-}) {
+}: StudioViewProps) {
   const useCases = useCevinUseCases();
   const activityState = useCevinActivity();
   const addToast = useUiStore((s) => s.addToast);
@@ -191,12 +188,10 @@ export function StudioView({
     null,
   );
   const [justUpdatedIds, setJustUpdatedIds] = useState<string[]>([]);
-  const [voiceEtaLabel, setVoiceEtaLabel] = useState<string>('');
-
+  const [voiceEtaLabel, setVoiceEtaLabel] = useState('');
   const [isGeneratingLetter, setIsGeneratingLetter] = useState(false);
   const [rewritingBlockId, setRewritingBlockId] = useState<string | null>(null);
   const [letterSetupOpen, setLetterSetupOpen] = useState(false);
-
   const [newReqText, setNewReqText] = useState('');
   const [newReqPriority, setNewReqPriority] =
     useState<RequirementPriority>('must-have');
@@ -207,14 +202,15 @@ export function StudioView({
   );
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [previewArtifact, setPreviewArtifact] =
-    useState<PdfPreviewArtifactInfo | null>(null);
+    useState<RenderedPdfArtifact | null>(null);
   const [highlightedTerm, setHighlightedTerm] = useState<string | null>(null);
-  const [coverageFilter, setCoverageFilter] = useState<CoverageFilter>('all');
+  const [coverageFilter, setCoverageFilter] =
+    useState<CoverageFilterValue>('all');
   const [iHaveThisTerm, setIHaveThisTerm] = useState<string | null>(null);
   const [highlightedPostingQuote, setHighlightedPostingQuote] = useState<
     string | null
   >(null);
-  const [customExportName, setCustomExportName] = useState<string>('');
+  const [customExportName, setCustomExportName] = useState('');
   const [applyingFixId, setApplyingFixId] = useState<string | null>(null);
   const [appliedFixIds, setAppliedFixIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<StudioHistoryEntry[]>([]);
@@ -263,7 +259,6 @@ export function StudioView({
     setVersions(loadedVersions);
     setPageSize(settings.pageSize ?? 'letter');
     setPreferences(loadedPrefs);
-
     if (loadedApp) {
       setApp(loadedApp);
       if (loadedApp.parsedJob) {
@@ -278,9 +273,7 @@ export function StudioView({
         setFixes(scoreRes.value.fixes);
       }
       const clScoreRes = await useCases.scoreCoverLetter.execute(loadedApp.id);
-      if (clScoreRes.ok) {
-        setLetterAnalysis(clScoreRes.value);
-      }
+      if (clScoreRes.ok) setLetterAnalysis(clScoreRes.value);
     }
   }, [applicationId, useCases]);
 
@@ -288,7 +281,6 @@ export function StudioView({
     void reloadWorkspace();
   }, [reloadWorkspace]);
 
-  // Keep default export filename synced when app/bank/activeDoc changes
   useEffect(() => {
     if (!app || !bank) return;
     setCustomExportName(
@@ -302,10 +294,7 @@ export function StudioView({
   }, [app?.company, bank?.profile.name, activeDoc]);
 
   const persistApp = useCallback(
-    async (
-      updated: Application,
-      options?: { skipHistory?: boolean; bankOverride?: BankSnapshot },
-    ) => {
+    async (updated: Application, options?: { skipHistory?: boolean }) => {
       if (!options?.skipHistory && app && bank) {
         recordHistorySnapshot(app, bank.experiences, appliedFixIds);
       }
@@ -320,9 +309,7 @@ export function StudioView({
         setFixes(scoreRes.value.fixes);
       }
       const clRes = await useCases.scoreCoverLetter.execute(saved.id);
-      if (clRes.ok) {
-        setLetterAnalysis(clRes.value);
-      }
+      if (clRes.ok) setLetterAnalysis(clRes.value);
     },
     [app, bank, appliedFixIds, recordHistorySnapshot, useCases],
   );
@@ -337,7 +324,6 @@ export function StudioView({
     });
     setUndoStack((prev) => prev.slice(0, -1));
     setRedoStack((prev) => [...prev, currentSnapshot]);
-
     const restoredBank = await useCases.manageBank.saveBank({
       ...bank,
       experiences: prevEntry.experiences,
@@ -345,8 +331,16 @@ export function StudioView({
     setBank(restoredBank);
     setAppliedFixIds(prevEntry.appliedFixIds);
     await persistApp(prevEntry.app, { skipHistory: true });
-    addToast('Undid last change.', 'neutral');
-  }, [app, bank, undoStack, appliedFixIds, useCases, persistApp, addToast]);
+    addToast('Undid last change.', 'info');
+  }, [
+    app,
+    bank,
+    undoStack,
+    appliedFixIds,
+    useCases,
+    persistApp,
+    addToast,
+  ]);
 
   const handleRedo = useCallback(async () => {
     if (!app || !bank || redoStack.length === 0) return;
@@ -358,7 +352,6 @@ export function StudioView({
     });
     setRedoStack((prev) => prev.slice(0, -1));
     setUndoStack((prev) => [...prev, currentSnapshot]);
-
     const restoredBank = await useCases.manageBank.saveBank({
       ...bank,
       experiences: nextEntry.experiences,
@@ -366,8 +359,16 @@ export function StudioView({
     setBank(restoredBank);
     setAppliedFixIds(nextEntry.appliedFixIds);
     await persistApp(nextEntry.app, { skipHistory: true });
-    addToast('Redid change.', 'neutral');
-  }, [app, bank, redoStack, appliedFixIds, useCases, persistApp, addToast]);
+    addToast('Redid change.', 'info');
+  }, [
+    app,
+    bank,
+    redoStack,
+    appliedFixIds,
+    useCases,
+    persistApp,
+    addToast,
+  ]);
 
   const handleUndoRef = useRef(handleUndo);
   handleUndoRef.current = handleUndo;
@@ -410,16 +411,15 @@ export function StudioView({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      const isEditable =
+      if (
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
-          target.isContentEditable);
-      if (isEditable) return;
-
-      const isMod = e.metaKey || e.ctrlKey;
-      if (!isMod) return;
-
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
         if (undoStack.length > 0) {
           e.preventDefault();
@@ -455,7 +455,10 @@ export function StudioView({
       .join(' ');
     const activeProjectsText = (bank.projects ?? [])
       .filter((p) => app.workingDraft.selectedProjectIds.includes(p.id))
-      .map((p) => `${p.name} ${p.description} ${(p.highlights ?? []).join(' ')}`)
+      .map(
+        (p) =>
+          `${p.name} ${p.description} ${(p.highlights ?? []).join(' ')}`,
+      )
       .join(' ');
     const resumeProse = [
       app.workingDraft.targetHeadline,
@@ -477,9 +480,11 @@ export function StudioView({
   const jobFactsAndFit = useMemo(() => {
     if (!app) return null;
     const facts =
-      app.jobFacts ?? extractJobFactsByRules(app.jobDescription ?? '').facts;
-    const fit = evaluateFit(facts, preferences);
-    return { facts, fit };
+      app.jobFacts ?? extractJobFactsByRules(app.jobDescription ?? '');
+    return {
+      facts,
+      fit: evaluateFit(facts, preferences ?? null),
+    };
   }, [app, preferences]);
 
   const appealDetails = useMemo(() => {
@@ -503,7 +508,7 @@ export function StudioView({
     );
   }
 
-  const clDraft: CoverLetterDraft =
+  const clDraft =
     app.coverLetterDraft ??
     app.documents?.coverLetter ??
     createDefaultCoverLetterDraft(app, bank);
@@ -514,12 +519,10 @@ export function StudioView({
     versions.filter((v) => (v.kind ?? 'resume') === 'resume').length + 1,
     pageSize,
   );
-
   const coverLetterDoc = mapToCoverLetterDocument({
     draft: clDraft,
     bank,
-    versionNumber:
-      versions.filter((v) => v.kind === 'coverLetter').length + 1,
+    versionNumber: versions.filter((v) => v.kind === 'coverLetter').length + 1,
     templateId: app.templateId,
     pageSize,
     targetCompany: app.company,
@@ -527,7 +530,6 @@ export function StudioView({
     generatedAt: app.updatedAt,
   });
 
-  // Compute version score deltas vs previous saved version (only non-zero displayed by DeltaChip)
   const docVersions = versions
     .filter((v) => (v.kind ?? 'resume') === activeDoc)
     .sort((a, b) => a.number - b.number);
@@ -545,10 +547,11 @@ export function StudioView({
     docVersions.length >= 2 &&
     latestSavedVer &&
     latestSavedVer.scores.jobMatch === currentJobMatch &&
-    (latestSavedVer.scores.recruiterAppeal ??
-      latestSavedVer.scores.appeal) === currentAppeal
+    (latestSavedVer.scores.recruiterAppeal ?? latestSavedVer.scores.appeal) ===
+      currentAppeal
       ? docVersions[docVersions.length - 2]
       : latestSavedVer;
+
   const referenceVersionLabel = prevSavedVersion
     ? `v${prevSavedVersion.number}`
     : undefined;
@@ -576,7 +579,6 @@ export function StudioView({
     app.workingDraft.experienceOrder,
   );
 
-  // Handlers
   const handleAnalyzeJob = async () => {
     if (!app.jobDescription.trim()) {
       addToast('Paste a job description first.', 'warning');
@@ -591,18 +593,17 @@ export function StudioView({
     );
     setIsAnalyzingJob(false);
     void refreshSidebarActivity();
-
     if (!res.ok) {
       addToast(res.error.message, 'danger');
       return;
     }
     setApp(res.value.application);
     await reloadWorkspace();
-    addToast('Extracted job requirements, job facts, and assembled draft.', 'success');
-    onNavigateStudio(
-      activeDoc,
-      activeDoc === 'coverLetter' ? 'write' : 'build',
+    addToast(
+      'Extracted job requirements, job facts, and assembled draft.',
+      'success',
     );
+    onNavigateStudio(activeDoc, activeDoc === 'coverLetter' ? 'write' : 'build');
   };
 
   const handleVoiceChange = async (nextVoice: VoiceLevel) => {
@@ -617,7 +618,6 @@ export function StudioView({
       setJustUpdatedIds(quickRes.value.updatedBulletIds);
       setTimeout(() => setJustUpdatedIds([]), 700);
     }
-
     setIsTailoringAll(true);
     void refreshSidebarActivity();
     const fullRes = await useCases.tailorResume.tailorAll(
@@ -647,7 +647,6 @@ export function StudioView({
       experiences: sorted,
     });
     setBank(nextBank);
-
     const nextExperienceOrder = sorted.map((e) => e.id);
     const updatedApp: Application = {
       ...app,
@@ -672,9 +671,7 @@ export function StudioView({
     if (idx === -1) return;
     const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= currentOrdered.length) return;
-
     recordHistorySnapshot(app, bank.experiences, appliedFixIds);
-
     const nextOrdered = [...currentOrdered];
     const [moved] = nextOrdered.splice(idx, 1);
     nextOrdered.splice(targetIdx, 0, moved);
@@ -682,13 +679,11 @@ export function StudioView({
       ...exp,
       sortOrder: orderIdx,
     }));
-
     const nextBank = await useCases.manageBank.saveBank({
       ...bank,
       experiences: stamped,
     });
     setBank(nextBank);
-
     const updatedApp: Application = {
       ...app,
       workingDraft: {
@@ -697,7 +692,7 @@ export function StudioView({
       },
     };
     await persistApp(updatedApp, { skipHistory: true });
-    addToast(`Moved experience ${direction}.`, 'neutral');
+    addToast(`Moved experience ${direction}.`, 'info');
   };
 
   const handleRewriteBullet = async (bulletId: string) => {
@@ -767,23 +762,14 @@ export function StudioView({
     addToast(`Added "${term}" to your Experience Bank.`, 'success');
   };
 
-  const handleIHaveThisSubmit = async (params: {
-    skillName: string;
-    category: SkillCategory;
-    aliases: string[];
-    attachExperienceId?: string;
-    achievementId?: string;
-    newAchievement?: { action: string; result: string; metric?: string };
-  }) => {
+  const handleIHaveThisSubmit = async (params: IHaveThisPayload) => {
     const res = await useCases.manageBank.addSkillAndOptionalAchievement({
       ...params,
       requirementTerm: iHaveThisTerm ?? undefined,
       applicationId: app.id,
     });
     setBank(res.bank);
-    if (res.application) {
-      setApp(res.application);
-    }
+    if (res.application) setApp(res.application);
     await reloadWorkspace();
     addToast(
       `Added "${params.skillName}" to your Experience Bank and rescored.`,
@@ -821,7 +807,10 @@ export function StudioView({
     }
   };
 
-  const handleOverrideFact = async (key: JobFactKey, nextValue: unknown) => {
+  const handleOverrideFact = async (
+    key: 'location' | 'workPermits' | 'languages' | 'salary' | 'employmentType',
+    nextValue: unknown,
+  ) => {
     const res = await useCases.extractJobFacts.overrideFact(
       app.id,
       key,
@@ -834,7 +823,7 @@ export function StudioView({
   };
 
   const handleIncludeBankAchievement = async (ach: Achievement) => {
-    const newBullet: TailoredBullet = {
+    const newBullet = {
       id: `bullet-${ach.id}`,
       experienceId: ach.experienceId,
       text: formatAchievementInVoice(ach, app.voice, 0),
@@ -842,7 +831,7 @@ export function StudioView({
       sourceIds: [ach.id],
       locked: false,
       unverifiedClaims: [],
-      origin: 'bank',
+      origin: 'bank' as const,
     };
     const nextWorkingDraft = includeBulletInDraft(app.workingDraft, newBullet);
     await persistApp({
@@ -854,18 +843,15 @@ export function StudioView({
   const handleRemoveBullet = async (bulletId: string) => {
     const target = app.workingDraft.bullets.find((b) => b.id === bulletId);
     if (!target) return;
-
-    setHoveredBlockId((prev) => (prev === bulletId ? null : prev));
     setHighlightedSourceId((prev) =>
       prev && target.sourceIds.includes(prev) ? null : prev,
     );
-
+    setHoveredBlockId((prev) => (prev === bulletId ? null : prev));
     const nextWorkingDraft = removeBulletFromDraft(app.workingDraft, bulletId);
     await persistApp({
       ...app,
       workingDraft: nextWorkingDraft,
     });
-
     addToast('Removed bullet from resume.', {
       variant: 'info',
       actionLabel: 'Undo',
@@ -941,10 +927,7 @@ export function StudioView({
 
   const handleChangeTextAlign = async (nextAlign: TextAlign) => {
     if (activeDoc === 'coverLetter') {
-      const nextCl: CoverLetterDraft = {
-        ...clDraft,
-        textAlign: nextAlign,
-      };
+      const nextCl = { ...clDraft, textAlign: nextAlign };
       await persistApp({
         ...app,
         coverLetterDraft: nextCl,
@@ -982,14 +965,11 @@ export function StudioView({
       kind === activeDoc && customExportName.trim()
         ? sanitizeExportFilenameInput(customExportName, ext)
         : defaultForKind;
-
-    const targetDoc =
-      kind === 'coverLetter' ? coverLetterDoc : resumeDoc;
+    const targetDoc = kind === 'coverLetter' ? coverLetterDoc : resumeDoc;
     const isCurrentPreviewDoc =
       kind === activeDoc &&
       previewArtifact &&
       previewArtifact.contentHash === targetDoc.contentHash;
-
     const res = await useCases.exportDocument.execute({
       applicationId: app.id,
       exporterId,
@@ -1058,8 +1038,7 @@ export function StudioView({
       connectionStatus.state === 'busy' ||
       connectionStatus.state === 'warming',
   );
-
-  const llmActiveState: 'thinking' | 'writing' | 'done' =
+  const llmActiveState =
     activityState.visible &&
     (activityState.visualState === 'thinking' ||
       activityState.visualState === 'writing' ||
@@ -1068,7 +1047,6 @@ export function StudioView({
       : isAnalyzingJob || connectionStatus.state === 'warming'
         ? 'thinking'
         : 'writing';
-
   const llmActiveLabel =
     activityState.visible && activityState.label
       ? activityState.label
@@ -1081,7 +1059,6 @@ export function StudioView({
             : connectionStatus.state === 'warming'
               ? 'Cevin is warming up'
               : 'Cevin is writing';
-
   const batchRewritingLabel =
     activityState.kind === 'rewriting' && activityState.label
       ? activityState.label
@@ -1089,9 +1066,7 @@ export function StudioView({
 
   return (
     <div className="space-y-4">
-      {/* Slim 2-Row Studio Header */}
       <header className="space-y-2 pb-1">
-        {/* Row 1 (36px): Back chevron + breadcrumb on left; autosave & Three ScoreChips on right */}
         <div className="flex flex-wrap items-center justify-between gap-3 min-h-[36px]">
           <div className="flex items-center gap-2 min-w-0">
             <button
@@ -1127,7 +1102,7 @@ export function StudioView({
                   <Input
                     value={app.company}
                     onChange={(e) => {
-                      const updated = {
+                      const updated: Application = {
                         ...app,
                         company: e.target.value,
                         parsedJob: app.parsedJob
@@ -1147,7 +1122,7 @@ export function StudioView({
                   <Input
                     value={app.roleTitle}
                     onChange={(e) => {
-                      const updated = {
+                      const updated: Application = {
                         ...app,
                         roleTitle: e.target.value,
                         parsedJob: app.parsedJob
@@ -1241,22 +1216,21 @@ export function StudioView({
           </div>
         </div>
 
-        {/* Row 2 (40px): DocumentSwitch + Undo/Redo/Reset on left; circular Stepper on right */}
         <div className="flex flex-wrap items-center justify-between gap-3 min-h-[40px]">
           <div className="flex flex-wrap items-center gap-2">
             <DocumentSwitch
               value={activeDoc}
               onChange={(nextDoc) => {
-                const targetStep: StudioStep =
+                onNavigateStudio(
+                  nextDoc,
                   activeStep === 'build' && nextDoc === 'coverLetter'
                     ? 'write'
                     : activeStep === 'write' && nextDoc === 'resume'
                       ? 'build'
-                      : activeStep;
-                onNavigateStudio(nextDoc, targetStep);
+                      : activeStep,
+                );
               }}
             />
-
             <div className="flex items-center gap-1 pl-1 border-l border-hairline">
               <IconButton
                 label="Undo last action"
@@ -1281,7 +1255,7 @@ export function StudioView({
                     size="sm"
                     data-testid="studio-overflow-menu-btn"
                   >
-                    <MoreHorizontal className="w-4 h-4" />
+                    <Ellipsis className="w-4 h-4" />
                   </IconButton>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-52 p-1">
@@ -1311,7 +1285,6 @@ export function StudioView({
         </div>
       </header>
 
-      {/* Subtle editorial working progress bar */}
       {isLlmActive && (
         <div
           role="progressbar"
@@ -1323,16 +1296,12 @@ export function StudioView({
         </div>
       )}
 
-      {/* Split Workspace: 12-col grid (Left 5 cols Work Panel, Right 7 cols DeskPreview) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Work Panel */}
         <div className="lg:col-span-5">
           <Panel className="overflow-hidden">
-            {/* ==================== STEP 1: JOB ==================== */}
             {activeStep === 'job' && (
               <div>
                 {!app.parsedJob ? (
-                  /* Pre-extraction Paste Hero */
                   <PanelSection className="space-y-5">
                     <div className="flex items-start justify-between gap-4">
                       <div>
@@ -1340,7 +1309,9 @@ export function StudioView({
                           Paste the job posting
                         </h2>
                         <p className="text-xs text-ink-muted mt-1">
-                          Cevin extracts must-have requirements and practical job facts locally and matches them against your Experience Bank.
+                          Cevin extracts must-have requirements and practical
+                          job facts locally and matches them against your
+                          Experience Bank.
                         </p>
                       </div>
                       <Button
@@ -1366,7 +1337,9 @@ export function StudioView({
                           className="w-20 h-16 shrink-0"
                         />
                         <p className="text-xs text-ink-muted leading-relaxed">
-                          Paste the full job description below. Every requirement will be checked against your verified Experience Bank items.
+                          Paste the full job description below. Every
+                          requirement will be checked against your verified
+                          Experience Bank items.
                         </p>
                       </div>
                     )}
@@ -1388,6 +1361,7 @@ export function StudioView({
                           placeholder="e.g. Staff Infrastructure & Platform Engineer"
                         />
                       </div>
+
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label
@@ -1401,7 +1375,7 @@ export function StudioView({
                             value={app.company}
                             onChange={(e) => {
                               const val = e.target.value;
-                              const updated = {
+                              const updated: Application = {
                                 ...app,
                                 company: val,
                                 parsedJob: app.parsedJob
@@ -1444,7 +1418,6 @@ export function StudioView({
                     </div>
                   </PanelSection>
                 ) : (
-                  /* Post-extraction Structured Job View */
                   <>
                     <PanelSection className="space-y-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1465,7 +1438,7 @@ export function StudioView({
                             value={app.roleTitle}
                             onChange={(e) => {
                               const val = e.target.value;
-                              const updated = {
+                              const updated: Application = {
                                 ...app,
                                 roleTitle: val,
                                 parsedJob: app.parsedJob
@@ -1490,7 +1463,7 @@ export function StudioView({
                               value={app.company}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                const updated = {
+                                const updated: Application = {
                                   ...app,
                                   company: val,
                                   parsedJob: app.parsedJob
@@ -1526,7 +1499,6 @@ export function StudioView({
                         </div>
                       </div>
 
-                      {/* Job Facts Strip (5 FactTiles with EvidencePopover, Show in posting, Edit override, Copy question) */}
                       {jobFactsAndFit && (
                         <div className="pt-2">
                           <JobFactsStrip
@@ -1552,7 +1524,6 @@ export function StudioView({
                       )}
                     </PanelSection>
 
-                    {/* Coverage Summary + RequirementGroup (Needs attention first, Covered collapsed by default) */}
                     <PanelSection className="space-y-4">
                       {groupedCoverage && (
                         <>
@@ -1562,12 +1533,11 @@ export function StudioView({
                             onFilterChange={setCoverageFilter}
                             onUndoDismiss={() => void handleRestoreDismissed()}
                           />
-
                           <RequirementGroup
                             summary={groupedCoverage}
                             bank={bank}
                             activeFilter={coverageFilter}
-                            highlightedTerm={highlightedTerm}
+                            highlightedTerm={highlightedTerm ?? undefined}
                             onSelectCoveredTerm={setHighlightedTerm}
                             onAddToBank={(term) =>
                               void handleAddSkillFromGap(term)
@@ -1580,7 +1550,6 @@ export function StudioView({
                         </>
                       )}
 
-                      {/* Add custom requirement */}
                       <div className="flex items-center gap-2 pt-2 border-t border-hairline">
                         <Input
                           value={newReqText}
@@ -1629,7 +1598,6 @@ export function StudioView({
                       </div>
                     </PanelSection>
 
-                    {/* Collapsible Raw Job Posting (with highlighted quote support) */}
                     <PanelSection>
                       <Disclosure
                         title="Raw job posting"
@@ -1657,7 +1625,9 @@ export function StudioView({
                               </span>
                               <button
                                 type="button"
-                                onClick={() => setHighlightedPostingQuote(null)}
+                                onClick={() =>
+                                  setHighlightedPostingQuote(null)
+                                }
                                 className="text-ink-muted hover:text-ink underline cursor-pointer"
                               >
                                 Clear
@@ -1668,7 +1638,10 @@ export function StudioView({
                             rows={7}
                             value={app.jobDescription}
                             onChange={(e) =>
-                              setApp({ ...app, jobDescription: e.target.value })
+                              setApp({
+                                ...app,
+                                jobDescription: e.target.value,
+                              })
                             }
                           />
                           <div className="flex justify-end">
@@ -1748,10 +1721,8 @@ export function StudioView({
               </div>
             )}
 
-            {/* ==================== STEP 2: BUILD (RESUME) ==================== */}
             {activeStep === 'build' && (
               <div>
-                {/* Sticky Compact VoiceKnob Header (~72px single row, expands on click) */}
                 <PanelSection className="sticky top-0 z-20 py-2.5 bg-surface/95 backdrop-blur-xs">
                   <VoiceControl
                     value={app.voice}
@@ -1768,12 +1739,11 @@ export function StudioView({
                   />
                 </PanelSection>
 
-                {/* Inline Tinted Warning Banner for Gaps */}
                 {gapCount > 0 && (
                   <PanelSection className="py-2.5">
                     <Banner
                       tone="warning"
-                      icon={<AlertTriangle className="w-4 h-4" />}
+                      icon={<TriangleAlert className="w-4 h-4" />}
                       title={`${formatCount(gapCount, 'job requirement')} not in your Bank`}
                       actions={
                         <Popover>
@@ -1782,15 +1752,13 @@ export function StudioView({
                               Review gaps
                             </Button>
                           </PopoverTrigger>
-                          <PopoverContent
-                            align="end"
-                            className="w-80 space-y-2.5"
-                          >
+                          <PopoverContent align="end" className="w-80 space-y-2.5">
                             <div className="text-xs font-semibold text-ink">
                               Unmatched requirements (never fabricated)
                             </div>
                             <p className="text-xs text-ink-muted leading-relaxed">
-                              Click any skill you genuinely have to add it to your Experience Bank and current resume.
+                              Click any skill you genuinely have to add it to
+                              your Experience Bank and current resume.
                             </p>
                             <div className="flex flex-wrap gap-1.5 pt-1">
                               {app.latestScores.gapKeywords.map((gap) => (
@@ -1808,12 +1776,12 @@ export function StudioView({
                         </Popover>
                       }
                     >
-                      Cevin never invents skills. Review and add any you truly have.
+                      Cevin never invents skills. Review and add any you truly
+                      have.
                     </Banner>
                   </PanelSection>
                 )}
 
-                {/* Compact Headline & Summary Section so bullets are visible in first viewport at 1440x900 */}
                 <PanelSection className="py-3 space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-ink">
@@ -1865,12 +1833,11 @@ export function StudioView({
                         {app.workingDraft.summaryLocked ? (
                           <Lock className="w-3.5 h-3.5 text-accent" />
                         ) : (
-                          <Unlock className="w-3.5 h-3.5" />
+                          <LockOpen className="w-3.5 h-3.5" />
                         )}
                       </IconButton>
                     </div>
                   </div>
-
                   <div>
                     <label
                       htmlFor="studio-target-headline"
@@ -1892,7 +1859,6 @@ export function StudioView({
                       }
                     />
                   </div>
-
                   <div>
                     <label
                       htmlFor="studio-summary-textarea"
@@ -1918,7 +1884,6 @@ export function StudioView({
                   </div>
                 </PanelSection>
 
-                {/* Experience Role Groups */}
                 <PanelSection className="space-y-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -1926,13 +1891,15 @@ export function StudioView({
                         Experience achievements
                       </h3>
                       <p className="text-xs text-ink-muted mt-0.5">
-                        Each bullet traces to your Experience Bank. Reorder experiences or hover a bullet to highlight it on the paper preview.
+                        Each bullet traces to your Experience Bank. Reorder
+                        experiences or hover a bullet to highlight it on the
+                        paper preview.
                       </p>
                     </div>
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={handleSortExperiencesChronologically}
+                      onClick={() => void handleSortExperiencesChronologically()}
                       title="Sort experiences by newest first (reverse chronological)"
                     >
                       <ArrowUpDown className="w-3.5 h-3.5" />
@@ -1953,7 +1920,6 @@ export function StudioView({
                           b.sourceIds.includes(a.id),
                         ),
                     );
-
                     if (
                       includedBullets.length === 0 &&
                       unselectedBankAchs.length === 0
@@ -1966,20 +1932,23 @@ export function StudioView({
                         <GroupHeader
                           company={exp.company}
                           title={exp.title}
-                          dateRange={formatDocumentDateRange(exp.start, exp.end)}
+                          dateRange={formatDocumentDateRange(
+                            exp.start,
+                            exp.end,
+                          )}
                           includedCount={includedBullets.length}
                           totalCount={expAchievements.length}
                           canMoveUp={expIdx > 0}
                           canMoveDown={expIdx < orderedExperiences.length - 1}
                           onMoveUp={() => void handleMoveExperience(exp.id, 'up')}
-                          onMoveDown={() => void handleMoveExperience(exp.id, 'down')}
+                          onMoveDown={() =>
+                            void handleMoveExperience(exp.id, 'down')
+                          }
                         />
-
                         <div className="space-y-2">
                           {includedBullets.map((bullet, idx) => {
                             const rankItem = ranking?.rankedAchievements.find(
-                              (r) =>
-                                bullet.sourceIds.includes(r.achievement.id),
+                              (r) => bullet.sourceIds.includes(r.achievement.id),
                             );
                             const dots: 1 | 2 | 3 =
                               !rankItem || rankItem.score >= 75
@@ -1993,7 +1962,6 @@ export function StudioView({
                             const sourceSummary = sourceAch
                               ? `${exp.company} · ${assembleBulletText(sourceAch)}`
                               : `${exp.company} · ${exp.title}`;
-
                             return (
                               <BulletRow
                                 key={bullet.id}
@@ -2001,14 +1969,10 @@ export function StudioView({
                                 originalText={bullet.originalText}
                                 locked={bullet.locked}
                                 unverifiedClaims={bullet.unverifiedClaims}
-                                keptOriginalWording={
-                                  bullet.keptOriginalWording
-                                }
+                                keptOriginalWording={bullet.keptOriginalWording}
                                 origin={bullet.origin ?? 'ai'}
                                 isRewriting={rewritingBulletId === bullet.id}
-                                justUpdated={justUpdatedIds.includes(
-                                  bullet.id,
-                                )}
+                                justUpdated={justUpdatedIds.includes(bullet.id)}
                                 relevanceDots={dots}
                                 relevanceReason={
                                   rankItem?.reason ??
@@ -2023,9 +1987,7 @@ export function StudioView({
                                       ? (bullet.sourceIds[0] ?? null)
                                       : null,
                                   );
-                                  setHoveredBlockId(
-                                    hovering ? bullet.id : null,
-                                  );
+                                  setHoveredBlockId(hovering ? bullet.id : null);
                                 }}
                                 onChangeText={(nextText) => {
                                   const grounding = validateBulletGrounding(
@@ -2118,7 +2080,6 @@ export function StudioView({
                   })}
                 </PanelSection>
 
-                {/* Included Skills */}
                 <PanelSection className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
@@ -2132,12 +2093,12 @@ export function StudioView({
                         of {bank.skills.length})
                       </h3>
                       <p className="text-xs text-ink-muted mt-0.5">
-                        Targeted for this role. Click any chip to toggle it on or off.
+                        Targeted for this role. Click any chip to toggle it on
+                        or off.
                       </p>
                     </div>
                   </div>
 
-                  {/* Selected skills group */}
                   <div className="space-y-1.5">
                     <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
                       Active on resume
@@ -2174,13 +2135,14 @@ export function StudioView({
                             title="Click to remove from resume"
                           >
                             <span>{skill.name}</span>
-                            <span className="text-[10px] text-accent/60">×</span>
+                            <span className="text-[10px] text-accent/60">
+                              ×
+                            </span>
                           </button>
                         ))}
                     </div>
                   </div>
 
-                  {/* Unselected skills from bank */}
                   {bank.skills.some(
                     (s) => !app.workingDraft.selectedSkillIds.includes(s.id),
                   ) && (
@@ -2205,11 +2167,9 @@ export function StudioView({
                                   ...app.workingDraft.selectedSkillIds,
                                   skill.id,
                                 ];
-                                const prevExcluded =
-                                  app.workingDraft.excludedSkillIds ?? [];
-                                const nextExcluded = prevExcluded.filter(
-                                  (id) => id !== skill.id,
-                                );
+                                const nextExcluded = (
+                                  app.workingDraft.excludedSkillIds ?? []
+                                ).filter((id) => id !== skill.id);
                                 void persistApp({
                                   ...app,
                                   workingDraft: {
@@ -2231,7 +2191,6 @@ export function StudioView({
                   )}
                 </PanelSection>
 
-                {/* Included Projects */}
                 {bank.projects.length > 0 && (
                   <PanelSection className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -2240,7 +2199,9 @@ export function StudioView({
                           Included projects (
                           {
                             bank.projects.filter((p) =>
-                              app.workingDraft.selectedProjectIds.includes(p.id),
+                              app.workingDraft.selectedProjectIds.includes(
+                                p.id,
+                              ),
                             ).length
                           }{' '}
                           of {bank.projects.length})
@@ -2328,7 +2289,6 @@ export function StudioView({
               </div>
             )}
 
-            {/* ==================== STEP 3: WRITE (COVER LETTER) ==================== */}
             {activeStep === 'write' && (
               <div>
                 <PanelSection className="space-y-4">
@@ -2432,7 +2392,8 @@ export function StudioView({
 
                       <div>
                         <label className="block text-xs font-medium text-ink mb-1.5">
-                          Proof points from your Bank (choose 2–3 distinct achievements)
+                          Proof points from your Bank (choose 2–3 distinct
+                          achievements)
                         </label>
                         <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                           {bank.achievements.map((ach) => {
@@ -2490,7 +2451,6 @@ export function StudioView({
                   />
                 </PanelSection>
 
-                {/* Core Paragraphs */}
                 <PanelSection className="space-y-3">
                   <h3 className="text-sm font-semibold text-ink">
                     Core letter paragraphs
@@ -2510,12 +2470,9 @@ export function StudioView({
                           const exp = bank.experiences.find(
                             (e) => e.id === ach?.experienceId,
                           );
-                          return exp
-                            ? `${exp.title} · ${exp.company}`
-                            : undefined;
+                          return exp ? `${exp.title} · ${exp.company}` : undefined;
                         })
                         .filter((x): x is string => Boolean(x));
-
                       return (
                         <LetterBlock
                           key={block.id}
@@ -2525,11 +2482,7 @@ export function StudioView({
                           onChangeText={(nextText) => {
                             const nextBlocks = clDraft.blocks.map((b) =>
                               b.id === block.id
-                                ? {
-                                    ...b,
-                                    text: nextText,
-                                    origin: 'user' as const,
-                                  }
+                                ? { ...b, text: nextText, origin: 'user' as const }
                                 : b,
                             );
                             const nextCl = { ...clDraft, blocks: nextBlocks };
@@ -2563,9 +2516,7 @@ export function StudioView({
                   <Disclosure
                     title="Greeting & closing"
                     badge={
-                      <Badge tone="neutral">
-                        {formatCount(3, 'block')}
-                      </Badge>
+                      <Badge tone="neutral">{formatCount(3, 'block')}</Badge>
                     }
                   >
                     <div className="space-y-3">
@@ -2642,10 +2593,8 @@ export function StudioView({
               </div>
             )}
 
-            {/* ==================== STEP 4: REVIEW & EXPORT ==================== */}
             {activeStep === 'review' && (
               <div>
-                {/* Three-Score Hero Band */}
                 <PanelSection>
                   <HeroScoreBand
                     documentKind={activeDoc}
@@ -2725,7 +2674,6 @@ export function StudioView({
                   />
                 </PanelSection>
 
-                {/* Recruiter Appeal Section (4 LensBars + First-Impression Takeaway Card) */}
                 {activeDoc === 'resume' && appealDetails && (
                   <PanelSection className="space-y-4">
                     <LensBars
@@ -2733,9 +2681,8 @@ export function StudioView({
                       weakestHints={appealDetails.weakestSubcheckHints}
                       onApplyLensFix={async (lens) => {
                         const suggested =
-                          appealDetails.fixes.find(
-                            (f) => f.lens === lens,
-                          ) ?? appealDetails.fixes[0];
+                          appealDetails.fixes.find((f) => f.lens === lens) ??
+                          appealDetails.fixes[0];
                         if (!suggested) return;
                         const matchingFix: PrioritizedFix =
                           fixes.find((f) => f.id === suggested.id) ?? {
@@ -2786,7 +2733,6 @@ export function StudioView({
                   </PanelSection>
                 )}
 
-                {/* Top Fixes (max 3 with 1-click Apply fix, including appeal fixes) */}
                 <PanelSection className="space-y-3">
                   <h3 className="text-sm font-semibold text-ink">Top fixes</h3>
                   {activeDoc === 'coverLetter' ? (
@@ -2796,89 +2742,89 @@ export function StudioView({
                         icon={<Check className="w-4 h-4" />}
                         title="Nothing to fix — all key checks pass"
                       >
-                        Your cover letter leads with concrete proof, cites grounded Bank achievements, and stays within target length.
+                        Your cover letter leads with concrete proof, cites
+                        grounded Bank achievements, and stays within target
+                        length.
                       </Banner>
                     ) : (
                       <div className="space-y-2">
-                        {letterAnalysis!.fixes
-                          .slice(0, 3)
-                          .map((fix: CoverLetterPrioritizedFix) => (
-                            <div
-                              key={fix.id}
-                              className="p-3 rounded-lg bg-surface-sunken border border-hairline flex items-center justify-between gap-3"
-                            >
-                              <div className="min-w-0">
-                                <div className="text-xs font-semibold text-ink">
-                                  {fix.title}
-                                </div>
-                                <p className="text-xs text-ink-muted mt-0.5">
-                                  {fix.description}
-                                </p>
+                        {letterAnalysis!.fixes.slice(0, 3).map((fix) => (
+                          <div
+                            key={fix.id}
+                            className="p-3 rounded-lg bg-surface-sunken border border-hairline flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-ink">
+                                {fix.title}
                               </div>
-                              <div className="flex items-center gap-2">
-                                {appliedFixIds.includes(fix.id) && (
-                                  <Badge tone="success" className="gap-1">
-                                    <Check className="w-3 h-3" />
-                                    Applied
-                                  </Badge>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant={
-                                    appliedFixIds.includes(fix.id)
-                                      ? 'tonal'
-                                      : 'secondary'
-                                  }
-                                  disabled={applyingFixId === fix.id}
-                                  onClick={async () => {
-                                    recordHistorySnapshot(
-                                      app,
-                                      bank.experiences,
-                                      appliedFixIds,
-                                    );
-                                    setApplyingFixId(fix.id);
-                                    void refreshSidebarActivity();
-                                    try {
-                                      const r =
-                                        await useCases.scoreCoverLetter.applyOneClickFix(
-                                          app.id,
-                                          fix,
-                                        );
-                                      if (r.ok) {
-                                        setApp(r.value.application);
-                                        setLetterAnalysis(r.value.analysis);
-                                        setAppliedFixIds((prev) => [
-                                          ...new Set([...prev, fix.id]),
-                                        ]);
-                                        addToast(
-                                          `Applied fix: ${fix.title}`,
-                                          'success',
-                                        );
-                                        await reloadWorkspace();
-                                      }
-                                    } finally {
-                                      setApplyingFixId(null);
-                                      void refreshSidebarActivity();
-                                    }
-                                  }}
-                                >
-                                  {applyingFixId === fix.id ? (
-                                    <>
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
-                                      <span>Applying…</span>
-                                    </>
-                                  ) : appliedFixIds.includes(fix.id) ? (
-                                    <>
-                                      <RefreshCw className="w-3 h-3" />
-                                      <span>Apply again</span>
-                                    </>
-                                  ) : (
-                                    <span>Apply fix</span>
-                                  )}
-                                </Button>
-                              </div>
+                              <p className="text-xs text-ink-muted mt-0.5">
+                                {fix.description}
+                              </p>
                             </div>
-                          ))}
+                            <div className="flex items-center gap-2">
+                              {appliedFixIds.includes(fix.id) && (
+                                <Badge tone="success" className="gap-1">
+                                  <Check className="w-3 h-3" />
+                                  Applied
+                                </Badge>
+                              )}
+                              <Button
+                                size="sm"
+                                variant={
+                                  appliedFixIds.includes(fix.id)
+                                    ? 'tonal'
+                                    : 'secondary'
+                                }
+                                disabled={applyingFixId === fix.id}
+                                onClick={async () => {
+                                  recordHistorySnapshot(
+                                    app,
+                                    bank.experiences,
+                                    appliedFixIds,
+                                  );
+                                  setApplyingFixId(fix.id);
+                                  void refreshSidebarActivity();
+                                  try {
+                                    const r =
+                                      await useCases.scoreCoverLetter.applyOneClickFix(
+                                        app.id,
+                                        fix,
+                                      );
+                                    if (r.ok) {
+                                      setApp(r.value.application);
+                                      setLetterAnalysis(r.value.analysis);
+                                      setAppliedFixIds((prev) => [
+                                        ...new Set([...prev, fix.id]),
+                                      ]);
+                                      addToast(
+                                        `Applied fix: ${fix.title}`,
+                                        'success',
+                                      );
+                                      await reloadWorkspace();
+                                    }
+                                  } finally {
+                                    setApplyingFixId(null);
+                                    void refreshSidebarActivity();
+                                  }
+                                }}
+                              >
+                                {applyingFixId === fix.id ? (
+                                  <>
+                                    <LoaderCircle className="w-3.5 h-3.5 animate-spin text-accent" />
+                                    <span>Applying…</span>
+                                  </>
+                                ) : appliedFixIds.includes(fix.id) ? (
+                                  <>
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>Apply again</span>
+                                  </>
+                                ) : (
+                                  <span>Apply fix</span>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )
                   ) : fixes.length === 0 ? (
@@ -2887,7 +2833,8 @@ export function StudioView({
                       icon={<Check className="w-4 h-4" />}
                       title="Nothing to fix — all key checks pass"
                     >
-                      Every bullet traces to your Experience Bank and meets single-column ATS and 10-second skim thresholds.
+                      Every bullet traces to your Experience Bank and meets
+                      single-column ATS and 10-second skim thresholds.
                     </Banner>
                   ) : (
                     <div className="space-y-2">
@@ -2958,7 +2905,7 @@ export function StudioView({
                             >
                               {applyingFixId === fix.id ? (
                                 <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                                  <LoaderCircle className="w-3.5 h-3.5 animate-spin text-accent" />
                                   <span>Applying…</span>
                                 </>
                               ) : appliedFixIds.includes(fix.id) ? (
@@ -2977,7 +2924,6 @@ export function StudioView({
                   )}
                 </PanelSection>
 
-                {/* Redesigned Coverage Summary + RequirementGroup on Review */}
                 {groupedCoverage && (
                   <PanelSection className="space-y-4">
                     <CoverageSummary
@@ -2990,7 +2936,7 @@ export function StudioView({
                       summary={groupedCoverage}
                       bank={bank}
                       activeFilter={coverageFilter}
-                      highlightedTerm={highlightedTerm}
+                      highlightedTerm={highlightedTerm ?? undefined}
                       onSelectCoveredTerm={setHighlightedTerm}
                       onAddToBank={(term) => void handleAddSkillFromGap(term)}
                       onIHaveThis={(term) => setIHaveThisTerm(term)}
@@ -3001,7 +2947,6 @@ export function StudioView({
                   </PanelSection>
                 )}
 
-                {/* Unified Review Export Card */}
                 <PanelSection className="space-y-4">
                   <div className="p-4 rounded-xl bg-surface-sunken/70 border border-hairline space-y-4">
                     <div className="flex flex-wrap items-end justify-between gap-3">
@@ -3019,7 +2964,6 @@ export function StudioView({
                           className="h-9 text-xs font-mono"
                         />
                       </div>
-
                       <SplitButton
                         primaryLabel={
                           activeDoc === 'coverLetter'
@@ -3027,17 +2971,14 @@ export function StudioView({
                             : 'Export Resume PDF'
                         }
                         primaryIcon={<Download className="w-4 h-4" />}
-                        onPrimaryClick={() =>
-                          void handleExport('pdf', activeDoc)
-                        }
+                        onPrimaryClick={() => void handleExport('pdf', activeDoc)}
                         items={[
                           {
                             id: 'docx',
                             label: 'Word document (.docx)',
                             tooltip:
                               'Editable Word file. Layout can differ slightly from the PDF.',
-                            onSelect: () =>
-                              void handleExport('docx', activeDoc),
+                            onSelect: () => void handleExport('docx', activeDoc),
                           },
                           {
                             id: 'md',
@@ -3048,14 +2989,12 @@ export function StudioView({
                           {
                             id: 'txt',
                             label: 'Plain text (.txt)',
-                            onSelect: () =>
-                              void handleExport('text', activeDoc),
+                            onSelect: () => void handleExport('text', activeDoc),
                           },
                         ]}
                       />
                     </div>
 
-                    {/* PDF check status row with Re-check */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-hairline text-xs">
                       <div className="text-ink-muted">
                         <span className="font-semibold text-ink">
@@ -3102,7 +3041,6 @@ export function StudioView({
                       </div>
                     )}
 
-                    {/* Save snapshot secondary text action */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-hairline">
                       <Input
                         value={versionLabelInput}
@@ -3140,7 +3078,6 @@ export function StudioView({
                         : 'Back: Build'}
                     </span>
                   </Button>
-
                   <Tooltip content="This preview is the exported file.">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-sunken border border-hairline text-xs text-ink-muted tabular-nums cursor-help">
                       <span>
@@ -3164,14 +3101,13 @@ export function StudioView({
           </Panel>
         </div>
 
-        {/* Right Column: Sticky DeskPreview Stage (7 of 12 columns) */}
         <div className="lg:col-span-7 lg:sticky lg:top-4">
           <DeskPreview
             documentKind={activeDoc}
             resumeDoc={resumeDoc}
             coverLetterDoc={coverLetterDoc}
             templateId={app.templateId}
-            onChangeTemplate={(nextTpl: TemplateId) =>
+            onChangeTemplate={(nextTpl) =>
               void persistApp({ ...app, templateId: nextTpl })
             }
             textAlign={
@@ -3179,24 +3115,23 @@ export function StudioView({
                 ? (clDraft.textAlign ?? 'left')
                 : (app.workingDraft.textAlign ?? 'left')
             }
-            onChangeTextAlign={(nextAlign: TextAlign) =>
+            onChangeTextAlign={(nextAlign) =>
               void handleChangeTextAlign(nextAlign)
             }
             zoom={previewZoom}
             onChangeZoom={setPreviewZoom}
             pageSize={pageSize}
             estimatedPages={app.latestScores.estimatedPages}
-            highlightedSourceId={highlightedSourceId}
-            hoveredBlockId={hoveredBlockId}
+            highlightedSourceId={highlightedSourceId ?? undefined}
+            hoveredBlockId={hoveredBlockId ?? undefined}
             skimKeywordTerms={skimKeywordTerms}
-            highlightedTerm={highlightedTerm}
+            highlightedTerm={highlightedTerm ?? undefined}
             onClearHighlightedTerm={() => setHighlightedTerm(null)}
             onArtifactReady={setPreviewArtifact}
           />
         </div>
       </div>
 
-      {/* "I have this" Quick-Add Modal */}
       {iHaveThisTerm && (
         <IHaveThisModal
           open={Boolean(iHaveThisTerm)}
@@ -3205,7 +3140,7 @@ export function StudioView({
           }}
           initialTerm={iHaveThisTerm}
           bank={bank}
-          onSubmit={handleIHaveThisSubmit}
+          onSubmit={(payload) => void handleIHaveThisSubmit(payload)}
         />
       )}
 

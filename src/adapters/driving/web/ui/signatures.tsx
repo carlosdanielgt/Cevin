@@ -1,8 +1,4 @@
 import {
-  AlertTriangle,
-  AlignJustify,
-  AlignLeft,
-  AlignRight,
   ArrowDown,
   ArrowUp,
   Briefcase,
@@ -13,60 +9,34 @@ import {
   Copy,
   Database,
   Download,
+  Ellipsis,
   Eye,
   FileText,
   GitCompare,
   Link2,
   Lock,
-  Minus,
-  MoreHorizontal,
+  LockOpen,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   Settings,
   Sparkles,
+  TextAlignJustify,
+  TextAlignStart,
   Trash2,
-  Unlock,
+  TriangleAlert,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
-import { SidebarConnectionStatus } from '../../../../core/application';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { SidebarConnectionStatus, UserPreferencesPatch } from '../../../../core/application';
 import {
   APPLICATION_STATUS_ORDER,
-  AppealLensScores,
-  ApplicationStatus,
-  AttentionTokenData,
-  BankEvidenceItem,
-  BankSnapshot,
   COUNTRY_ALIASES,
-  CoverLetterBlock,
-  CoverLetterBlockType,
-  CoverLetterDocument,
-  DocumentKind,
-  DocumentVersion,
-  EvaluatedFactItem,
-  FACT_KIND_ORDER,
   FACT_KIND_REGISTRY,
-  FactImportance,
-  FactKey,
-  GroupedCoverageSummary,
-  JobFacts,
   KNOWN_LANGUAGES,
   METRO_AREAS,
-  PageSize,
-  PracticalFitEvaluation,
-  PracticalFitStatus,
-  QuickCheckVerdict,
-  ResumeDocument,
-  Skill,
-  StudioStep,
-  TemplateId,
-  TextAlign,
-  UserPreferences,
-  VoiceLevel,
   findInlineCliches,
   findMetroAreaEntry,
   formatCount,
@@ -74,21 +44,41 @@ import {
   getRecruiterQuestionTemplate,
   mapToCoverLetterDocument,
   mapToResumeDocument,
+  type AppealLensScores,
+  type ApplicationStatus,
+  type AttentionTokenData,
+  type BankEvidenceItem,
+  type BankSnapshot,
+  type CoverLetterBlock,
+  type CoverLetterDocument,
+  type CoverageFilter,
+  type EvaluatedFactItem,
+  type Experience,
+  type FactImportance,
+  type FactSource,
+  type GroupedCoverageSummary,
+  type JobFactKey,
+  type JobFacts,
+  type LanguageProficiency,
+  type PageSize,
+  type PracticalFitEvaluation,
+  type QuickCheckVerdict,
+  type RenderedPdfArtifact,
+  type RequirementPriority,
+  type ResumeDocument,
+  type SkillCategory,
+  type TemplateId,
+  type TextAlign,
+  type UserPreferences,
+  type VoiceLevel,
 } from '../../../../core/domain';
-import {
-  PageThumbnail,
-  PdfPreview,
-  PdfPreviewArtifactInfo,
-  PdfThumbnail,
-  PreviewOverlay,
-  SAMPLE_THUMBNAIL_RESUME,
-} from './pdfPreview';
+import type { CevinActivityViewState, PreviewZoom } from '../context';
+import { PageThumbnail, PdfPreview } from './pdfPreview';
 import {
   AutoGrowTextarea,
   Avatar,
   Badge,
   Button,
-  CevinLogo,
   CevinMark,
   CevinStatusIndicator,
   Checkbox,
@@ -113,18 +103,6 @@ import {
   cn,
 } from './primitives';
 
-export {
-  CevinLogo,
-  CevinMark,
-  CevinStatusIndicator,
-  PageThumbnail,
-  PdfPreview,
-  PdfThumbnail,
-  PreviewOverlay,
-  SAMPLE_THUMBNAIL_RESUME,
-};
-export type { PdfPreviewArtifactInfo };
-
 /**
  * 24px warm assistant monogram mark ("C") used on Cevin status messages,
  * the Getting Started card, and the Review verdict band.
@@ -134,7 +112,7 @@ export function CevinAvatar({
   pulsing = false,
   className,
 }: {
-  size?: 'xs' | 'sm' | 'md';
+  size?: 'xs' | 'sm';
   pulsing?: boolean;
   className?: string;
 }) {
@@ -172,6 +150,7 @@ export function Gauge({
   referenceVersionLabel?: string;
 }) {
   const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
     const raf = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(raf);
@@ -180,21 +159,20 @@ export function Gauge({
   const clamped = Math.max(0, Math.min(100, Math.round(score)));
   const radius = 52;
   const circumference = 2 * Math.PI * radius;
-  // 270-degree (3/4) arc
   const arcLength = circumference * 0.75;
   const dashOffset = arcLength - (clamped / 100) * arcLength;
-
-  const gradId = `gauge-grad-${label.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '').toLowerCase()}`;
+  const gradId = `gauge-grad-${label
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()}`;
   const isHigh = clamped >= 85;
   const isMid = clamped >= 65 && clamped < 85;
-
   const sizeClass =
     size === 'sm'
       ? 'w-24 h-24'
       : size === 'md'
         ? 'w-28 h-28'
         : 'w-[136px] h-[136px]';
-
   const numberClass =
     size === 'sm'
       ? 'text-2xl'
@@ -263,9 +241,7 @@ export function Gauge({
           <span>{label}</span>
           {tooltipText && <InfoTip text={tooltipText} />}
         </div>
-        {subtitle && (
-          <div className="text-xs text-ink-muted">{subtitle}</div>
-        )}
+        {subtitle && <div className="text-xs text-ink-muted">{subtitle}</div>}
         {delta !== undefined && Math.round(delta) !== 0 && (
           <DeltaChip delta={delta} referenceLabel={referenceVersionLabel} />
         )}
@@ -273,8 +249,6 @@ export function Gauge({
     </div>
   );
 }
-
-export const ScoreGauge = Gauge;
 
 /**
  * 36px (>= 32px) radial mini-ring for Application list rows.
@@ -338,10 +312,9 @@ export function ScoreRing({
  * Never shows "100".
  */
 export function formatQuickEstimateBand(score: number): string {
-  const capped = Math.max(25, Math.min(93, Math.round(score)));
-  const low = Math.min(90, Math.floor(capped / 5) * 5);
-  const high = Math.min(95, low + 5);
-  return `${low}–${high}`;
+  const low =
+    Math.min(90, Math.floor(Math.max(25, Math.min(93, Math.round(score))) / 5) * 5);
+  return `${low}–${Math.min(95, low + 5)}`;
 }
 
 /**
@@ -365,9 +338,10 @@ export function EstimateRing({
         : 'stroke-warning';
 
   if (size === 'md') {
-    const r = 18;
     return (
-      <Tooltip content={`Quick match estimate: ${band} (un-tailored Bank coverage, capped at 95)`}>
+      <Tooltip
+        content={`Quick match estimate: ${band} (un-tailored Bank coverage, capped at 95)`}
+      >
         <div
           aria-label={`Quick match estimate: ${band}`}
           className="inline-flex items-center gap-2.5 bg-surface border border-border rounded-lg px-3 py-1.5 shadow-xs"
@@ -377,7 +351,7 @@ export function EstimateRing({
               <circle
                 cx="22"
                 cy="22"
-                r={r}
+                r="18"
                 fill="none"
                 strokeWidth="2.75"
                 strokeDasharray="3 2.5"
@@ -389,7 +363,9 @@ export function EstimateRing({
             </span>
           </div>
           <div className="text-left">
-            <div className="text-xs text-ink-muted font-medium">Quick estimate</div>
+            <div className="text-xs text-ink-muted font-medium">
+              Quick estimate
+            </div>
             <div className="text-base font-display font-bold tabular-nums text-ink leading-tight">
               {band}
             </div>
@@ -399,9 +375,10 @@ export function EstimateRing({
     );
   }
 
-  const r = 14.5;
   return (
-    <Tooltip content={`Quick match estimate: ${band} (un-tailored Bank coverage)`}>
+    <Tooltip
+      content={`Quick match estimate: ${band} (un-tailored Bank coverage)`}
+    >
       <div
         aria-label={`Quick estimate: ${band}`}
         className="inline-flex flex-col items-center shrink-0"
@@ -411,7 +388,7 @@ export function EstimateRing({
             <circle
               cx="18"
               cy="18"
-              r={r}
+              r="14.5"
               fill="none"
               strokeWidth="2.5"
               strokeDasharray="3 2.5"
@@ -475,20 +452,6 @@ export function ScoreChip({
   const c = 2 * Math.PI * r;
   const offset = c - (rounded / 100) * c;
 
-  const strokeClass =
-    rounded >= 80
-      ? 'stroke-success'
-      : rounded >= 65
-        ? 'stroke-accent'
-        : 'stroke-warning';
-
-  const toneClass =
-    rounded >= 80
-      ? 'text-success-700'
-      : rounded >= 65
-        ? 'text-accent-700'
-        : 'text-warning-700';
-
   const inner = (
     <>
       <svg
@@ -515,11 +478,26 @@ export function ScoreChip({
           strokeLinecap="round"
           strokeDasharray={c}
           strokeDashoffset={offset}
-          className={strokeClass}
+          className={
+            rounded >= 80
+              ? 'stroke-success'
+              : rounded >= 65
+                ? 'stroke-accent'
+                : 'stroke-warning'
+          }
         />
       </svg>
       <span className="text-ink-muted font-medium">{label}</span>
-      <span className={cn('font-bold tabular-nums', toneClass)}>
+      <span
+        className={cn(
+          'font-bold tabular-nums',
+          rounded >= 80
+            ? 'text-success-700'
+            : rounded >= 65
+              ? 'text-accent-700'
+              : 'text-warning-700',
+        )}
+      >
         {effectiveDisplayValue ?? `${rounded}${suffix || ''}`}
       </span>
     </>
@@ -573,7 +551,7 @@ export function HeroScoreBand({
   recruiterAppeal?: number;
   letterAppeal?: number;
   atsReadiness: number;
-  documentKind?: DocumentKind;
+  documentKind?: 'resume' | 'coverLetter';
   checksPassedCount?: number;
   checksTotalCount?: number;
   jobMatchDelta?: number;
@@ -592,7 +570,6 @@ export function HeroScoreBand({
     checksTotalCount && checksTotalCount > 0
       ? Math.round(((checksPassedCount ?? 0) / checksTotalCount) * 100)
       : 100;
-
   const thirdScoreNumeric =
     documentKind === 'coverLetter' ? checksPercent : atsReadiness;
   const thirdScoreLabel =
@@ -601,21 +578,15 @@ export function HeroScoreBand({
     documentKind === 'coverLetter'
       ? 'Letter appeal (estimate)'
       : 'Recruiter appeal (estimate)';
-
-  const combinedAvg = Math.round(
-    (jobMatch + appeal + thirdScoreNumeric) / 3,
-  );
-
-  const triples = [
+  const combinedAvg = Math.round((jobMatch + appeal + thirdScoreNumeric) / 3);
+  const weakest = [
     { name: 'Job match', val: jobMatch },
     {
-      name:
-        documentKind === 'coverLetter' ? 'Letter appeal' : 'Recruiter appeal',
+      name: documentKind === 'coverLetter' ? 'Letter appeal' : 'Recruiter appeal',
       val: appeal,
     },
     { name: thirdScoreLabel, val: thirdScoreNumeric },
-  ];
-  const weakest = [...triples].sort((a, b) => a.val - b.val)[0];
+  ].sort((a, b) => a.val - b.val)[0];
 
   const defaultVerdict =
     combinedAvg >= 85
@@ -623,7 +594,6 @@ export function HeroScoreBand({
       : combinedAvg >= 72
         ? 'Solid draft — a few targeted refinements available'
         : 'Needs a quick pass before exporting';
-
   const defaultSummary =
     documentKind === 'coverLetter'
       ? `${weakest.name} (${weakest.val}/100) is currently the lowest of the three; your letter passes ${checksPassedCount ?? 6}/${checksTotalCount ?? 6} quality checks with grounded Bank proof.`
@@ -631,7 +601,6 @@ export function HeroScoreBand({
 
   return (
     <div className="bg-surface border border-border rounded-xl p-6 shadow-md space-y-5">
-      {/* Three 136px radial gauges in a row with per-gauge DeltaChip directly beneath each */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 items-start justify-items-center">
         <Gauge
           score={jobMatch}
@@ -657,7 +626,7 @@ export function HeroScoreBand({
             displayValue={`${checksPassedCount ?? 6}/${checksTotalCount ?? 6}`}
             label="Checks"
             subtitle="Quality checks"
-            tooltipText="Deterministic checks for length, proof grounding, opening hook, and company specificity."
+            tooltipText="Checks for length, proof grounding, opening hook, and company specificity."
             size="lg"
           />
         ) : (
@@ -673,7 +642,6 @@ export function HeroScoreBand({
         )}
       </div>
 
-      {/* Verdict spans the full width below the three gauges */}
       <div className="border-t border-hairline pt-4 flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1.5 flex-1 min-w-[240px]">
           <div className="inline-flex items-center gap-2">
@@ -691,11 +659,7 @@ export function HeroScoreBand({
         </div>
         {lensFix && (
           <div className="shrink-0 pt-1">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={lensFix.onApply}
-            >
+            <Button variant="secondary" size="sm" onClick={lensFix.onApply}>
               <Sparkles className="w-3.5 h-3.5 text-accent" />
               <span>{lensFix.title}</span>
             </Button>
@@ -705,8 +669,6 @@ export function HeroScoreBand({
     </div>
   );
 }
-
-export const ThreeScoreHeroBand = HeroScoreBand;
 
 /**
  * LensBars: 4 rows (Skim, Proof, Clarity, Voice) for Recruiter appeal breakdown,
@@ -736,6 +698,7 @@ export function LensBars({
       clarity: 'Crisp bullet length and balanced density',
       voice: 'Specific phrasing with varied verbs',
     };
+
   const rows: Array<{
     id: 'skim' | 'proof' | 'clarity' | 'voice';
     label: string;
@@ -866,14 +829,15 @@ export function TakeawayCard({
   takeaway,
   roleAligned,
   targetRoleMatches,
+  layoutEstimated,
 }: {
   takeawayText?: string;
   takeaway?: string;
   roleAligned?: boolean;
   targetRoleMatches?: boolean;
-  layoutMode?: 'measured' | 'estimated';
   layoutEstimated?: boolean;
 }) {
+  void layoutEstimated;
   const effectiveText = takeawayText ?? takeaway ?? '';
   const effectiveRoleAligned = roleAligned ?? targetRoleMatches ?? true;
 
@@ -895,7 +859,9 @@ export function TakeawayCard({
                 : 'bg-warning-50 text-warning-700 border-warning/35',
             )}
           >
-            <span aria-hidden="true">{effectiveRoleAligned ? '✓' : '!'}</span>
+            <span aria-hidden="true">
+              {effectiveRoleAligned ? '✓' : '!'}
+            </span>
             <span>
               {effectiveRoleAligned
                 ? 'Matches target role'
@@ -904,12 +870,12 @@ export function TakeawayCard({
           </span>
         </div>
       </div>
-
       <p className="text-sm font-medium text-ink font-sans leading-relaxed">
         {effectiveText}
       </p>
       <p className="text-xs text-ink-muted">
-        Extracted from the top third of Page 1 (role, company, dates, visible skills, and strongest metric).
+        Extracted from the top third of Page 1 (role, company, dates, visible
+        skills, and strongest metric).
       </p>
     </div>
   );
@@ -944,7 +910,7 @@ export function SkimLegend({
   highlightedTerm,
   onClearHighlight,
 }: {
-  highlightedTerm?: string | null;
+  highlightedTerm?: string;
   onClearHighlight?: () => void;
 }) {
   return (
@@ -953,7 +919,8 @@ export function SkimLegend({
         <Eye className="w-3.5 h-3.5 text-accent shrink-0" />
         <span className="font-semibold text-ink">Skim view active:</span>
         <span>
-          Name, titles, dates, lead words, metrics, and must-have skills stay sharp.
+          Name, titles, dates, lead words, metrics, and must-have skills stay
+          sharp.
         </span>
       </div>
       <div className="flex items-center gap-3">
@@ -1005,7 +972,10 @@ export function StatusBadge({ status }: { status: ApplicationStatus }) {
     >
       <span
         aria-hidden="true"
-        className={cn('w-1.5 h-1.5 rounded-full shrink-0', STATUS_DOT_TONES[status])}
+        className={cn(
+          'w-1.5 h-1.5 rounded-full shrink-0',
+          STATUS_DOT_TONES[status],
+        )}
       />
       <span>{status}</span>
     </span>
@@ -1024,10 +994,10 @@ export function StatusPill({
   onChange,
 }: {
   status: ApplicationStatus;
-  onChange: (next: ApplicationStatus) => void;
+  onChange: (nextStatus: ApplicationStatus) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const statuses: ApplicationStatus[] = [...APPLICATION_STATUS_ORDER];
+  const statuses = [...APPLICATION_STATUS_ORDER];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1091,7 +1061,7 @@ export function PageHeader({
 }: {
   title: string;
   subtitle?: string;
-  actions?: React.ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-border">
@@ -1134,43 +1104,35 @@ export function SidebarNav({
   onNewApplication: () => void;
   onOpenCommandPalette: () => void;
   connectionStatus: SidebarConnectionStatus;
-  activityState?: {
-    visible: boolean;
-    visualState: 'idle' | 'thinking' | 'writing' | 'done' | 'error';
-    label: string;
-    announcement: string;
-    progress?: number;
-    handleThinkingLoopIteration?: () => void;
-  };
+  activityState?: CevinActivityViewState;
 }) {
   const navItems = [
     {
-      id: 'applications' as const,
+      id: 'applications',
       label: 'Applications',
       path: '/applications',
       icon: Briefcase,
     },
     {
-      id: 'bank' as const,
+      id: 'bank',
       label: 'Experience Bank',
       path: '/bank',
       icon: Database,
     },
     {
-      id: 'settings' as const,
+      id: 'settings',
       label: 'Settings',
       path: '/settings',
       icon: Settings,
     },
-  ];
+  ] as const;
 
   const hasLiveActivity = Boolean(activityState?.visible);
   const isWarmingOrBusy =
     hasLiveActivity ||
     connectionStatus.state === 'busy' ||
     connectionStatus.state === 'warming';
-
-  const effectiveMarkState: 'idle' | 'thinking' | 'writing' | 'done' | 'error' =
+  const effectiveMarkState =
     hasLiveActivity && activityState
       ? activityState.visualState
       : connectionStatus.state === 'warming'
@@ -1180,7 +1142,6 @@ export function SidebarNav({
           : connectionStatus.state === 'offline'
             ? 'error'
             : 'idle';
-
   const statusDotClass =
     connectionStatus.state === 'connected'
       ? 'bg-emerald-400'
@@ -1189,7 +1150,6 @@ export function SidebarNav({
         : connectionStatus.state === 'demo'
           ? 'bg-sky-400'
           : 'bg-amber-400';
-
   const displayStatusLabel =
     hasLiveActivity && activityState?.label
       ? activityState.label
@@ -1214,7 +1174,6 @@ export function SidebarNav({
       )}
     >
       <div className="space-y-5">
-        {/* Brand mark & collapse button */}
         <div
           className={cn(
             'flex items-center',
@@ -1231,11 +1190,9 @@ export function SidebarNav({
             className="inline-flex items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-md cursor-pointer"
           >
             {expanded ? (
-              <Logo variant="lockup" tone="ink" fontSize={24} size={26} />
+              <Logo variant="lockup" tone="ink" fontSize={22} />
             ) : (
-              <div className="w-full flex items-center justify-center">
-                <Logo variant="mark" tone="ink" size={28} />
-              </div>
+              <Logo variant="mark" tone="ink" size={28} />
             )}
           </button>
           {expanded && (
@@ -1244,11 +1201,8 @@ export function SidebarNav({
               variant="ink"
               size="sm"
               onClick={() => {
-                if (overlayExpanded && onCloseOverlay) {
-                  onCloseOverlay();
-                } else {
-                  onToggleCollapsed();
-                }
+                if (overlayExpanded && onCloseOverlay) onCloseOverlay();
+                else onToggleCollapsed();
               }}
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1256,7 +1210,6 @@ export function SidebarNav({
           )}
         </div>
 
-        {/* + New application tonal dark button */}
         <div>
           {!expanded ? (
             <Tooltip content="New application (⌘N)">
@@ -1284,7 +1237,6 @@ export function SidebarNav({
           )}
         </div>
 
-        {/* 3 primary destinations */}
         <nav aria-label="Main sections" className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -1316,7 +1268,6 @@ export function SidebarNav({
                 {expanded && <span className="truncate">{item.label}</span>}
               </button>
             );
-
             return !expanded ? (
               <Tooltip key={item.id} content={item.label}>
                 {btn}
@@ -1328,7 +1279,6 @@ export function SidebarNav({
         </nav>
       </div>
 
-      {/* Pinned bottom footer: Quick actions (⌘K), StatusPill, and Collapse/Expand chevron */}
       <div className="mt-auto shrink-0 pt-4 border-t border-ink-800 space-y-2">
         {expanded ? (
           <button
@@ -1465,7 +1415,6 @@ export function SidebarNav({
   if (overlayExpanded) {
     return (
       <>
-        {/* Keep 72px rail placeholder in layout flow so Studio never shifts */}
         {renderAsideContent(false)}
         <div
           aria-hidden="true"
@@ -1487,8 +1436,8 @@ export function DocumentSwitch({
   value,
   onChange,
 }: {
-  value: DocumentKind;
-  onChange: (next: DocumentKind) => void;
+  value: 'resume' | 'coverLetter';
+  onChange: (next: 'resume' | 'coverLetter') => void;
 }) {
   return (
     <SegmentedControl
@@ -1514,19 +1463,20 @@ export function Stepper({
   completedSteps,
   onSelectStep,
 }: {
-  documentKind: DocumentKind;
-  activeStep: StudioStep;
-  completedSteps: StudioStep[];
-  onSelectStep: (step: StudioStep) => void;
+  documentKind: 'resume' | 'coverLetter';
+  activeStep: 'job' | 'build' | 'write' | 'review';
+  completedSteps: string[];
+  onSelectStep: (step: 'job' | 'build' | 'write' | 'review') => void;
 }) {
-  const middleStep: { id: StudioStep; num: number; label: string } =
+  const steps: Array<{
+    id: 'job' | 'build' | 'write' | 'review';
+    num: number;
+    label: string;
+  }> = [
+    { id: 'job', num: 1, label: 'Job' },
     documentKind === 'coverLetter'
       ? { id: 'write', num: 2, label: 'Write' }
-      : { id: 'build', num: 2, label: 'Build' };
-
-  const steps: Array<{ id: StudioStep; num: number; label: string }> = [
-    { id: 'job', num: 1, label: 'Job' },
-    middleStep,
+      : { id: 'build', num: 2, label: 'Build' },
     { id: 'review', num: 3, label: 'Review' },
   ];
 
@@ -1536,7 +1486,7 @@ export function Stepper({
         const isCurrent = step.id === activeStep;
         const isDone = completedSteps.includes(step.id) && !isCurrent;
         return (
-          <React.Fragment key={step.id}>
+          <Fragment key={step.id}>
             <button
               type="button"
               aria-current={isCurrent ? 'step' : undefined}
@@ -1560,11 +1510,7 @@ export function Stepper({
                       : 'bg-surface-sunken text-ink-muted border border-border',
                 )}
               >
-                {isDone ? (
-                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                ) : (
-                  step.num
-                )}
+                {isDone ? <Check className="w-3.5 h-3.5 stroke-[2.5]" /> : step.num}
               </span>
               <span>{step.label}</span>
             </button>
@@ -1577,7 +1523,7 @@ export function Stepper({
                 )}
               />
             )}
-          </React.Fragment>
+          </Fragment>
         );
       })}
     </nav>
@@ -1682,21 +1628,12 @@ export function GettingStartedCard({
             ))}
           </div>
         </div>
-
         <div className="flex flex-wrap items-center gap-2.5">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handlePrimaryAction}
-          >
+          <Button variant="primary" size="sm" onClick={handlePrimaryAction}>
             <span>{primaryActionLabel}</span>
           </Button>
           {!isDemoDataLoaded && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onTryDemoData}
-            >
+            <Button variant="secondary" size="sm" onClick={onTryDemoData}>
               <span>Load sample workspace</span>
             </Button>
           )}
@@ -1716,14 +1653,11 @@ export function GettingStartedCard({
         <div className="p-3.5 rounded-lg bg-surface-sunken border border-hairline space-y-2 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium text-ink">
-              Can&apos;t reach the Cevin model at http://localhost:8000. Start it in your project directory (inside your Python virtual environment):
+              Can't reach the Cevin model at http://localhost:8000. Start it in
+              your project directory (inside your Python virtual environment):
             </span>
             {onUseDemoMode && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onUseDemoMode}
-              >
+              <Button variant="secondary" size="sm" onClick={onUseDemoMode}>
                 Use demo mode
               </Button>
             )}
@@ -1735,7 +1669,7 @@ export function GettingStartedCard({
   );
 }
 
-export const VOICE_DETENTS: Array<{
+const VOICE_DETENTS: Array<{
   level: VoiceLevel;
   label: string;
   shortLabel: string;
@@ -1792,7 +1726,6 @@ export function VoiceKnob({
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const draggingRef = useRef(false);
-
   const currentIndex = Math.max(
     0,
     VOICE_DETENTS.findIndex((d) => d.level === value),
@@ -1807,7 +1740,6 @@ export function VoiceKnob({
     const cy = rect.top + rect.height / 2;
     const dx = clientX - cx;
     const dy = clientY - cy;
-    // Angle in degrees where 0 is straight up (12 o'clock)
     const angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
     let closestIdx = 0;
     let minDiff = Infinity;
@@ -1819,20 +1751,18 @@ export function VoiceKnob({
       }
     });
     const nextLevel = VOICE_DETENTS[closestIdx]?.level;
-    if (nextLevel && nextLevel !== value) {
-      onChange(nextLevel);
-    }
+    if (nextLevel && nextLevel !== value) onChange(nextLevel);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
       e.preventDefault();
-      const next = Math.min(VOICE_DETENTS.length - 1, currentIndex + 1);
-      onChange(VOICE_DETENTS[next].level);
+      onChange(
+        VOICE_DETENTS[Math.min(VOICE_DETENTS.length - 1, currentIndex + 1)].level,
+      );
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
       e.preventDefault();
-      const prev = Math.max(0, currentIndex - 1);
-      onChange(VOICE_DETENTS[prev].level);
+      onChange(VOICE_DETENTS[Math.max(0, currentIndex - 1)].level);
     } else if (e.key === 'Home') {
       e.preventDefault();
       onChange(VOICE_DETENTS[0].level);
@@ -1875,7 +1805,6 @@ export function VoiceKnob({
           viewBox="0 0 88 88"
           aria-hidden="true"
         >
-          {/* Outer recessed dial ring */}
           <circle
             cx="44"
             cy="44"
@@ -1883,8 +1812,6 @@ export function VoiceKnob({
             className="fill-surface-sunken stroke-border"
             strokeWidth="1.5"
           />
-
-          {/* 5 engraved detent ticks & dots around the 220-deg arc */}
           {VOICE_DETENTS.map((detent, idx) => {
             const rad = ((detent.angle - 90) * Math.PI) / 180;
             const x1 = 44 + Math.cos(rad) * 30;
@@ -1894,7 +1821,6 @@ export function VoiceKnob({
             const dotX = 44 + Math.cos(rad) * 36.5;
             const dotY = 44 + Math.sin(rad) * 36.5;
             const active = idx === currentIndex;
-            const passed = idx <= currentIndex;
             return (
               <g key={detent.level}>
                 <line
@@ -1907,7 +1833,7 @@ export function VoiceKnob({
                   className={
                     active
                       ? 'stroke-accent'
-                      : passed
+                      : idx <= currentIndex
                         ? 'stroke-ink-muted'
                         : 'stroke-border-strong'
                   }
@@ -1921,8 +1847,6 @@ export function VoiceKnob({
               </g>
             );
           })}
-
-          {/* Raised tactile rotary cap */}
           <circle
             cx="44"
             cy="44"
@@ -1937,8 +1861,6 @@ export function VoiceKnob({
             className="fill-surface-raised stroke-hairline"
             strokeWidth="1"
           />
-
-          {/* Pointer needle */}
           <g
             transform={`rotate(${currentDetent.angle} 44 44)`}
             className="transition-transform duration-180"
@@ -1954,13 +1876,10 @@ export function VoiceKnob({
             />
             <circle cx="44" cy="23" r="2.75" className="fill-accent" />
           </g>
-
-          {/* Center cap spindle */}
           <circle cx="44" cy="44" r="3.5" className="fill-ink" />
         </svg>
       </div>
 
-      {/* 5 engraved arc stop labels below the knob for direct 1-click stop selection (with full-name tooltip on abbreviated labels) */}
       <div
         role="group"
         aria-label="Voice stops"
@@ -2002,7 +1921,7 @@ export function VoiceKnob({
  * 40px Mini rotary knob SVG used in MiniKnobBar.
  * Clicking expands the full 88px rotary VoiceKnob.
  */
-function MiniRotaryKnob({
+export function MiniRotaryKnob({
   value,
   onClick,
 }: {
@@ -2016,7 +1935,9 @@ function MiniRotaryKnob({
   const currentDetent = VOICE_DETENTS[currentIndex] ?? VOICE_DETENTS[2];
 
   return (
-    <Tooltip content={`Writing voice: ${currentDetent.label}. Click to expand voice dial`}>
+    <Tooltip
+      content={`Writing voice: ${currentDetent.label}. Click to expand voice dial`}
+    >
       <button
         type="button"
         onClick={onClick}
@@ -2105,13 +2026,14 @@ export function VoiceControl({
   defaultCompact?: boolean;
 }) {
   const [expanded, setExpanded] = useState(!defaultCompact);
-  const currentIndex = Math.max(
-    0,
-    VOICE_DETENTS.findIndex((d) => d.level === value),
-  );
-  const currentDetent = VOICE_DETENTS[currentIndex] ?? VOICE_DETENTS[2];
+  const currentDetent =
+    VOICE_DETENTS[
+      Math.max(
+        0,
+        VOICE_DETENTS.findIndex((d) => d.level === value),
+      )
+    ] ?? VOICE_DETENTS[2];
   const feelLevel = getMachineMadeFeelLevel(machineMadeScore);
-
   const activeSegments =
     feelLevel === 'Low' ? 1 : feelLevel === 'Medium' ? 3 : 5;
   const segmentColor =
@@ -2126,7 +2048,6 @@ export function VoiceControl({
       : feelLevel === 'Medium'
         ? 'text-warning-700'
         : 'text-danger-700';
-
   const rewritingLabel = batchProgressLabel || 'Cevin is rewriting';
 
   if (!expanded) {
@@ -2134,7 +2055,6 @@ export function VoiceControl({
       <div className="min-h-[56px] flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 min-w-0">
           <MiniRotaryKnob value={value} onClick={() => setExpanded(true)} />
-
           <div
             role="group"
             aria-label="Writing voice"
@@ -2168,7 +2088,6 @@ export function VoiceControl({
               );
             })}
           </div>
-
           {isUpdating && (
             <CevinStatusIndicator
               state="writing"
@@ -2196,7 +2115,9 @@ export function VoiceControl({
                     key={seg}
                     className={cn(
                       'w-3 h-1.5 rounded-xs',
-                      seg <= activeSegments ? segmentColor : 'bg-border-strong',
+                      seg <= activeSegments
+                        ? segmentColor
+                        : 'bg-border-strong',
                     )}
                   />
                 ))}
@@ -2217,7 +2138,6 @@ export function VoiceControl({
     <div className="flex flex-wrap items-center justify-between gap-5">
       <div className="flex flex-wrap items-center gap-5 min-w-0">
         <VoiceKnob value={value} onChange={onChange} />
-
         <div className="min-w-0 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
@@ -2247,18 +2167,15 @@ export function VoiceControl({
               </button>
             )}
           </div>
-
           <div className="text-xl font-display font-semibold text-ink tracking-tight">
             {currentDetent.label}
           </div>
-
           <p className="text-xs text-ink-muted leading-relaxed">
             {currentDetent.shortDesc}
           </p>
         </div>
       </div>
 
-      {/* 5-segment Machine-made feel meter + optional cancel */}
       <div className="flex items-center gap-4">
         <Tooltip content="Checks for stock AI verbs, uniform sentence lengths, and em-dash overuse. Never claims to bypass AI detectors.">
           <div className="bg-surface-sunken border border-hairline rounded-lg px-3.5 py-2.5 cursor-help space-y-1.5">
@@ -2286,7 +2203,6 @@ export function VoiceControl({
             </div>
           </div>
         </Tooltip>
-
         {isUpdating && onCancelUpdate && (
           <Button variant="secondary" size="sm" onClick={onCancelUpdate}>
             Cancel
@@ -2297,7 +2213,6 @@ export function VoiceControl({
   );
 }
 
-export const VoiceDial = VoiceControl;
 export const MiniKnobBar = VoiceControl;
 
 /**
@@ -2426,11 +2341,11 @@ export function BulletRow({
     length: number,
     replacement: string,
   ) => {
-    const updated =
+    onChangeText(
       bulletText.slice(0, index) +
-      replacement +
-      bulletText.slice(index + length);
-    onChangeText(updated);
+        replacement +
+        bulletText.slice(index + length),
+    );
   };
 
   return (
@@ -2444,7 +2359,6 @@ export function BulletRow({
           : 'bg-surface border-hairline hover:border-border-strong',
       )}
     >
-      {/* Header strip: Checkbox, 3-bar relevance meter, provenance icon, status pills, and hover/focus-within actions */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Checkbox
@@ -2454,7 +2368,6 @@ export function BulletRow({
             }}
             label="Include achievement in resume"
           />
-
           <Tooltip content={relevanceReason}>
             <span
               aria-label={`Relevance: ${relevanceDots} out of 3`}
@@ -2492,10 +2405,10 @@ export function BulletRow({
               </span>
             </Tooltip>
           ) : (
-            <Tooltip content="Tailored by Cevin from your Bank">
+            <Tooltip content="Tailored from your Experience Bank">
               <span
-                aria-label="Tailored by Cevin"
-                className="text-accent inline-flex items-center gap-1 text-[11px] font-medium"
+                aria-label="Tailored from Bank"
+                className="text-accent inline-flex items-center gap-1 text-[11px]"
               >
                 <Sparkles className="w-3 h-3" />
                 <span>Tailored</span>
@@ -2519,7 +2432,6 @@ export function BulletRow({
           )}
         </div>
 
-        {/* Actions in header strip on hover / focus-within so textarea gets 100% row width */}
         <div
           className={cn(
             'flex items-center gap-1 shrink-0 transition-opacity',
@@ -2538,7 +2450,6 @@ export function BulletRow({
             <Sparkles className="w-3.5 h-3.5 text-accent" />
             <span>Rewrite</span>
           </Button>
-
           <IconButton
             variant="danger"
             size="sm"
@@ -2551,7 +2462,7 @@ export function BulletRow({
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger asChild>
               <IconButton label="More bullet actions" size="sm">
-                <MoreHorizontal className="w-4 h-4" />
+                <Ellipsis className="w-4 h-4" />
               </IconButton>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-52 p-1">
@@ -2566,13 +2477,12 @@ export function BulletRow({
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                 >
                   {locked ? (
-                    <Unlock className="w-3.5 h-3.5 text-accent" />
+                    <LockOpen className="w-3.5 h-3.5 text-accent" />
                   ) : (
                     <Lock className="w-3.5 h-3.5" />
                   )}
                   <span>{locked ? 'Unlock bullet' : 'Lock bullet'}</span>
                 </button>
-
                 <button
                   type="button"
                   role="menuitem"
@@ -2587,7 +2497,6 @@ export function BulletRow({
                     {showSources ? 'Hide Bank source' : 'Show source in Bank'}
                   </span>
                 </button>
-
                 <button
                   type="button"
                   role="menuitem"
@@ -2604,9 +2513,7 @@ export function BulletRow({
                       : 'Compare with original'}
                   </span>
                 </button>
-
                 <div className="my-1 border-t border-hairline" />
-
                 <button
                   type="button"
                   role="menuitem"
@@ -2620,7 +2527,6 @@ export function BulletRow({
                   <ArrowUp className="w-3.5 h-3.5" />
                   <span>Move bullet up</span>
                 </button>
-
                 <button
                   type="button"
                   role="menuitem"
@@ -2634,9 +2540,7 @@ export function BulletRow({
                   <ArrowDown className="w-3.5 h-3.5" />
                   <span>Move bullet down</span>
                 </button>
-
                 <div className="my-1 border-t border-hairline" />
-
                 <button
                   type="button"
                   role="menuitem"
@@ -2655,7 +2559,6 @@ export function BulletRow({
         </div>
       </div>
 
-      {/* Full-width AutoGrowTextarea so multi-line bullets are never cropped */}
       <div className="w-full">
         {isRewriting ? (
           <div className="space-y-2 py-2 px-3 rounded-md bg-surface-sunken border border-hairline">
@@ -2680,7 +2583,6 @@ export function BulletRow({
           />
         )}
 
-        {/* Inline cliché underline popover suggestions */}
         {cliches.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {cliches.map((c) => {
@@ -2743,10 +2645,9 @@ export function BulletRow({
           </div>
         )}
 
-        {/* Unverified claim alert */}
         {unverifiedClaims.length > 0 && (
           <div className="mt-1.5 flex items-center gap-1.5 text-xs text-danger-700 font-medium">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
             <span>Unverified: {unverifiedClaims.join(', ')}</span>
           </div>
         )}
@@ -2766,7 +2667,7 @@ export function BulletRow({
   );
 }
 
-const LETTER_BLOCK_LABELS: Record<CoverLetterBlockType, string> = {
+const LETTER_BLOCK_LABELS: Record<CoverLetterBlock['type'], string> = {
   greeting: 'Greeting',
   opening: 'Opening',
   body1: 'Body paragraph 1',
@@ -2824,7 +2725,6 @@ export function LetterBlock({
             </Tooltip>
           ))}
         </div>
-
         <div className="flex items-center gap-1">
           {!isCompactBlock && (
             <Button
@@ -2846,7 +2746,7 @@ export function LetterBlock({
             {block.locked ? (
               <Lock className="w-3.5 h-3.5 text-accent" />
             ) : (
-              <Unlock className="w-3.5 h-3.5" />
+              <LockOpen className="w-3.5 h-3.5" />
             )}
           </IconButton>
         </div>
@@ -2881,11 +2781,11 @@ export function LetterBlock({
               key={`${c.term}-${c.index}`}
               type="button"
               onClick={() => {
-                const next =
+                onChangeText(
                   block.text.slice(0, c.index) +
-                  c.replacement +
-                  block.text.slice(c.index + c.length);
-                onChangeText(next);
+                    c.replacement +
+                    block.text.slice(c.index + c.length),
+                );
               }}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-sm bg-warning-50 text-warning-700 border border-warning/30 cursor-pointer"
             >
@@ -2899,7 +2799,7 @@ export function LetterBlock({
 
       {block.unverifiedClaims.length > 0 && (
         <div className="flex items-center gap-1.5 text-xs text-danger-700 font-medium">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
           <span>Unverified: {block.unverifiedClaims.join(', ')}</span>
         </div>
       )}
@@ -2963,13 +2863,7 @@ export function SegmentedCoverageBar({
             />
           </pattern>
         </defs>
-        <rect
-          x="0"
-          y="0"
-          width={coveredWidth}
-          height="10"
-          className="fill-success"
-        />
+        <rect x="0" y="0" width={coveredWidth} height="10" className="fill-success" />
         <rect
           x={coveredWidth}
           y="0"
@@ -3010,9 +2904,9 @@ export function CoverageSummary({
   coveredCount?: number;
   partialCount?: number;
   gapCount?: number;
-  activeFilter?: 'all' | 'covered' | 'partial' | 'gap';
-  onSelectFilter?: (next: 'all' | 'covered' | 'partial' | 'gap') => void;
-  onFilterChange?: (next: 'all' | 'covered' | 'partial' | 'gap') => void;
+  activeFilter?: CoverageFilter;
+  onSelectFilter?: (filter: CoverageFilter) => void;
+  onFilterChange?: (filter: CoverageFilter) => void;
   onUndoDismiss?: () => void;
 }) {
   const coveredCount = summary?.coveredCount ?? coveredProp ?? 0;
@@ -3021,7 +2915,7 @@ export function CoverageSummary({
   const dismissedCount = summary?.dismissedCount ?? 0;
   const handleSelect = onSelectFilter ?? onFilterChange;
 
-  const toggleFilter = (target: 'covered' | 'partial' | 'gap') => {
+  const toggleFilter = (target: CoverageFilter) => {
     if (!handleSelect) return;
     handleSelect(activeFilter === target ? 'all' : target);
   };
@@ -3051,7 +2945,6 @@ export function CoverageSummary({
           onClick={handleSelect ? () => toggleFilter('gap') : undefined}
         />
       </div>
-
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex-1 min-w-[200px]">
           <SegmentedCoverageBar
@@ -3081,7 +2974,7 @@ export function EvidencePopover({
 }: {
   term: string;
   evidence: BankEvidenceItem[];
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const content =
     evidence.length > 0 ? (
@@ -3102,7 +2995,10 @@ export function EvidencePopover({
         </div>
       </div>
     ) : (
-      <span>Matched in your Experience Bank for “{term}”. Click to highlight on paper.</span>
+      <span>
+        Matched in your Experience Bank for “{term}”. Click to highlight on
+        paper.
+      </span>
     );
 
   return <Tooltip content={content}>{children}</Tooltip>;
@@ -3121,7 +3017,7 @@ export function GapChip({
   onTogglePriority,
 }: {
   term: string;
-  priority?: 'must-have' | 'nice-to-have';
+  priority?: RequirementPriority;
   onAddToBank?: () => void;
   onConfirmIHaveThis?: () => void;
   onDismissNotRelevant?: () => void;
@@ -3138,8 +3034,10 @@ export function GapChip({
         !
       </span>
       <span className="font-semibold">{term}</span>
-
-      {(onAddToBank || onConfirmIHaveThis || onDismissNotRelevant || onTogglePriority) && (
+      {(onAddToBank ||
+        onConfirmIHaveThis ||
+        onDismissNotRelevant ||
+        onTogglePriority) && (
         <Popover open={menuOpen} onOpenChange={setMenuOpen}>
           <PopoverTrigger asChild>
             <button
@@ -3224,7 +3122,7 @@ export function PartialChip({
 }: {
   term: string;
   relatedMatch?: string;
-  priority?: string;
+  priority?: RequirementPriority;
   onConfirmIHaveThis?: () => void;
 }) {
   return (
@@ -3294,68 +3192,6 @@ export function CoveredChip({
 }
 
 /**
- * RequirementChip backwards-compatible wrapper.
- */
-export function RequirementChip({
-  term,
-  status,
-  priority,
-  relatedMatch,
-  evidence,
-  highlighted,
-  onTogglePriority,
-  onAddToBank,
-  onConfirmIHaveThis,
-  onDismissNotRelevant,
-  onClickHighlight,
-}: {
-  term: string;
-  status: 'covered' | 'partial' | 'gap';
-  priority?: 'must-have' | 'nice-to-have';
-  relatedMatch?: string;
-  evidence?: BankEvidenceItem[];
-  highlighted?: boolean;
-  onTogglePriority?: () => void;
-  onRemove?: () => void;
-  onAddToBank?: () => void;
-  onConfirmIHaveThis?: () => void;
-  onDismissNotRelevant?: () => void;
-  onClickHighlight?: (term: string) => void;
-}) {
-  if (status === 'gap') {
-    return (
-      <GapChip
-        term={term}
-        priority={priority}
-        onAddToBank={onAddToBank}
-        onConfirmIHaveThis={onConfirmIHaveThis}
-        onDismissNotRelevant={onDismissNotRelevant}
-        onTogglePriority={onTogglePriority}
-      />
-    );
-  }
-  if (status === 'partial') {
-    return (
-      <PartialChip
-        term={term}
-        relatedMatch={relatedMatch}
-        onConfirmIHaveThis={onConfirmIHaveThis}
-      />
-    );
-  }
-  return (
-    <CoveredChip
-      term={term}
-      evidence={evidence}
-      highlighted={highlighted}
-      onClickHighlight={onClickHighlight}
-    />
-  );
-}
-
-export const KeywordChip = RequirementChip;
-
-/**
  * RequirementGroup: Orders "Needs attention" first (gaps, then partials) and
  * collapses "Covered (n)" by default with a disclosure. Nice-to-have items are grouped under each.
  */
@@ -3377,8 +3213,8 @@ export function RequirementGroup({
 }: {
   summary: GroupedCoverageSummary;
   bank?: BankSnapshot;
-  filter?: 'all' | 'covered' | 'partial' | 'gap';
-  activeFilter?: 'all' | 'covered' | 'partial' | 'gap';
+  filter?: CoverageFilter;
+  activeFilter?: CoverageFilter;
   highlightedTerm?: string | null;
   onSelectTermHighlight?: (term: string) => void;
   onSelectCoveredTerm?: (term: string | null) => void;
@@ -3386,8 +3222,8 @@ export function RequirementGroup({
   onAddToBank?: (term: string) => void;
   onOpenIHaveThis?: (term: string) => void;
   onIHaveThis?: (term: string) => void;
-  onDismissGap?: (term: string) => void;
-  onDismissRequirement?: (reqId: string) => void;
+  onDismissGap?: (reqIdOrTerm: string) => void;
+  onDismissRequirement?: (reqIdOrTerm: string) => void;
   onUndoDismissGap?: (term: string) => void;
 }) {
   const [coveredExpanded, setCoveredExpanded] = useState(false);
@@ -3413,17 +3249,15 @@ export function RequirementGroup({
   const mustHaveAttention = summary.needsAttention.mustHave.filter((item) =>
     filter === 'all' ? true : item.status === filter,
   );
-  const niceToHaveAttention = summary.needsAttention.niceToHave.filter((item) =>
-    filter === 'all' ? true : item.status === filter,
+  const niceToHaveAttention = summary.needsAttention.niceToHave.filter(
+    (item) => (filter === 'all' ? true : item.status === filter),
   );
-
   const totalCovered =
     summary.covered.mustHave.length + summary.covered.niceToHave.length;
   const isCoveredOpen = coveredExpanded || filter === 'covered';
 
   return (
     <div className="space-y-4">
-      {/* 1. Needs attention first (Gaps, then Partials) */}
       {showNeedsAttention && (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
@@ -3444,7 +3278,8 @@ export function RequirementGroup({
 
           {mustHaveAttention.length === 0 && niceToHaveAttention.length === 0 ? (
             <p className="text-xs text-ink-muted py-1">
-              No uncovered or partial requirements — all active requirements are covered.
+              No uncovered or partial requirements — all active requirements are
+              covered.
             </p>
           ) : (
             <div className="space-y-2.5">
@@ -3565,7 +3400,6 @@ export function RequirementGroup({
         </div>
       )}
 
-      {/* 2. Covered (n) collapsed by default with a disclosure */}
       {showCovered && totalCovered > 0 && (
         <div className="border border-hairline rounded-lg bg-surface-sunken/40 overflow-hidden">
           <button
@@ -3583,12 +3417,9 @@ export function RequirementGroup({
               <span>Covered ({totalCovered})</span>
             </span>
             <span className="text-ink-muted font-normal">
-              {isCoveredOpen
-                ? 'Hide covered'
-                : `Show ${totalCovered} covered`}
+              {isCoveredOpen ? 'Hide covered' : `Show ${totalCovered} covered`}
             </span>
           </button>
-
           {isCoveredOpen && (
             <div className="p-3.5 border-t border-hairline bg-surface space-y-3">
               {summary.covered.mustHave.length > 0 && (
@@ -3613,7 +3444,6 @@ export function RequirementGroup({
                   </div>
                 </div>
               )}
-
               {summary.covered.niceToHave.length > 0 && (
                 <div className="space-y-1.5">
                   <div className="text-[11px] font-semibold text-ink-muted">
@@ -3644,7 +3474,17 @@ export function RequirementGroup({
   );
 }
 
-export const CoverageWall = RequirementGroup;
+export interface IHaveThisPayload {
+  skillName: string;
+  aliases: string[];
+  category: SkillCategory;
+  attachExperienceId?: string;
+  newAchievement?: {
+    action: string;
+    result: string;
+    metric?: string;
+  };
+}
 
 /**
  * Quick-add modal for "I have this" on a GapChip or PartialChip:
@@ -3664,31 +3504,17 @@ export function IHaveThisModal({
   onOpenChange: (open: boolean) => void;
   initialSkillName?: string;
   initialTerm?: string;
-  experiences?: Array<{ id: string; company: string; title: string }>;
+  experiences?: Experience[];
   bank?: BankSnapshot;
-  onConfirm?: (params: {
-    skillName: string;
-    aliases: string[];
-    category: Skill['category'];
-    attachExperienceId?: string;
-    achievementId?: string;
-    newAchievement?: { action: string; result: string; metric?: string };
-  }) => void;
-  onSubmit?: (params: {
-    skillName: string;
-    aliases: string[];
-    category: Skill['category'];
-    attachExperienceId?: string;
-    achievementId?: string;
-    newAchievement?: { action: string; result: string; metric?: string };
-  }) => void | Promise<void>;
+  onConfirm?: (payload: IHaveThisPayload) => void;
+  onSubmit?: (payload: IHaveThisPayload) => void;
 }) {
   const effectiveInitial = initialSkillName ?? initialTerm ?? '';
   const experiences = experiencesProp ?? bank?.experiences ?? [];
   const [skillName, setSkillName] = useState(effectiveInitial);
   const [aliasesText, setAliasesText] = useState('');
-  const [category, setCategory] = useState<Skill['category']>('Tools');
-  const [attachExpId, setAttachExpId] = useState<string>('none');
+  const [category, setCategory] = useState<SkillCategory>('Tools');
+  const [attachExpId, setAttachExpId] = useState('none');
   const [achAction, setAchAction] = useState('');
   const [achResult, setAchResult] = useState('');
   const [achMetric, setAchMetric] = useState('');
@@ -3705,7 +3531,7 @@ export function IHaveThisModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!skillName.trim()) return;
-    const payload = {
+    const payload: IHaveThisPayload = {
       skillName: skillName.trim(),
       aliases: aliasesText
         .split(',')
@@ -3723,7 +3549,7 @@ export function IHaveThisModal({
           : undefined,
     };
     onConfirm?.(payload);
-    void onSubmit?.(payload);
+    onSubmit?.(payload);
     onOpenChange(false);
   };
 
@@ -3756,7 +3582,7 @@ export function IHaveThisModal({
               <Select
                 ariaLabel="Skill category"
                 value={category}
-                onValueChange={(v) => setCategory(v as Skill['category'])}
+                onValueChange={(v) => setCategory(v as SkillCategory)}
                 options={[
                   { value: 'Languages', label: 'Languages' },
                   { value: 'Frameworks', label: 'Frameworks' },
@@ -3869,8 +3695,6 @@ export function IHaveThisModal({
   );
 }
 
-export const IHaveThisDialog = IHaveThisModal;
-
 /**
  * Word-level DiffText comparing original Bank wording against tailored bullet wording.
  */
@@ -3936,26 +3760,6 @@ export function DiffText({
   );
 }
 
-export function StreamingText({
-  text,
-  isStreaming = false,
-}: {
-  text: string;
-  isStreaming?: boolean;
-}) {
-  return (
-    <span className="leading-relaxed">
-      {text}
-      {isStreaming && (
-        <span
-          aria-hidden="true"
-          className="inline-block w-1.5 h-4 ml-1 align-middle bg-accent animate-pulse"
-        />
-      )}
-    </span>
-  );
-}
-
 /**
  * Vertical 2px TimelineRail dot wrapper for Experience Bank role cards.
  */
@@ -3966,7 +3770,7 @@ export function TimelineRail({
 }: {
   isCurrent?: boolean;
   isLast?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="relative pl-7">
@@ -4011,11 +3815,11 @@ export function PreviewToolbar({
   onChangeTemplate: (next: TemplateId) => void;
   textAlign?: TextAlign;
   onChangeTextAlign?: (next: TextAlign) => void;
-  zoom: 'sm' | 'md' | 'lg';
-  onChangeZoom: (next: 'sm' | 'md' | 'lg') => void;
+  zoom: PreviewZoom;
+  onChangeZoom: (next: PreviewZoom) => void;
   currentPage?: number;
   totalPages?: number;
-  onChangePage?: (page: number) => void;
+  onChangePage?: (nextPage: number) => void;
   skimMode?: boolean;
   onToggleSkimMode?: (next: boolean) => void;
   byteSize?: number;
@@ -4026,31 +3830,20 @@ export function PreviewToolbar({
     { id: 'modern', label: 'Modern', desc: 'Clean cobalt accents' },
     { id: 'compact', label: 'Compact', desc: 'High-density 1-page fit' },
   ];
-
   const alignOptions: Array<{
     value: TextAlign;
     label: string;
-    icon: typeof AlignLeft;
+    icon: typeof TextAlignStart;
   }> = [
-    {
-      value: 'left',
-      label: 'Left',
-      icon: AlignLeft,
-    },
-    {
-      value: 'justify',
-      label: 'Justified',
-      icon: AlignJustify,
-    },
+    { value: 'left', label: 'Left', icon: TextAlignStart },
+    { value: 'justify', label: 'Justified', icon: TextAlignJustify },
   ];
-
   const zoomPercent = zoom === 'sm' ? '90%' : zoom === 'lg' ? '110%' : '100%';
   const zoomLabel = zoom === 'md' ? 'Fit' : zoomPercent;
   const kbSize = byteSize ? Math.max(1, Math.round(byteSize / 1024)) : null;
 
   return (
     <div className="sticky top-2 z-20 inline-flex flex-wrap items-center gap-2 bg-surface/95 backdrop-blur-xs border border-border rounded-full px-3 py-1.5 shadow-md">
-      {/* Template switcher with real mini PageThumbnails */}
       <Popover open={tplOpen} onOpenChange={setTplOpen}>
         <PopoverTrigger asChild>
           <button
@@ -4140,7 +3933,6 @@ export function PreviewToolbar({
 
       <span aria-hidden="true" className="h-4 w-px bg-hairline" />
 
-      {/* Zoom controls */}
       <div className="inline-flex items-center gap-1">
         <IconButton
           label="Zoom out preview"
@@ -4167,7 +3959,6 @@ export function PreviewToolbar({
 
       <span aria-hidden="true" className="h-4 w-px bg-hairline" />
 
-      {/* Page pager + WYSIWYG PDF badge */}
       <Tooltip content="This preview is the exported file.">
         <div className="inline-flex items-center gap-1.5 px-2 text-xs text-ink-muted tabular-nums cursor-help">
           {totalPages > 1 && onChangePage && (
@@ -4190,7 +3981,9 @@ export function PreviewToolbar({
               type="button"
               aria-label="Next page"
               disabled={currentPage >= totalPages}
-              onClick={() => onChangePage(Math.min(totalPages, currentPage + 1))}
+              onClick={() =>
+                onChangePage(Math.min(totalPages, currentPage + 1))
+              }
               className="hover:text-ink disabled:opacity-40 cursor-pointer"
             >
               ›
@@ -4228,34 +4021,34 @@ export function DeskPreview({
   onArtifactReady,
   footerSlot,
 }: {
-  documentKind: DocumentKind;
-  resumeDoc: ResumeDocument;
-  coverLetterDoc: CoverLetterDocument;
+  documentKind: 'resume' | 'coverLetter';
+  resumeDoc?: ResumeDocument;
+  coverLetterDoc?: CoverLetterDocument;
   templateId: TemplateId;
   onChangeTemplate: (next: TemplateId) => void;
   textAlign?: TextAlign;
   onChangeTextAlign?: (next: TextAlign) => void;
-  zoom: 'sm' | 'md' | 'lg';
-  onChangeZoom: (next: 'sm' | 'md' | 'lg') => void;
+  zoom: PreviewZoom;
+  onChangeZoom: (next: PreviewZoom) => void;
   pageSize?: PageSize;
   estimatedPages?: number;
-  highlightedSourceId?: string | null;
-  hoveredBlockId?: string | null;
+  highlightedSourceId?: string;
+  hoveredBlockId?: string;
   skimMode?: boolean;
   onToggleSkimMode?: (next: boolean) => void;
   skimKeywordTerms?: string[];
-  highlightedTerm?: string | null;
+  highlightedTerm?: string;
   onClearHighlightedTerm?: () => void;
-  onArtifactReady?: (artifact: PdfPreviewArtifactInfo) => void;
-  footerSlot?: React.ReactNode;
+  onArtifactReady?: (artifact: RenderedPdfArtifact) => void;
+  footerSlot?: ReactNode;
 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [internalSkim, setInternalSkim] = useState(false);
-  const [artifactInfo, setArtifactInfo] =
-    useState<PdfPreviewArtifactInfo | null>(null);
+  const [artifactInfo, setArtifactInfo] = useState<RenderedPdfArtifact | null>(
+    null,
+  );
   const effectiveSkim = controlledSkimMode ?? internalSkim;
   const handleToggleSkim = onToggleSkimMode ?? setInternalSkim;
-
   const activeDoc =
     documentKind === 'coverLetter' ? coverLetterDoc : resumeDoc;
   const actualPages =
@@ -4286,22 +4079,24 @@ export function DeskPreview({
         />
       )}
 
-      <div className="w-full overflow-x-auto pb-2">
-        <PdfPreview
-          document={activeDoc}
-          zoom={zoom}
-          pageSize={pageSize}
-          skimMode={effectiveSkim}
-          skimKeywordTerms={skimKeywordTerms}
-          highlightedTerm={highlightedTerm}
-          highlightedSourceId={highlightedSourceId}
-          hoveredBlockId={hoveredBlockId}
-          onArtifactReady={(info) => {
-            setArtifactInfo(info);
-            onArtifactReady?.(info);
-          }}
-        />
-      </div>
+      {activeDoc && (
+        <div className="w-full overflow-x-auto pb-2">
+          <PdfPreview
+            document={activeDoc}
+            zoom={zoom}
+            pageSize={pageSize}
+            skimMode={effectiveSkim}
+            skimKeywordTerms={skimKeywordTerms}
+            highlightedTerm={highlightedTerm}
+            highlightedSourceId={highlightedSourceId}
+            hoveredBlockId={hoveredBlockId}
+            onArtifactReady={(info) => {
+              setArtifactInfo(info);
+              onArtifactReady?.(info);
+            }}
+          />
+        </div>
+      )}
 
       {footerSlot && <div className="w-full">{footerSlot}</div>}
     </div>
@@ -4324,8 +4119,8 @@ export function VersionCard({
   onExportVersion,
   onDeleteVersion,
 }: {
-  version: DocumentVersion;
-  bank?: BankSnapshot | null;
+  version: import('../../../../core/domain').DocumentVersion;
+  bank?: BankSnapshot;
   targetCompany?: string;
   targetRole?: string;
   isLatest?: boolean;
@@ -4343,14 +4138,10 @@ export function VersionCard({
       day: 'numeric',
     },
   );
-
   const isCoverLetter = version.kind === 'coverLetter';
   const previewLines = isCoverLetter
-    ? (version.coverLetterContent?.blocks ?? [])
-        .slice(1, 3)
-        .map((b) => b.text)
+    ? (version.coverLetterContent?.blocks ?? []).slice(1, 3).map((b) => b.text)
     : (version.content?.bullets ?? []).slice(0, 2).map((b) => b.text);
-
   const resumeThumbDoc =
     !isCoverLetter && bank && version.content
       ? mapToResumeDocument({
@@ -4364,7 +4155,6 @@ export function VersionCard({
           generatedAt: version.createdAt,
         })
       : undefined;
-
   const coverLetterThumbDoc =
     isCoverLetter && bank && version.coverLetterContent
       ? mapToCoverLetterDocument({
@@ -4377,14 +4167,14 @@ export function VersionCard({
           generatedAt: version.createdAt,
         })
       : undefined;
-
   const appealVal = isCoverLetter
     ? (version.letterChecks?.appeal ?? version.scores.appeal ?? 82)
     : (version.scores.appeal ?? 82);
-
   const checksPassed = version.letterChecks?.passedCount ?? 6;
   const checksTotal = version.letterChecks?.totalCount ?? 6;
-  const checksPct = Math.round((checksPassed / Math.max(1, checksTotal)) * 100);
+  const checksPct = Math.round(
+    (checksPassed / Math.max(1, checksTotal)) * 100,
+  );
 
   return (
     <div
@@ -4402,8 +4192,6 @@ export function VersionCard({
           label={`Select version ${version.number} to compare`}
         />
       </div>
-
-      {/* Real 112x145 first-page PDF thumbnail */}
       <button
         type="button"
         onClick={onOpenInStudio}
@@ -4420,7 +4208,6 @@ export function VersionCard({
         />
       </button>
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -4438,7 +4225,6 @@ export function VersionCard({
               {formattedDate}
             </p>
           </div>
-
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <ScoreChip label="Match" score={version.scores.jobMatch} />
             <ScoreChip label="Appeal" score={appealVal} />
@@ -4458,21 +4244,10 @@ export function VersionCard({
                   label={`Actions for version ${version.number}`}
                   size="sm"
                 >
-                  <MoreHorizontal className="w-4 h-4" />
+                  <Ellipsis className="w-4 h-4" />
                 </IconButton>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-48 p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onOpenInStudio();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Open this version</span>
-                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -4541,7 +4316,7 @@ export function CopyQuestionButton({
         type="button"
         onClick={() => {
           if (typeof navigator !== 'undefined' && navigator.clipboard) {
-            void navigator.clipboard.writeText(question);
+            navigator.clipboard.writeText(question);
           }
           setCopied(true);
           setTimeout(() => setCopied(false), 1600);
@@ -4575,23 +4350,21 @@ export function FactChip({
   reason,
 }: {
   label: string;
-  status?: PracticalFitStatus;
-  fit?: PracticalFitStatus | string;
+  status?: 'fits' | 'conflict' | 'not-stated';
+  fit?: string;
   reason?: string;
 }) {
-  const status: PracticalFitStatus =
+  const status =
     statusProp ??
     (fit === 'conflict' || fit === 'fits' || fit === 'not-stated'
       ? fit
       : 'not-stated');
-
   const toneClass =
     status === 'conflict'
       ? 'bg-warning-50 text-warning-700 border-warning/40 font-semibold'
       : status === 'not-stated'
         ? 'bg-surface-sunken text-ink-muted border-hairline'
         : 'bg-surface text-ink-muted border-hairline';
-
   const prefix =
     status === 'conflict'
       ? '✕ '
@@ -4613,9 +4386,7 @@ export function FactChip({
     </span>
   );
 
-  if (reason) {
-    return <Tooltip content={reason}>{chip}</Tooltip>;
-  }
+  if (reason) return <Tooltip content={reason}>{chip}</Tooltip>;
   return chip;
 }
 
@@ -4653,17 +4424,15 @@ export function ImportanceControl({
 export function AttentionToken({
   token,
 }: {
-  token: AttentionTokenData | null;
+  token: AttentionTokenData | null | undefined;
 }) {
   if (!token) return null;
-
   const toneClass =
     token.tone === 'danger'
       ? 'bg-warning-50 text-warning-700 border-warning/45 font-semibold'
       : token.tone === 'warning'
         ? 'bg-surface-sunken text-ink border-border font-medium'
         : 'bg-surface-sunken text-ink-muted border-hairline';
-
   const prefix =
     token.kind === 'critical-fit'
       ? '✕ '
@@ -4751,7 +4520,6 @@ export function ViewMenu({
             </button>
           </div>
         </div>
-
         <div className="pt-2 border-t border-hairline flex items-center justify-between gap-2">
           <span className="text-xs text-ink">Hide dealbreaker conflicts</span>
           <Switch
@@ -4807,11 +4575,13 @@ export function FitStrip({
             {evaluation.summaryLabel}
           </span>
         )}
-
         {visiblePills.map((item) => {
           const isCritical = item.salience === 'critical';
           return (
-            <Tooltip key={item.key} content={`${item.label}: ${item.valueLabel} — ${item.reason}`}>
+            <Tooltip
+              key={item.key}
+              content={`${item.label}: ${item.valueLabel} — ${item.reason}`}
+            >
               <span
                 className={cn(
                   'inline-flex items-center gap-1 px-2 py-0.5 rounded-xs text-[11px] border whitespace-nowrap',
@@ -4826,7 +4596,6 @@ export function FitStrip({
             </Tooltip>
           );
         })}
-
         {overflowCount > 0 && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded-xs text-[11px] bg-surface border border-hairline text-ink-muted font-medium">
             +{overflowCount}
@@ -4870,7 +4639,7 @@ export function FitStrip({
 /**
  * Plain-language tooltip for fact extraction source (replaces "Quote (rules)" jargon).
  */
-function formatFactSourceTooltip(source: 'rules' | 'llm' | 'user'): string {
+export function formatFactSourceTooltip(source: FactSource): string {
   if (source === 'user') return 'Set by you';
   if (source === 'llm') return 'Checked by your local AI';
   return 'Found in the posting';
@@ -4893,6 +4662,7 @@ export function JobFactsTable({
   onShowQuoteInPosting,
   onShowInPosting,
   onOpenPreferences,
+  onCopyText,
 }: {
   facts: JobFacts;
   evaluation: PracticalFitEvaluation;
@@ -4900,29 +4670,20 @@ export function JobFactsTable({
   company?: string;
   readOnly?: boolean;
   onUpdateFacts?: (patch: Partial<JobFacts>) => void;
-  onOverrideFact?: (
-    key: 'location' | 'workPermits' | 'languages' | 'salary' | 'employmentType',
-    nextValue: unknown,
-  ) => void;
+  onOverrideFact?: (key: JobFactKey, value: unknown) => void;
   onShowQuoteInPosting?: (quote: string) => void;
   onShowInPosting?: (quote: string) => void;
-  onCopyText?: (text: string) => void;
   onOpenPreferences?: () => void;
+  onCopyText?: (text: string) => void;
 }) {
+  void onCopyText;
   const [showQuietFits, setShowQuietFits] = useState(false);
   const [openEditKey, setOpenEditKey] = useState<string | null>(null);
 
   const effectiveShowQuote = onShowQuoteInPosting ?? onShowInPosting;
   const canEdit = !readOnly && Boolean(onUpdateFacts || onOverrideFact);
 
-  const applyFactPatch = <
-    K extends
-      | 'location'
-      | 'workPermits'
-      | 'languages'
-      | 'salary'
-      | 'employmentType',
-  >(
+  const applyFactPatch = <K extends JobFactKey>(
     key: K,
     nextEntry: JobFacts[K],
   ) => {
@@ -4937,7 +4698,10 @@ export function JobFactsTable({
     (item) => item.salience === 'quiet' && item.status === 'fits',
   );
 
-  const renderEditPopoverContent = (item: EvaluatedFactItem, close: () => void) => {
+  const renderEditPopoverContent = (
+    item: EvaluatedFactItem,
+    close: () => void,
+  ) => {
     if (item.key === 'location') {
       const locVal = facts.location.value;
       return (
@@ -5020,7 +4784,7 @@ export function JobFactsTable({
                 label: 'English + French (Bilingual)',
                 langs: ['English', 'French'],
               },
-              { label: 'Not stated', langs: [] },
+              { label: 'Not stated', langs: [] as string[] },
             ].map((opt) => (
               <button
                 key={opt.label}
@@ -5122,7 +4886,6 @@ export function JobFactsTable({
             : 'bg-surface hover:bg-surface-raised/60',
         )}
       >
-        {/* Left: label + value + reason */}
         <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
           <span className="font-semibold text-ink w-32 shrink-0 truncate">
             {item.label}
@@ -5137,14 +4900,12 @@ export function JobFactsTable({
           </span>
         </div>
 
-        {/* Right: status badge + evidence "Show in posting" + CopyQuestion + Edit */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           {item.confidence === 'review' && (
             <span className="px-1.5 py-0.5 rounded-xs text-[10px] font-semibold bg-warning-50 text-warning-700 border border-warning/35">
               Needs review
             </span>
           )}
-
           {statusBadge}
 
           {item.evidenceQuotes.length > 0 && (
@@ -5225,7 +4986,6 @@ export function JobFactsTable({
   return (
     <div className="space-y-2" aria-label="Job facts and practical fit">
       <div className="border border-border rounded-lg overflow-hidden bg-surface divide-y divide-hairline shadow-xs">
-        {/* Header bar */}
         <div className="px-3.5 py-2 bg-surface-sunken flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-ink">
@@ -5248,10 +5008,8 @@ export function JobFactsTable({
           )}
         </div>
 
-        {/* Salient / Needs a look rows first */}
         {needsLookItems.map(renderRow)}
 
-        {/* Quiet Fits (n) collapsed into a one-line list unless expanded */}
         {quietFitItems.length > 0 && (
           <>
             <div className="min-h-[38px] px-3.5 py-2 bg-surface-sunken/55 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -5286,8 +5044,6 @@ export function JobFactsTable({
  * JobFactsStrip & PracticalFitSummary aliases preserved for callers; render the scalable JobFactsTable.
  */
 export const JobFactsStrip = JobFactsTable;
-export const PracticalFitSummary = JobFactsTable;
-
 
 /**
  * ApplicationDetailsForm: Edits optional postingUrl (opens in new tab with rel="noopener noreferrer"),
@@ -5434,14 +5190,13 @@ export function PreferencesForm({
   onSave,
 }: {
   preferences: UserPreferences;
-  onSave: (next: Partial<UserPreferences>) => void;
+  onSave: (patch: UserPreferencesPatch) => void;
 }) {
   const [city, setCity] = useState(preferences.homeLocation.city);
   const [country, setCountry] = useState(preferences.homeLocation.country);
   const [newLangQuery, setNewLangQuery] = useState('');
-  const [newLangLevel, setNewLangLevel] = useState<
-    'basic' | 'conversational' | 'fluent' | 'native'
-  >('fluent');
+  const [newLangLevel, setNewLangLevel] =
+    useState<LanguageProficiency>('fluent');
   const [salaryDisplay, setSalaryDisplay] = useState(
     preferences.salaryFloor?.amount
       ? preferences.salaryFloor.amount.toLocaleString('en-US')
@@ -5478,7 +5233,7 @@ export function PreferencesForm({
       )
     : true;
 
-  const setFactImportance = (key: FactKey, nextImp: FactImportance) => {
+  const setFactImportance = (key: string, nextImp: FactImportance) => {
     onSave({
       importance: {
         ...(preferences.importance ?? {}),
@@ -5487,13 +5242,13 @@ export function PreferencesForm({
     });
   };
 
-  const getFactImportance = (key: FactKey): FactImportance =>
+  const getFactImportance = (key: string): FactImportance =>
     preferences.importance?.[key] ??
-    (FACT_KIND_REGISTRY.find((r) => r.id === key)?.defaultImportance ?? 'important');
+    FACT_KIND_REGISTRY.find((r) => r.id === key)?.defaultImportance ??
+    'important';
 
   const toggleWorkMode = (mode: 'remote' | 'hybrid' | 'on-site') => {
-    const exists = preferences.acceptedWorkModes.includes(mode);
-    const next = exists
+    const next = preferences.acceptedWorkModes.includes(mode)
       ? preferences.acceptedWorkModes.filter((m) => m !== mode)
       : [...preferences.acceptedWorkModes, mode];
     onSave({ acceptedWorkModes: next.length > 0 ? next : ['remote'] });
@@ -5502,8 +5257,7 @@ export function PreferencesForm({
   const toggleEmpType = (
     t: 'full-time' | 'part-time' | 'contract' | 'internship' | 'temporary',
   ) => {
-    const exists = preferences.acceptedEmploymentTypes.includes(t);
-    const next = exists
+    const next = preferences.acceptedEmploymentTypes.includes(t)
       ? preferences.acceptedEmploymentTypes.filter((x) => x !== t)
       : [...preferences.acceptedEmploymentTypes, t];
     onSave({
@@ -5513,22 +5267,24 @@ export function PreferencesForm({
 
   const handleAddLanguage = (
     lang: string,
-    level: 'basic' | 'conversational' | 'fluent' | 'native' = newLangLevel,
+    level: LanguageProficiency = newLangLevel,
   ) => {
     const clean = lang.trim();
     if (!clean) return;
-    const filtered = preferences.spokenLanguages.filter(
-      (l) => l.language.toLowerCase() !== clean.toLowerCase(),
-    );
     onSave({
-      spokenLanguages: [...filtered, { language: clean, level }],
+      spokenLanguages: [
+        ...preferences.spokenLanguages.filter(
+          (l) => l.language.toLowerCase() !== clean.toLowerCase(),
+        ),
+        { language: clean, level },
+      ],
     });
     setNewLangQuery('');
   };
 
   const handleUpdateLanguageLevel = (
     lang: string,
-    level: 'basic' | 'conversational' | 'fluent' | 'native',
+    level: LanguageProficiency,
   ) => {
     onSave({
       spokenLanguages: preferences.spokenLanguages.map((l) =>
@@ -5551,7 +5307,10 @@ export function PreferencesForm({
   const availableLanguageOptions = LANGUAGE_TYPEAHEAD_OPTIONS.filter(
     (opt) => !selectedLanguageNamesLower.has(opt.value.toLowerCase()),
   );
-  const quickPresetLanguages = [
+  const quickPresetLanguages: Array<{
+    lang: string;
+    level: LanguageProficiency;
+  }> = [
     { lang: 'English', level: 'native' as const },
     { lang: 'French', level: 'fluent' as const },
     { lang: 'Spanish', level: 'conversational' as const },
@@ -5567,27 +5326,20 @@ export function PreferencesForm({
     const num = digits ? Number(digits) : 0;
     onSave({
       salaryFloor:
-        num > 0
-          ? {
-              amount: num,
-              currency: cur,
-              period: per,
-            }
-          : undefined,
+        num > 0 ? { amount: num, currency: cur, period: per } : undefined,
     });
   };
 
   return (
     <div className="space-y-6">
-      {/* Privacy banner */}
       <div className="bg-surface-sunken border border-border rounded-lg px-4 py-3 flex items-center gap-2.5 text-xs text-ink-muted">
         <Lock className="w-4 h-4 text-accent shrink-0" />
         <span>
-          Stored only in this browser. Matching runs on your computer and your preferences are never sent to any AI.
+          Stored only in this browser. Matching runs on your computer and your
+          preferences are never sent to any AI.
         </span>
       </div>
 
-      {/* 1. Location & Work modes */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -5615,6 +5367,7 @@ export function PreferencesForm({
             </label>
             <TypeaheadField
               id="pref-home-city"
+              ariaLabel="Home city or metro area"
               value={city}
               options={METRO_TYPEAHEAD_OPTIONS}
               placeholder="e.g. San Francisco Bay Area, Montreal, Paris"
@@ -5658,6 +5411,7 @@ export function PreferencesForm({
             </label>
             <TypeaheadField
               id="pref-home-country"
+              ariaLabel="Home country"
               value={country}
               options={CANONICAL_COUNTRY_OPTIONS}
               placeholder="e.g. United States, Canada, France"
@@ -5714,7 +5468,6 @@ export function PreferencesForm({
               );
             })}
           </div>
-
           <div className="flex flex-wrap items-center gap-6 pt-2">
             <div className="flex items-center gap-2.5">
               <Switch
@@ -5738,7 +5491,6 @@ export function PreferencesForm({
         </div>
       </div>
 
-      {/* 2. Work authorization & sponsorship */}
       <div className="space-y-3 pt-4 border-t border-hairline">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -5746,7 +5498,8 @@ export function PreferencesForm({
               Work permit & sponsorship
             </div>
             <p className="text-xs text-ink-muted">
-              Flags roles that refuse sponsorship or require citizenship you do not hold.
+              Flags roles that refuse sponsorship or require citizenship you do
+              not hold.
             </p>
           </div>
           <ImportanceControl
@@ -5805,7 +5558,6 @@ export function PreferencesForm({
         </div>
       </div>
 
-      {/* 3. Spoken languages */}
       <div className="space-y-3 pt-4 border-t border-hairline">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -5836,7 +5588,7 @@ export function PreferencesForm({
                 onValueChange={(lvl) =>
                   handleUpdateLanguageLevel(
                     l.language,
-                    lvl as 'basic' | 'conversational' | 'fluent' | 'native',
+                    lvl as LanguageProficiency,
                   )
                 }
                 options={[
@@ -5858,14 +5610,15 @@ export function PreferencesForm({
           ))}
         </div>
 
-        {/* Add language via typeahead + level selector */}
         <div className="flex flex-wrap items-center gap-2 max-w-md">
           <div className="flex-1 min-w-[180px]">
             <TypeaheadField
               value={newLangQuery}
               options={availableLanguageOptions}
               onChange={setNewLangQuery}
-              onSelect={(selected) => handleAddLanguage(selected, newLangLevel)}
+              onSelect={(selected) =>
+                handleAddLanguage(selected, newLangLevel)
+              }
               placeholder="Add a language (e.g. Spanish, Mandarin)…"
               ariaLabel="Add spoken language"
             />
@@ -5873,11 +5626,7 @@ export function PreferencesForm({
           <Select
             ariaLabel="New language proficiency level"
             value={newLangLevel}
-            onValueChange={(lvl) =>
-              setNewLangLevel(
-                lvl as 'basic' | 'conversational' | 'fluent' | 'native',
-              )
-            }
+            onValueChange={(lvl) => setNewLangLevel(lvl as LanguageProficiency)}
             options={[
               { value: 'basic', label: 'Basic' },
               { value: 'conversational', label: 'Conversational' },
@@ -5911,7 +5660,6 @@ export function PreferencesForm({
         )}
       </div>
 
-      {/* 4. Salary floor & 5. Employment types */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-hairline">
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -6049,16 +5797,14 @@ export function QuickCheckDialog({
   }) => Promise<QuickCheckVerdict>;
   onStartTailoring: (params: {
     rawPosting: string;
-    jobDescription?: string;
-    company?: string;
-    roleTitle?: string;
-  }) => Promise<unknown>;
+    company: string;
+    roleTitle: string;
+  }) => Promise<void> | void;
   onSaveAsProspect: (params: {
     rawPosting: string;
-    jobDescription?: string;
-    company?: string;
-    roleTitle?: string;
-  }) => Promise<unknown>;
+    company: string;
+    roleTitle: string;
+  }) => Promise<void> | void;
 }) {
   const [rawPosting, setRawPosting] = useState('');
   const [companyOverride, setCompanyOverride] = useState('');
@@ -6070,41 +5816,42 @@ export function QuickCheckDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      const overrides = {
-        company: companyOverride.trim() || undefined,
-        roleTitle: roleOverride.trim() || undefined,
-      };
-      const evalPromise = onEvaluatePosting
-        ? onEvaluatePosting(rawPosting, overrides)
-        : onEvaluate
-          ? onEvaluate({
-              jobDescription: rawPosting,
-              ...overrides,
+    const timer = setTimeout(
+      () => {
+        const overrides = {
+          company: companyOverride.trim() || undefined,
+          roleTitle: roleOverride.trim() || undefined,
+        };
+        const evalPromise = onEvaluatePosting
+          ? onEvaluatePosting(rawPosting, overrides)
+          : onEvaluate
+            ? onEvaluate({ jobDescription: rawPosting, ...overrides })
+            : null;
+        if (evalPromise) {
+          if (rawPosting.trim()) setIsEvaluating(true);
+          evalPromise
+            .then((res) => {
+              if (!cancelled) setVerdict(res);
             })
-          : null;
-      if (evalPromise) {
-        if (rawPosting.trim()) {
-          setIsEvaluating(true);
+            .finally(() => {
+              if (!cancelled) setIsEvaluating(false);
+            });
         }
-        void evalPromise
-          .then((res) => {
-            if (!cancelled) {
-              setVerdict(res);
-            }
-          })
-          .finally(() => {
-            if (!cancelled) {
-              setIsEvaluating(false);
-            }
-          });
-      }
-    }, rawPosting.trim() ? 350 : 0);
+      },
+      rawPosting.trim() ? 350 : 0,
+    );
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [rawPosting, companyOverride, roleOverride, open, onEvaluatePosting, onEvaluate]);
+  }, [
+    rawPosting,
+    companyOverride,
+    roleOverride,
+    open,
+    onEvaluatePosting,
+    onEvaluate,
+  ]);
 
   const effectiveCompany =
     companyOverride.trim() || verdict?.detectedCompany || '';
@@ -6161,7 +5908,6 @@ export function QuickCheckDialog({
       >
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left pane: paste posting + editable company & role (Company and Role first per user preference) */}
             <div className="lg:col-span-5 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -6175,9 +5921,7 @@ export function QuickCheckDialog({
                     id="quickcheck-company-input"
                     value={companyOverride}
                     onChange={(e) => setCompanyOverride(e.target.value)}
-                    placeholder={
-                      verdict?.detectedCompany || 'e.g. Kestrel Pay'
-                    }
+                    placeholder={verdict?.detectedCompany || 'e.g. Kestrel Pay'}
                   />
                 </div>
                 <div>
@@ -6217,7 +5961,6 @@ export function QuickCheckDialog({
               </div>
             </div>
 
-            {/* Right pane: live debounced verdict, practical fit table, and coverage */}
             <div className="lg:col-span-7 space-y-4 bg-surface-sunken/50 border border-border rounded-xl p-4">
               {(isEvaluating || isBusy) && (
                 <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-accent-50 border border-accent/20">
@@ -6230,9 +5973,9 @@ export function QuickCheckDialog({
                   />
                 </div>
               )}
+
               {verdict && (
                 <>
-                  {/* Verdict & Quick match estimate band header */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-hairline">
                     <div className="space-y-1">
                       <div className="inline-flex items-center gap-2">
@@ -6254,22 +5997,22 @@ export function QuickCheckDialog({
                         {verdict.verdictDetail}
                       </p>
                     </div>
-
                     <div className="flex items-center gap-2 shrink-0">
-                      <EstimateRing score={verdict.quickMatchEstimate} size="md" />
+                      <EstimateRing
+                        score={verdict.quickMatchEstimate}
+                        size="md"
+                      />
                     </div>
                   </div>
 
-                  {/* Dense JobFactsTable */}
                   <JobFactsTable
                     facts={verdict.jobFacts}
                     evaluation={verdict.practicalFit}
                     roleTitle={effectiveRole}
                     company={effectiveCompany}
-                    readOnly
+                    readOnly={true}
                   />
 
-                  {/* Bank requirement coverage summary */}
                   <CoverageSummary
                     coveredCount={verdict.coverage.counts.covered}
                     partialCount={verdict.coverage.counts.partial}
@@ -6280,9 +6023,12 @@ export function QuickCheckDialog({
             </div>
           </div>
 
-          {/* Footer: Start tailoring (primary), Save as prospect (secondary), Discard (text button) */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-hairline">
-            <Button variant="ghost" onClick={handleDiscard} disabled={isBusy}>
+            <Button
+              variant="ghost"
+              onClick={handleDiscard}
+              disabled={isBusy}
+            >
               Discard
             </Button>
             <div className="flex items-center gap-2.5">
@@ -6426,24 +6172,3 @@ export function CommandPalette({
     </Dialog>
   );
 }
-
-export {
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  Check,
-  Copy,
-  Download,
-  Eye,
-  FileText,
-  Lock,
-  Minus,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Sparkles,
-  Trash2,
-  Unlock,
-  X,
-};

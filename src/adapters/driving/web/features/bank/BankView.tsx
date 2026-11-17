@@ -1,37 +1,37 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Award,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
-  Edit3,
+  Ellipsis,
   FolderGit2,
   GraduationCap,
   Link2,
-  MoreHorizontal,
+  PenLine,
   Plus,
   Search,
   Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ParsedResumeCandidate } from '../../../../../core/application';
 import {
   Achievement,
+  assembleBulletText,
   BankSnapshot,
   Certification,
+  classifySkillCategory,
   Education,
   Experience,
-  Project,
-  Skill,
-  SkillCategory,
-  assembleBulletText,
-  classifySkillCategory,
   formatCount,
   formatDocumentDateRange,
   isPlaceholderExperience,
   normalizeBankSkill,
+  Project,
+  Skill,
+  SkillCategory,
   sortExperiencesChronologically,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
@@ -55,14 +55,6 @@ import {
   Textarea,
 } from '../../ui/primitives';
 import { PageHeader, TimelineRail } from '../../ui/signatures';
-
-type BankSection =
-  | 'experience'
-  | 'skills'
-  | 'projects'
-  | 'education'
-  | 'certifications'
-  | 'profile';
 
 const SKILL_CATEGORIES: SkillCategory[] = [
   'Languages',
@@ -146,49 +138,61 @@ Return ONLY valid raw JSON with no markdown wrapping and no conversational prose
 Valid categories for skills are ONLY: "Languages", "Frameworks", "Infrastructure", "Data & AI", "Practices", "Tools", or "Other".
 Make sure achievements describe quantifiable outcomes with past tense verbs.`;
 
+type BankSectionId =
+  | 'experience'
+  | 'skills'
+  | 'projects'
+  | 'education'
+  | 'certifications'
+  | 'profile';
+
+interface RoleDraftState {
+  isNew: boolean;
+  experience: Experience;
+  initialAchievementAction?: string;
+  initialAchievementMetric?: string;
+  initialAchievementResult?: string;
+}
+
+interface ProjectDraftState {
+  isNew: boolean;
+  project: Project;
+  highlightsText: string;
+}
+
+interface EducationDraftState {
+  isNew: boolean;
+  education: Education;
+}
+
+interface CertificationDraftState {
+  isNew: boolean;
+  certification: Certification;
+}
+
 export function BankView() {
   const useCases = useCevinUseCases();
   const addToast = useUiStore((s) => s.addToast);
 
   const [bank, setBank] = useState<BankSnapshot | null>(null);
-  const [activeSection, setActiveSection] = useState<BankSection>('experience');
+  const [activeSection, setActiveSection] =
+    useState<BankSectionId>('experience');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [expandedRoleIds, setExpandedRoleIds] = useState<
     Record<string, boolean>
   >({});
-
-  // Role Drawer state (supports both editing existing role and creating new role on confirm)
-  const [roleDraft, setRoleDraft] = useState<{
-    isNew: boolean;
-    experience: Experience;
-    initialAchievementAction?: string;
-    initialAchievementMetric?: string;
-    initialAchievementResult?: string;
-  } | null>(null);
-
+  const [roleDraft, setRoleDraft] = useState<RoleDraftState | null>(null);
   const [editingAchievementId, setEditingAchievementId] = useState<
     string | null
   >(null);
-
-  // Project, Education, Certification Drawer states (read-first cards, edit/create in drawer)
-  const [projectDraft, setProjectDraft] = useState<{
-    isNew: boolean;
-    project: Project;
-    highlightsText: string;
-  } | null>(null);
-
-  const [educationDraft, setEducationDraft] = useState<{
-    isNew: boolean;
-    education: Education;
-  } | null>(null);
-
-  const [certificationDraft, setCertificationDraft] = useState<{
-    isNew: boolean;
-    certification: Certification;
-  } | null>(null);
-
-  // Import Resume Drawer
+  const [projectDraft, setProjectDraft] = useState<ProjectDraftState | null>(
+    null,
+  );
+  const [educationDraft, setEducationDraft] =
+    useState<EducationDraftState | null>(null);
+  const [certificationDraft, setCertificationDraft] =
+    useState<CertificationDraftState | null>(null);
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
   const [importMethod, setImportMethod] = useState<'upload' | 'llm-prompt'>(
     'upload',
@@ -201,8 +205,6 @@ export function BankView() {
   const [duplicateStrategy, setDuplicateStrategy] = useState<'merge' | 'skip'>(
     'merge',
   );
-
-  // New skill state
   const [newSkillName, setNewSkillName] = useState('');
   const [newSkillCategory, setNewSkillCategory] =
     useState<SkillCategory>('Languages');
@@ -247,13 +249,14 @@ export function BankView() {
     return sortExperiencesChronologically(bank.experiences);
   }, [bank]);
 
-  // Only the most recent current role gets the filled timeline dot
   const mostRecentCurrentRoleId = useMemo(() => {
-    const firstPresent = sortedExperiences.find((e) =>
-      e.end.toLowerCase().includes('present') ||
-      e.end.toLowerCase().includes('current'),
+    return (
+      sortedExperiences.find(
+        (e) =>
+          e.end.toLowerCase().includes('present') ||
+          e.end.toLowerCase().includes('current'),
+      )?.id ?? null
     );
-    return firstPresent?.id ?? null;
   }, [sortedExperiences]);
 
   if (!bank) {
@@ -266,7 +269,6 @@ export function BankView() {
 
   const q = searchQuery.trim().toLowerCase();
 
-  // Open new role draft in drawer (saves only on confirm)
   const handleOpenAddRoleDrawer = () => {
     setRoleDraft({
       isNew: true,
@@ -300,7 +302,6 @@ export function BankView() {
       addToast('Enter both a role title and a company name.', 'warning');
       return;
     }
-
     const cleanExp: Experience = {
       ...experience,
       company: trimmedCompany,
@@ -309,7 +310,6 @@ export function BankView() {
       start: experience.start.trim() || '2024-01',
       end: experience.end.trim() || 'Present',
     };
-
     if (isNew) {
       const nextAchievements = [...bank.achievements];
       if (
@@ -335,7 +335,10 @@ export function BankView() {
         achievements: nextAchievements,
       };
       await persistBank(next);
-      setExpandedRoleIds((prev) => ({ ...prev, [cleanExp.id]: true }));
+      setExpandedRoleIds((prev) => ({
+        ...prev,
+        [cleanExp.id]: true,
+      }));
       setRoleDraft(null);
       addToast(`Added role at ${cleanExp.company}.`, 'success');
     } else {
@@ -344,7 +347,10 @@ export function BankView() {
           item.id === cleanExp.id ? cleanExp : item,
         ),
       );
-      await persistBank({ ...bank, experiences: nextExps });
+      await persistBank({
+        ...bank,
+        experiences: nextExps,
+      });
       setRoleDraft(null);
       addToast(`Updated role at ${cleanExp.company}.`, 'success');
     }
@@ -382,7 +388,10 @@ export function BankView() {
       ...bank,
       achievements: [...bank.achievements, newAch],
     });
-    setExpandedRoleIds((prev) => ({ ...prev, [experienceId]: true }));
+    setExpandedRoleIds((prev) => ({
+      ...prev,
+      [experienceId]: true,
+    }));
     setEditingAchievementId(newAch.id);
   };
 
@@ -403,7 +412,7 @@ export function BankView() {
 
   const handleAddSkill = async () => {
     if (!newSkillName.trim()) return;
-    const created: Skill = normalizeBankSkill({
+    const created = normalizeBankSkill({
       id: `skill-${Date.now()}`,
       name: newSkillName.trim(),
       category: classifySkillCategory(newSkillName.trim(), newSkillCategory),
@@ -441,7 +450,6 @@ export function BankView() {
     });
   };
 
-  // Project Drawer handlers
   const handleOpenAddProject = () => {
     setProjectDraft({
       isNew: true,
@@ -488,7 +496,10 @@ export function BankView() {
     const nextProjects = projectDraft.isNew
       ? [...bank.projects, saved]
       : bank.projects.map((p) => (p.id === saved.id ? saved : p));
-    await persistBank({ ...bank, projects: nextProjects });
+    await persistBank({
+      ...bank,
+      projects: nextProjects,
+    });
     setProjectDraft(null);
     addToast(
       projectDraft.isNew
@@ -514,7 +525,6 @@ export function BankView() {
     });
   };
 
-  // Education Drawer handlers
   const handleOpenAddEducation = () => {
     setEducationDraft({
       isNew: true,
@@ -559,7 +569,10 @@ export function BankView() {
     const nextEducations = educationDraft.isNew
       ? [...bank.educations, saved]
       : bank.educations.map((e) => (e.id === saved.id ? saved : e));
-    await persistBank({ ...bank, educations: nextEducations });
+    await persistBank({
+      ...bank,
+      educations: nextEducations,
+    });
     setEducationDraft(null);
     addToast(
       educationDraft.isNew
@@ -585,7 +598,6 @@ export function BankView() {
     });
   };
 
-  // Certification Drawer handlers
   const handleOpenAddCertification = () => {
     setCertificationDraft({
       isNew: true,
@@ -624,7 +636,10 @@ export function BankView() {
     const nextCerts = certificationDraft.isNew
       ? [...bank.certifications, saved]
       : bank.certifications.map((c) => (c.id === saved.id ? saved : c));
-    await persistBank({ ...bank, certifications: nextCerts });
+    await persistBank({
+      ...bank,
+      certifications: nextCerts,
+    });
     setCertificationDraft(null);
     addToast(
       certificationDraft.isNew
@@ -695,7 +710,7 @@ export function BankView() {
   ];
 
   const tabItems: Array<{
-    value: BankSection;
+    value: BankSectionId;
     label: string;
     count?: number;
   }> = [
@@ -704,30 +719,15 @@ export function BankView() {
       label: 'Experience',
       count: bank.experiences.length,
     },
-    {
-      value: 'skills',
-      label: 'Skills',
-      count: bank.skills.length,
-    },
-    {
-      value: 'projects',
-      label: 'Projects',
-      count: bank.projects.length,
-    },
-    {
-      value: 'education',
-      label: 'Education',
-      count: bank.educations.length,
-    },
+    { value: 'skills', label: 'Skills', count: bank.skills.length },
+    { value: 'projects', label: 'Projects', count: bank.projects.length },
+    { value: 'education', label: 'Education', count: bank.educations.length },
     {
       value: 'certifications',
       label: 'Certifications',
       count: bank.certifications.length,
     },
-    {
-      value: 'profile',
-      label: 'Contact & Header',
-    },
+    { value: 'profile', label: 'Contact & Header' },
   ];
 
   return (
@@ -772,7 +772,6 @@ export function BankView() {
         }
       />
 
-      {/* Underline Section Tabs with Right-Aligned Search & Tags (no outer card) */}
       <div className="border-b border-hairline flex flex-wrap items-center justify-between gap-4 pb-0">
         <div
           role="tablist"
@@ -878,7 +877,6 @@ export function BankView() {
         )}
       </div>
 
-      {/* SECTION 1: EXPERIENCE TIMELINE */}
       {activeSection === 'experience' && (
         <div className="space-y-4">
           {sortedExperiences.length === 0 ? (
@@ -908,7 +906,6 @@ export function BankView() {
                     a.tags.some((t) => t.toLowerCase().includes(q));
                   return matchesTag && matchesSearch;
                 });
-
                 const isExpanded = Boolean(expandedRoleIds[exp.id]);
                 const isMostRecentCurrent = exp.id === mostRecentCurrentRoleId;
                 const isLast = idx === sortedExperiences.length - 1;
@@ -921,7 +918,6 @@ export function BankView() {
                     isLast={isLast}
                   >
                     <div className="group/role bg-surface border border-border rounded-xl shadow-xs overflow-hidden">
-                      {/* Role Card Header */}
                       <div className="p-4 flex flex-wrap items-center justify-between gap-4 hover:bg-surface-sunken/40 transition-colors">
                         <button
                           type="button"
@@ -956,15 +952,19 @@ export function BankView() {
 
                         <div className="flex items-center gap-2">
                           <Badge tone="neutral">
-                            {formatCount(roleAchievements.length, 'achievement')}
+                            {formatCount(
+                              roleAchievements.length,
+                              'achievement',
+                            )}
                           </Badge>
+
                           <div className="flex items-center gap-1.5 opacity-0 group-hover/role:opacity-100 group-focus-within/role:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleOpenEditRoleDrawer(exp)}
                             >
-                              <Edit3 className="w-3.5 h-3.5" />
+                              <PenLine className="w-3.5 h-3.5" />
                               <span>Edit role</span>
                             </Button>
                             <Button
@@ -983,7 +983,7 @@ export function BankView() {
                                 label={`Role actions for ${exp.company}`}
                                 size="sm"
                               >
-                                <MoreHorizontal className="w-4 h-4" />
+                                <Ellipsis className="w-4 h-4" />
                               </IconButton>
                             </PopoverTrigger>
                             <PopoverContent align="end" className="w-48 p-1">
@@ -992,7 +992,7 @@ export function BankView() {
                                 onClick={() => handleOpenEditRoleDrawer(exp)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
+                                <PenLine className="w-3.5 h-3.5" />
                                 <span>Edit role</span>
                               </button>
                               <button
@@ -1019,9 +1019,7 @@ export function BankView() {
                           </Popover>
 
                           <IconButton
-                            label={
-                              isExpanded ? 'Collapse role' : 'Expand role'
-                            }
+                            label={isExpanded ? 'Collapse role' : 'Expand role'}
                             size="sm"
                             onClick={() =>
                               setExpandedRoleIds((prev) => ({
@@ -1039,7 +1037,6 @@ export function BankView() {
                         </div>
                       </div>
 
-                      {/* Accordion Body: Clean Achievement Rows */}
                       {isExpanded && (
                         <div className="p-4 pt-3 border-t border-hairline space-y-2.5">
                           {roleAchievements.map((ach) => {
@@ -1070,7 +1067,6 @@ export function BankView() {
                                       </div>
                                     </div>
 
-                                    {/* Edit button + ⋯ menu (no trash icon on row) */}
                                     <div className="flex items-center gap-1 shrink-0">
                                       <Button
                                         variant="ghost"
@@ -1079,7 +1075,7 @@ export function BankView() {
                                           setEditingAchievementId(ach.id)
                                         }
                                       >
-                                        <Edit3 className="w-3.5 h-3.5" />
+                                        <PenLine className="w-3.5 h-3.5" />
                                         <span>Edit</span>
                                       </Button>
                                       <Popover>
@@ -1088,7 +1084,7 @@ export function BankView() {
                                             label="Achievement options"
                                             size="sm"
                                           >
-                                            <MoreHorizontal className="w-4 h-4" />
+                                            <Ellipsis className="w-4 h-4" />
                                           </IconButton>
                                         </PopoverTrigger>
                                         <PopoverContent
@@ -1102,7 +1098,7 @@ export function BankView() {
                                             }
                                             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                                           >
-                                            <Edit3 className="w-3.5 h-3.5" />
+                                            <PenLine className="w-3.5 h-3.5" />
                                             <span>Edit achievement</span>
                                           </button>
                                           <button
@@ -1195,7 +1191,6 @@ export function BankView() {
                                         />
                                       </div>
                                     </div>
-
                                     <div className="flex flex-wrap items-center justify-between gap-3">
                                       <div className="flex items-center gap-2 flex-1 min-w-[240px]">
                                         <span className="text-xs text-ink-muted shrink-0">
@@ -1248,7 +1243,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 2: SKILLS GROUPED BY CATEGORY WITH POPOVER EDITOR */}
       {activeSection === 'skills' && (
         <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6">
           <div className="flex flex-wrap items-end justify-between gap-4 p-4 rounded-lg bg-surface-sunken border border-hairline">
@@ -1267,10 +1261,10 @@ export function BankView() {
                 <label className="block text-xs font-medium text-ink mb-1">
                   Category
                 </label>
-                <Select<SkillCategory>
+                <Select
                   ariaLabel="Skill category"
                   value={newSkillCategory}
-                  onValueChange={setNewSkillCategory}
+                  onValueChange={(v) => setNewSkillCategory(v as SkillCategory)}
                   options={SKILL_CATEGORIES.map((c) => ({
                     value: c,
                     label: c,
@@ -1327,7 +1321,6 @@ export function BankView() {
                 (s) => s.category === category,
               );
               if (catSkills.length === 0) return null;
-
               return (
                 <div key={category} className="space-y-2.5">
                   <div className="flex items-center gap-2">
@@ -1379,13 +1372,16 @@ export function BankView() {
                             <label className="block text-xs text-ink-muted mb-1">
                               Category
                             </label>
-                            <Select<SkillCategory>
+                            <Select
                               ariaLabel="Edit skill category"
                               value={skill.category}
                               onValueChange={(nextCat) => {
                                 const nextSkills = bank.skills.map((s) =>
                                   s.id === skill.id
-                                    ? { ...s, category: nextCat }
+                                    ? {
+                                        ...s,
+                                        category: nextCat as SkillCategory,
+                                      }
                                     : s,
                                 );
                                 void persistBank({
@@ -1464,7 +1460,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 3: PROJECTS (Read-First Cards + Edit Drawer + ⋯ Delete) */}
       {activeSection === 'projects' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -1482,7 +1477,8 @@ export function BankView() {
           </div>
           {bank.projects.length === 0 ? (
             <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
-              No projects added yet. Click &quot;Add project&quot; to add open-source libraries, tools, or portfolio projects.
+              No projects added yet. Click &quot;Add project&quot; to add
+              open-source libraries, tools, or portfolio projects.
             </div>
           ) : (
             <div className="space-y-3">
@@ -1541,7 +1537,7 @@ export function BankView() {
                       size="sm"
                       onClick={() => handleOpenEditProject(proj)}
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <PenLine className="w-3.5 h-3.5" />
                       <span>Edit</span>
                     </Button>
                     <Popover>
@@ -1550,7 +1546,7 @@ export function BankView() {
                           label={`Project options for ${proj.name}`}
                           size="sm"
                         >
-                          <MoreHorizontal className="w-4 h-4" />
+                          <Ellipsis className="w-4 h-4" />
                         </IconButton>
                       </PopoverTrigger>
                       <PopoverContent align="end" className="w-44 p-1">
@@ -1559,7 +1555,7 @@ export function BankView() {
                           onClick={() => handleOpenEditProject(proj)}
                           className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
+                          <PenLine className="w-3.5 h-3.5" />
                           <span>Edit project</span>
                         </button>
                         <button
@@ -1580,7 +1576,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 4: EDUCATION (Read-First Cards + Edit Drawer + ⋯ Delete) */}
       {activeSection === 'education' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -1598,7 +1593,8 @@ export function BankView() {
           </div>
           {bank.educations.length === 0 ? (
             <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
-              No education entries added yet. Click &quot;Add education&quot; to add degrees or academic credentials.
+              No education entries added yet. Click &quot;Add education&quot; to
+              add degrees or academic credentials.
             </div>
           ) : (
             <div className="space-y-3">
@@ -1636,7 +1632,7 @@ export function BankView() {
                       size="sm"
                       onClick={() => handleOpenEditEducation(edu)}
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <PenLine className="w-3.5 h-3.5" />
                       <span>Edit</span>
                     </Button>
                     <Popover>
@@ -1645,7 +1641,7 @@ export function BankView() {
                           label={`Education options for ${edu.institution}`}
                           size="sm"
                         >
-                          <MoreHorizontal className="w-4 h-4" />
+                          <Ellipsis className="w-4 h-4" />
                         </IconButton>
                       </PopoverTrigger>
                       <PopoverContent align="end" className="w-44 p-1">
@@ -1654,7 +1650,7 @@ export function BankView() {
                           onClick={() => handleOpenEditEducation(edu)}
                           className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
+                          <PenLine className="w-3.5 h-3.5" />
                           <span>Edit education</span>
                         </button>
                         <button
@@ -1677,7 +1673,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 5: CERTIFICATIONS (Read-First Cards + Edit Drawer + ⋯ Delete) */}
       {activeSection === 'certifications' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -1693,10 +1688,10 @@ export function BankView() {
               <span>Add certification</span>
             </Button>
           </div>
-
           {bank.certifications.length === 0 ? (
             <div className="p-8 text-center bg-surface border border-dashed border-hairline rounded-xl text-ink-muted text-sm">
-              No certifications added yet. Click &quot;Add certification&quot; to include credentials like CKA, AWS, or PMP.
+              No certifications added yet. Click &quot;Add certification&quot;
+              to include credentials like CKA, AWS, or PMP.
             </div>
           ) : (
             <div className="space-y-3">
@@ -1732,7 +1727,7 @@ export function BankView() {
                       size="sm"
                       onClick={() => handleOpenEditCertification(cert)}
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <PenLine className="w-3.5 h-3.5" />
                       <span>Edit</span>
                     </Button>
                     <Popover>
@@ -1741,7 +1736,7 @@ export function BankView() {
                           label={`Certification options for ${cert.name}`}
                           size="sm"
                         >
-                          <MoreHorizontal className="w-4 h-4" />
+                          <Ellipsis className="w-4 h-4" />
                         </IconButton>
                       </PopoverTrigger>
                       <PopoverContent align="end" className="w-48 p-1">
@@ -1750,7 +1745,7 @@ export function BankView() {
                           onClick={() => handleOpenEditCertification(cert)}
                           className="w-full flex items-center gap-2 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
+                          <PenLine className="w-3.5 h-3.5" />
                           <span>Edit certification</span>
                         </button>
                         <button
@@ -1773,7 +1768,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* SECTION 6: PROFILE & CONTACT (Neutral placeholders) */}
       {activeSection === 'profile' && (
         <div className="bg-surface border border-border rounded-xl p-6 shadow-xs space-y-6 max-w-3xl">
           <div>
@@ -1781,10 +1775,10 @@ export function BankView() {
               Contact & Header
             </h2>
             <p className="text-xs text-ink-muted mt-1">
-              Your contact details and links appear in your resume and cover letter headers.
+              Your contact details and links appear in your resume and cover
+              letter headers.
             </p>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-ink-muted mb-1">
@@ -1863,7 +1857,6 @@ export function BankView() {
             </div>
           </div>
 
-          {/* Online Links: GitHub, LinkedIn, Portfolio */}
           <div className="pt-4 border-t border-hairline space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-ink">
@@ -1873,7 +1866,6 @@ export function BankView() {
                 Leave any field empty to exclude it from your header.
               </p>
             </div>
-
             {(() => {
               const cleanLinks = bank.profile.links.filter(
                 (l) =>
@@ -1903,18 +1895,16 @@ export function BankView() {
                 newPort: string,
               ) => {
                 const next: Array<{ label: string; url: string }> = [];
-                if (newGh.trim())
-                  next.push({ label: 'GitHub', url: newGh.trim() });
-                if (newLi.trim())
+                if (newGh.trim()) next.push({ label: 'GitHub', url: newGh.trim() });
+                if (newLi.trim()) {
                   next.push({ label: 'LinkedIn', url: newLi.trim() });
-                if (newPort.trim())
+                }
+                if (newPort.trim()) {
                   next.push({ label: 'Portfolio', url: newPort.trim() });
+                }
                 void persistBank({
                   ...bank,
-                  profile: {
-                    ...bank.profile,
-                    links: next,
-                  },
+                  profile: { ...bank.profile, links: next },
                 });
               };
 
@@ -1932,7 +1922,6 @@ export function BankView() {
                       placeholder="github.com/username"
                     />
                   </div>
-
                   <div>
                     <label className="block text-xs font-medium text-ink-muted mb-1">
                       LinkedIn Profile URL
@@ -1945,7 +1934,6 @@ export function BankView() {
                       placeholder="linkedin.com/in/username"
                     />
                   </div>
-
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-medium text-ink-muted mb-1">
                       Personal Website / Portfolio URL
@@ -1965,7 +1953,6 @@ export function BankView() {
         </div>
       )}
 
-      {/* Role Add / Edit Drawer (saves only on confirm) */}
       <Drawer
         open={Boolean(roleDraft)}
         onOpenChange={(open) => {
@@ -2162,7 +2149,6 @@ export function BankView() {
         )}
       </Drawer>
 
-      {/* Project Add / Edit Drawer */}
       <Drawer
         open={Boolean(projectDraft)}
         onOpenChange={(open) => {
@@ -2186,7 +2172,10 @@ export function BankView() {
                 onChange={(e) =>
                   setProjectDraft({
                     ...projectDraft,
-                    project: { ...projectDraft.project, name: e.target.value },
+                    project: {
+                      ...projectDraft.project,
+                      name: e.target.value,
+                    },
                   })
                 }
                 placeholder="e.g. kube-cost-lens"
@@ -2201,7 +2190,10 @@ export function BankView() {
                 onChange={(e) =>
                   setProjectDraft({
                     ...projectDraft,
-                    project: { ...projectDraft.project, role: e.target.value },
+                    project: {
+                      ...projectDraft.project,
+                      role: e.target.value,
+                    },
                   })
                 }
                 placeholder="e.g. Creator & Maintainer"
@@ -2278,7 +2270,6 @@ export function BankView() {
         )}
       </Drawer>
 
-      {/* Education Add / Edit Drawer */}
       <Drawer
         open={Boolean(educationDraft)}
         onOpenChange={(open) => {
@@ -2441,7 +2432,6 @@ export function BankView() {
         )}
       </Drawer>
 
-      {/* Certification Add / Edit Drawer */}
       <Drawer
         open={Boolean(certificationDraft)}
         onOpenChange={(open) => {
@@ -2550,7 +2540,6 @@ export function BankView() {
         )}
       </Drawer>
 
-      {/* Import Resume Drawer */}
       <Drawer
         open={importDrawerOpen}
         onOpenChange={(open) => {
@@ -2586,7 +2575,9 @@ export function BankView() {
                 onFileSelected={(file) => void handleFileUpload(file)}
               />
               <div className="flex items-center justify-between text-xs text-ink-muted px-1">
-                <span>Prefer to structure your resume using a JSON prompt?</span>
+                <span>
+                  Prefer to structure your resume using a JSON prompt?
+                </span>
                 <button
                   type="button"
                   onClick={() => setImportMethod('llm-prompt')}
@@ -2631,7 +2622,8 @@ export function BankView() {
                   </Button>
                 </div>
                 <p className="text-ink-muted text-[11px] leading-relaxed">
-                  Paste this prompt along with your resume text into an LLM to format your profile, roles, achievements, and skills as JSON.
+                  Paste this prompt along with your resume text into an LLM to
+                  format your profile, roles, achievements, and skills as JSON.
                 </p>
                 <div className="relative rounded-md bg-canvas border border-border p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] text-ink-muted leading-relaxed">
                   {EXTERNAL_LLM_PROMPT_TEMPLATE}
@@ -2662,11 +2654,8 @@ export function BankView() {
                           'JSON Import',
                         );
                       setIsParsingFile(false);
-                      if (res.ok) {
-                        setProposedImport(res.value);
-                      } else {
-                        addToast(res.error.message, 'danger');
-                      }
+                      if (res.ok) setProposedImport(res.value);
+                      else addToast(res.error.message, 'danger');
                     }}
                   >
                     {isParsingFile ? (
@@ -2694,8 +2683,8 @@ export function BankView() {
               <div className="text-ink-muted">
                 Found{' '}
                 {formatCount(proposedImport.proposedExperiences.length, 'role')}{' '}
-                and{' '}
-                {formatCount(proposedImport.proposedSkills.length, 'skill')}.
+                and {formatCount(proposedImport.proposedSkills.length, 'skill')}
+                .
               </div>
               <div className="flex items-center justify-between">
                 <span>Duplicate handling:</span>

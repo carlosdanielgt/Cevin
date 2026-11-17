@@ -1,13 +1,15 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Calendar,
   ChevronDown,
   Copy,
+  Ellipsis,
   FileText,
-  Filter,
+  Funnel,
   GitCompare,
   Link2,
-  MoreHorizontal,
   Pencil,
   Plus,
   RotateCcw,
@@ -16,23 +18,22 @@ import {
   StickyNote,
   Trash2,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Application,
   ApplicationStatus,
   BankSnapshot,
-  DocumentKind,
-  DocumentVersion,
-  PracticalFitEvaluation,
-  StudioStep,
-  UserPreferences,
   buildGroupedCoverageSummary,
   deriveRowAttentionToken,
+  DocumentKind,
+  DocumentVersion,
   evaluateFit,
   extractJobFactsByRules,
   formatCount,
+  formatQuickEstimateBand,
   getStageDefaultFactsMode,
+  JobFacts,
+  PracticalFitEvaluation,
+  UserPreferences,
 } from '../../../../../core/domain';
 import { useCevinUseCases, useUiStore } from '../../context';
 import {
@@ -41,7 +42,6 @@ import {
   ConfirmDialog,
   DeltaChip,
   Drawer,
-  EmptyState,
   IconButton,
   Input,
   Popover,
@@ -67,7 +67,6 @@ import {
   StatusPill,
   VersionCard,
   ViewMenu,
-  formatQuickEstimateBand,
 } from '../../ui/signatures';
 
 function formatRelativeDate(iso: string): string {
@@ -89,12 +88,11 @@ function formatLocaleUiDate(dateStr: string): string {
   if (!trimmed) return '';
   const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (match) {
-    const d = new Date(
+    return new Date(
       Number(match[1]),
       Number(match[2]) - 1,
       Number(match[3]),
-    );
-    return d.toLocaleDateString('en-US', {
+    ).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -132,23 +130,23 @@ const ALL_STATUSES: ApplicationStatus[] = [
   'Archived',
 ];
 
-type SortMode = 'best-fit' | 'recent';
-type ScoreFilterDimension = 'jobMatch' | 'recruiterAppeal' | 'atsReadiness';
-const SCORE_THRESHOLDS = [0, 60, 70, 80, 85] as const;
+const SCORE_THRESHOLDS = [0, 60, 70, 80, 85];
 
-export function ApplicationsView({
-  initialSelectedId,
-  onSelectApplication,
-  onOpenStudio,
-}: {
+interface ApplicationsViewProps {
   initialSelectedId?: string;
   onSelectApplication: (appId: string) => void;
   onOpenStudio: (
     appId: string,
     doc?: DocumentKind,
-    step?: StudioStep,
+    step?: 'job' | 'build' | 'write' | 'review',
   ) => void;
-}) {
+}
+
+export function ApplicationsView({
+  initialSelectedId,
+  onSelectApplication,
+  onOpenStudio,
+}: ApplicationsViewProps) {
   const useCases = useCevinUseCases();
   const navigate = useNavigate();
   const addToast = useUiStore((s) => s.addToast);
@@ -167,21 +165,21 @@ export function ApplicationsView({
     Record<string, DocumentVersion[]>
   >({});
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ApplicationStatus | 'All'>(
+  const [statusFilter, setStatusFilter] = useState<'All' | ApplicationStatus>(
     'All',
   );
-  const [minScoreFilter, setMinScoreFilter] = useState<number>(0);
-  const [scoreDimension, setScoreDimension] =
-    useState<ScoreFilterDimension>('jobMatch');
-  const [companyFilter, setCompanyFilter] = useState<string>('All');
-  const [roleFilter, setRoleFilter] = useState<string>('All');
-  const [sortMode, setSortMode] = useState<SortMode>('best-fit');
+  const [minScoreFilter, setMinScoreFilter] = useState(0);
+  const [scoreDimension, setScoreDimension] = useState<
+    'jobMatch' | 'recruiterAppeal' | 'atsReadiness'
+  >('jobMatch');
+  const [companyFilter, setCompanyFilter] = useState('All');
+  const [roleFilter, setRoleFilter] = useState('All');
+  const [sortMode, setSortMode] = useState<'best-fit' | 'recent'>('best-fit');
   const [hideConflicts, setHideConflicts] = useState(false);
   const [selectedId, setSelectedId] = useState<string | undefined>(
     initialSelectedId,
   );
-  const [versionKindTab, setVersionKindTab] =
-    useState<DocumentKind>('resume');
+  const [versionKindTab, setVersionKindTab] = useState<DocumentKind>('resume');
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareDrawerOpen, setCompareDrawerOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Application | null>(null);
@@ -198,13 +196,11 @@ export function ApplicationsView({
     setApplications(apps);
     setBank(loadedBank);
     setPreferences(loadedPrefs);
-
     const verMap: Record<string, DocumentVersion[]> = {};
     for (const app of apps) {
       verMap[app.id] = await useCases.manageApplications.listVersions(app.id);
     }
     setVersionsByApp(verMap);
-
     if (!selectedId && apps.length > 0) {
       const defaultApp =
         apps.find((a) => a.id === 'app-kestrel-infra') ?? apps[0];
@@ -217,37 +213,30 @@ export function ApplicationsView({
   }, [loadData]);
 
   useEffect(() => {
-    if (initialSelectedId) {
-      setSelectedId(initialSelectedId);
-    }
+    if (initialSelectedId) setSelectedId(initialSelectedId);
   }, [initialSelectedId]);
 
-  // Precompute JobFacts & PracticalFitEvaluation per application
   const fitByAppId = useMemo(() => {
     const map: Record<
       string,
-      {
-        facts: NonNullable<Application['jobFacts']>;
-        fit: PracticalFitEvaluation;
-      }
+      { facts: JobFacts; fit: PracticalFitEvaluation }
     > = {};
     for (const app of applications) {
       const facts =
-        app.jobFacts ??
-        extractJobFactsByRules(app.jobDescription ?? '').facts;
-      const fit = evaluateFit(facts, preferences);
+        app.jobFacts ?? extractJobFactsByRules(app.jobDescription ?? '');
+      const fit = evaluateFit(facts, preferences ?? null);
       map[app.id] = { facts, fit };
     }
     return map;
   }, [applications, preferences]);
 
-  // Non-empty status filters for quick tabs (plus currently selected status if empty)
-  const visibleStatusFilters = useMemo(() => {
-    const nonEmpty = ALL_STATUSES.filter(
-      (s) =>
-        applications.some((a) => a.status === s) || statusFilter === s,
-    );
-    return ['All' as const, ...nonEmpty];
+  const visibleStatusFilters = useMemo<Array<'All' | ApplicationStatus>>(() => {
+    return [
+      'All',
+      ...ALL_STATUSES.filter(
+        (s) => applications.some((a) => a.status === s) || statusFilter === s,
+      ),
+    ];
   }, [applications, statusFilter]);
 
   const distinctCompanies = useMemo(() => {
@@ -295,42 +284,39 @@ export function ApplicationsView({
       companyFilter === 'All' ? '' : companyFilter.trim().toLowerCase();
     const roleQuery =
       roleFilter === 'All' ? '' : roleFilter.trim().toLowerCase();
-
-    const list = applications.filter((app) => {
-      const matchesStatus =
-        statusFilter === 'All' || app.status === statusFilter;
-      const matchesSearch =
-        !q ||
-        app.company.toLowerCase().includes(q) ||
-        app.roleTitle.toLowerCase().includes(q);
-      const matchesCompany =
-        !companyQuery || app.company.toLowerCase().includes(companyQuery);
-      const matchesRole =
-        !roleQuery || app.roleTitle.toLowerCase().includes(roleQuery);
-
-      const appScore =
-        scoreDimension === 'recruiterAppeal'
-          ? (app.latestScores.recruiterAppeal ?? 78)
-          : scoreDimension === 'atsReadiness'
-            ? app.latestScores.atsReadiness
-            : app.latestScores.jobMatch;
-      const matchesScore = minScoreFilter <= 0 || appScore >= minScoreFilter;
-
-      const fitInfo = fitByAppId[app.id];
-      const passesConflictFilter =
-        !hideConflicts || (fitInfo?.fit.dealbreakerCount ?? 0) === 0;
-
-      return (
-        matchesStatus &&
-        matchesSearch &&
-        matchesCompany &&
-        matchesRole &&
-        matchesScore &&
-        passesConflictFilter
-      );
-    });
-
-    return [...list].sort((a, b) => {
+    return [
+      ...applications.filter((app) => {
+        const matchesStatus =
+          statusFilter === 'All' || app.status === statusFilter;
+        const matchesSearch =
+          !q ||
+          app.company.toLowerCase().includes(q) ||
+          app.roleTitle.toLowerCase().includes(q);
+        const matchesCompany =
+          !companyQuery || app.company.toLowerCase().includes(companyQuery);
+        const matchesRole =
+          !roleQuery || app.roleTitle.toLowerCase().includes(roleQuery);
+        const appScore =
+          scoreDimension === 'recruiterAppeal'
+            ? (app.latestScores.recruiterAppeal ?? 78)
+            : scoreDimension === 'atsReadiness'
+              ? app.latestScores.atsReadiness
+              : app.latestScores.jobMatch;
+        const matchesScore =
+          minScoreFilter <= 0 || appScore >= minScoreFilter;
+        const fitInfo = fitByAppId[app.id];
+        const passesConflictFilter =
+          !hideConflicts || (fitInfo?.fit.dealbreakerCount ?? 0) === 0;
+        return (
+          matchesStatus &&
+          matchesSearch &&
+          matchesCompany &&
+          matchesRole &&
+          matchesScore &&
+          passesConflictFilter
+        );
+      }),
+    ].sort((a, b) => {
       if (sortMode === 'best-fit') {
         const dealbreakerA = fitByAppId[a.id]?.fit.dealbreakerCount ?? 0;
         const dealbreakerB = fitByAppId[b.id]?.fit.dealbreakerCount ?? 0;
@@ -367,21 +353,19 @@ export function ApplicationsView({
 
   const allActiveVersions = useMemo(() => {
     if (!activeApp) return [];
-    return (versionsByApp[activeApp.id] ?? []).sort(
+    return [...(versionsByApp[activeApp.id] ?? [])].sort(
       (a, b) => b.number - a.number,
     );
   }, [activeApp, versionsByApp]);
 
   const resumeVersions = useMemo(
-    () =>
-      allActiveVersions.filter((v) => (v.kind ?? 'resume') === 'resume'),
+    () => allActiveVersions.filter((v) => (v.kind ?? 'resume') === 'resume'),
     [allActiveVersions],
   );
   const coverLetterVersions = useMemo(
     () => allActiveVersions.filter((v) => v.kind === 'coverLetter'),
     [allActiveVersions],
   );
-
   const visibleVersionsForTab =
     versionKindTab === 'coverLetter' ? coverLetterVersions : resumeVersions;
 
@@ -411,13 +395,6 @@ export function ApplicationsView({
     setGettingStartedDismissed,
     useCases,
   ]);
-
-  const handleDismissGettingStarted = async () => {
-    setGettingStartedDismissed(true);
-    await useCases.manageSettings.saveSettings({
-      gettingStartedDismissed: true,
-    });
-  };
 
   const handleStatusChange = async (
     app: Application,
@@ -499,7 +476,9 @@ export function ApplicationsView({
     });
   };
 
-  const comparedVersions = useMemo(() => {
+  const comparedVersions = useMemo<
+    [DocumentVersion, DocumentVersion] | null
+  >(() => {
     if (compareIds.length !== 2) return null;
     const vA = allActiveVersions.find((v) => v.id === compareIds[0]);
     const vB = allActiveVersions.find((v) => v.id === compareIds[1]);
@@ -507,7 +486,6 @@ export function ApplicationsView({
     return vA.number <= vB.number ? [vA, vB] : [vB, vA];
   }, [compareIds, allActiveVersions]);
 
-  // Compute deltas vs previous saved resume version
   const chronoResumeVersions = useMemo(
     () => [...resumeVersions].sort((a, b) => a.number - b.number),
     [resumeVersions],
@@ -518,7 +496,9 @@ export function ApplicationsView({
     return resumeVersions.length >= 2 ? resumeVersions[1] : resumeVersions[0];
   }, [resumeVersions]);
 
-  const refVerLabel = prevSavedResumeVer ? `v${prevSavedResumeVer.number}` : 'v1';
+  const refVerLabel = prevSavedResumeVer
+    ? `v${prevSavedResumeVer.number}`
+    : 'v1';
 
   const matchDelta =
     prevSavedResumeVer && activeApp && resumeVersions.length >= 1
@@ -551,7 +531,6 @@ export function ApplicationsView({
     });
   }, [activeApp, bank]);
 
-  // Stage-aware default for Job facts section
   const stageDefaultFactsMode = activeApp
     ? getStageDefaultFactsMode(activeApp.status)
     : 'strip-collapsed';
@@ -568,7 +547,6 @@ export function ApplicationsView({
   const isDetailsOpen = activeApp
     ? Boolean(detailsOpenByAppId[activeApp.id])
     : false;
-
   const hasSavedDetailsOrNotes = Boolean(
     activeApp &&
       (activeApp.notes?.trim() ||
@@ -587,34 +565,36 @@ export function ApplicationsView({
     <div className="space-y-6 pb-16">
       <PageHeader title="Applications" />
 
-      {applications.length === 0 && !gettingStartedDismissed && !allStepsComplete && (
-        <GettingStartedCard
-          aiConnectedOrDemo={aiReady}
-          hasExperience={hasExperience}
-          hasApplication={hasApplication}
-          isDemoDataLoaded={isDemoDataLoaded}
-          onConnectAi={() => navigate('/settings')}
-          onUseDemoMode={async () => {
-            await useCases.manageSettings.saveSettings({
-              activeProviderId: 'mock',
-            });
-            const status = await useCases.testLlmConnection.getSidebarStatus();
-            setConnectionStatus(status);
-            addToast('Switched to Demo mode.', 'success');
-          }}
-          onAddExperience={() => navigate('/bank')}
-          onCreateApplication={() => setNewAppModalOpen(true)}
-          onTryDemoData={async () => {
-            await useCases.manageBank.loadDemoWorkspace();
-            await loadData();
-            addToast('Loaded sample workspace.', 'success');
-          }}
-        />
-      )}
+      {applications.length === 0 &&
+        !gettingStartedDismissed &&
+        !allStepsComplete && (
+          <GettingStartedCard
+            aiConnectedOrDemo={aiReady}
+            hasExperience={hasExperience}
+            hasApplication={hasApplication}
+            isDemoDataLoaded={isDemoDataLoaded}
+            onConnectAi={() => navigate('/settings')}
+            onUseDemoMode={async () => {
+              await useCases.manageSettings.saveSettings({
+                activeProviderId: 'mock',
+              });
+              const status =
+                await useCases.testLlmConnection.getSidebarStatus();
+              setConnectionStatus(status);
+              addToast('Switched to Demo mode.', 'success');
+            }}
+            onAddExperience={() => navigate('/bank')}
+            onCreateApplication={() => setNewAppModalOpen(true)}
+            onTryDemoData={async () => {
+              await useCases.manageBank.loadDemoWorkspace();
+              await loadData();
+              addToast('Loaded sample workspace.', 'success');
+            }}
+          />
+        )}
 
       {applications.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Pane (4 cols): Search + ViewMenu, Status Tabs, Faceted Filters (Score, Role, Company, Status), Application List */}
           <div className="lg:col-span-4 bg-surface border border-border rounded-xl p-3.5 shadow-sm space-y-3">
             <div className="flex items-center gap-2">
               <div className="relative flex-1 min-w-0">
@@ -635,21 +615,19 @@ export function ApplicationsView({
               />
             </div>
 
-            {/* Status Filter Chips (synced with Status filter popover) */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-hairline">
               {visibleStatusFilters.map((status) => {
                 const count =
                   status === 'All'
                     ? applications.length
                     : applications.filter((a) => a.status === status).length;
-                const active = statusFilter === status;
                 return (
                   <button
                     key={status}
                     type="button"
                     onClick={() => setStatusFilter(status)}
                     className={`px-2.5 py-1 rounded-sm text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                      active
+                      statusFilter === status
                         ? 'bg-ink-900 text-ink-100 font-semibold'
                         : 'text-ink-muted hover:text-ink hover:bg-surface-sunken'
                     }`}
@@ -661,298 +639,296 @@ export function ApplicationsView({
               })}
             </div>
 
-            {/* Faceted Filter Bar: shown only when there are > 12 applications or active advanced filters */}
             {(applications.length > 12 ||
               minScoreFilter > 0 ||
               companyFilter !== 'All' ||
               roleFilter !== 'All') && (
-            <div
-              data-testid="applications-filter-bar"
-              className="flex flex-wrap items-center gap-1.5 pb-1 border-b border-hairline"
-            >
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-subtle mr-0.5">
-                <Filter className="w-3 h-3" />
-                <span>Filter:</span>
-              </span>
+              <div
+                data-testid="applications-filter-bar"
+                className="flex flex-wrap items-center gap-1.5 pb-1 border-b border-hairline"
+              >
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-subtle mr-0.5">
+                  <Funnel className="w-3 h-3" />
+                  <span>Filter:</span>
+                </span>
 
-              {/* 1. Score Filter */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    data-testid="filter-score-trigger"
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
-                      minScoreFilter > 0
-                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
-                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
-                    }`}
-                  >
-                    <span>
-                      {minScoreFilter > 0
-                        ? `${scoreDimensionShortLabel} ${minScoreFilter}+`
-                        : 'Score'}
-                    </span>
-                    <ChevronDown className="w-3 h-3 opacity-70" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-64 p-3 space-y-3">
-                  <div className="space-y-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
-                      Score metric
-                    </span>
-                    <div className="grid grid-cols-3 gap-1">
-                      {(
-                        [
-                          { id: 'jobMatch', label: 'Job match' },
-                          { id: 'recruiterAppeal', label: 'Appeal' },
-                          { id: 'atsReadiness', label: 'ATS check' },
-                        ] as const
-                      ).map((dim) => (
-                        <button
-                          key={dim.id}
-                          type="button"
-                          onClick={() => setScoreDimension(dim.id)}
-                          className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
-                            scoreDimension === dim.id
-                              ? 'bg-ink-900 text-ink-100 font-semibold'
-                              : 'bg-surface-sunken text-ink-muted hover:text-ink'
-                          }`}
-                        >
-                          {dim.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
-                      Minimum score
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {SCORE_THRESHOLDS.map((threshold) => (
-                        <button
-                          key={threshold}
-                          type="button"
-                          onClick={() => setMinScoreFilter(threshold)}
-                          className={`px-2.5 py-1 rounded text-xs font-medium tabular-nums transition-colors cursor-pointer ${
-                            minScoreFilter === threshold
-                              ? 'bg-accent text-white font-semibold'
-                              : 'bg-surface-sunken text-ink-muted hover:text-ink'
-                          }`}
-                        >
-                          {threshold === 0 ? 'Any' : `${threshold}+`}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-
-              {/* 2. Role Filter */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    data-testid="filter-role-trigger"
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
-                      roleFilter !== 'All'
-                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
-                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
-                    }`}
-                  >
-                    <span className="truncate">
-                      {roleFilter === 'All' ? 'Role' : roleFilter}
-                    </span>
-                    <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
-                    Filter by role
-                  </div>
-                  <Input
-                    value={roleFilter === 'All' ? '' : roleFilter}
-                    onChange={(e) =>
-                      setRoleFilter(e.target.value ? e.target.value : 'All')
-                    }
-                    placeholder="Type role keyword…"
-                    aria-label="Filter by role keyword"
-                  />
-                  <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
+                <Popover>
+                  <PopoverTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => setRoleFilter('All')}
-                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                        roleFilter === 'All'
-                          ? 'bg-ink-900 text-ink-100 font-semibold'
-                          : 'text-ink hover:bg-surface-sunken'
+                      data-testid="filter-score-trigger"
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                        minScoreFilter > 0
+                          ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                          : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
                       }`}
                     >
-                      <span>All roles</span>
-                      <span className="opacity-75 tabular-nums">
-                        {applications.length}
+                      <span>
+                        {minScoreFilter > 0
+                          ? `${scoreDimensionShortLabel} ${minScoreFilter}+`
+                          : 'Score'}
                       </span>
+                      <ChevronDown className="w-3 h-3 opacity-70" />
                     </button>
-                    {distinctRoles.map(([roleName, count]) => (
-                      <button
-                        key={roleName}
-                        type="button"
-                        onClick={() => setRoleFilter(roleName)}
-                        className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                          roleFilter === roleName
-                            ? 'bg-ink-900 text-ink-100 font-semibold'
-                            : 'text-ink hover:bg-surface-sunken'
-                        }`}
-                      >
-                        <span className="truncate">{roleName}</span>
-                        <span className="opacity-75 tabular-nums shrink-0">
-                          {count}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-64 p-3 space-y-3">
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                        Score metric
+                      </span>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(
+                          [
+                            { id: 'jobMatch', label: 'Job match' },
+                            { id: 'recruiterAppeal', label: 'Appeal' },
+                            { id: 'atsReadiness', label: 'ATS check' },
+                          ] as const
+                        ).map((dim) => (
+                          <button
+                            key={dim.id}
+                            type="button"
+                            onClick={() => setScoreDimension(dim.id)}
+                            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                              scoreDimension === dim.id
+                                ? 'bg-ink-900 text-ink-100 font-semibold'
+                                : 'bg-surface-sunken text-ink-muted hover:text-ink'
+                            }`}
+                          >
+                            {dim.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                        Minimum score
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {SCORE_THRESHOLDS.map((threshold) => (
+                          <button
+                            key={threshold}
+                            type="button"
+                            onClick={() => setMinScoreFilter(threshold)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium tabular-nums transition-colors cursor-pointer ${
+                              minScoreFilter === threshold
+                                ? 'bg-accent text-white font-semibold'
+                                : 'bg-surface-sunken text-ink-muted hover:text-ink'
+                            }`}
+                          >
+                            {threshold === 0 ? 'Any' : `${threshold}+`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-              {/* 3. Company Filter */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    data-testid="filter-company-trigger"
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
-                      companyFilter !== 'All'
-                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
-                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
-                    }`}
-                  >
-                    <span className="truncate">
-                      {companyFilter === 'All' ? 'Company' : companyFilter}
-                    </span>
-                    <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
-                    Filter by company
-                  </div>
-                  <Input
-                    value={companyFilter === 'All' ? '' : companyFilter}
-                    onChange={(e) =>
-                      setCompanyFilter(e.target.value ? e.target.value : 'All')
-                    }
-                    placeholder="Type company name…"
-                    aria-label="Filter by company name"
-                  />
-                  <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
+                <Popover>
+                  <PopoverTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => setCompanyFilter('All')}
-                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                        companyFilter === 'All'
-                          ? 'bg-ink-900 text-ink-100 font-semibold'
-                          : 'text-ink hover:bg-surface-sunken'
+                      data-testid="filter-role-trigger"
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
+                        roleFilter !== 'All'
+                          ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                          : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
                       }`}
                     >
-                      <span>All companies</span>
-                      <span className="opacity-75 tabular-nums">
-                        {applications.length}
+                      <span className="truncate">
+                        {roleFilter === 'All' ? 'Role' : roleFilter}
                       </span>
+                      <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
                     </button>
-                    {distinctCompanies.map(([compName, count]) => (
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
+                      Filter by role
+                    </div>
+                    <Input
+                      value={roleFilter === 'All' ? '' : roleFilter}
+                      onChange={(e) =>
+                        setRoleFilter(e.target.value ? e.target.value : 'All')
+                      }
+                      placeholder="Type role keyword…"
+                      aria-label="Filter by role keyword"
+                    />
+                    <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
                       <button
-                        key={compName}
                         type="button"
-                        onClick={() => setCompanyFilter(compName)}
-                        className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                          companyFilter === compName
-                            ? 'bg-ink-900 text-ink-100 font-semibold'
-                            : 'text-ink hover:bg-surface-sunken'
-                        }`}
-                      >
-                        <span className="truncate">{compName}</span>
-                        <span className="opacity-75 tabular-nums shrink-0">
-                          {count}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
-
-              {/* 4. Status Filter (synced with the top Status tabs, shows all statuses) */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    data-testid="filter-status-trigger"
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
-                      statusFilter !== 'All'
-                        ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
-                        : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
-                    }`}
-                  >
-                    <span>
-                      {statusFilter === 'All' ? 'Status' : statusFilter}
-                    </span>
-                    <ChevronDown className="w-3 h-3 opacity-70" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-52 p-2 space-y-1">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1.5 py-0.5">
-                    Application status
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('All')}
-                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                      statusFilter === 'All'
-                        ? 'bg-ink-900 text-ink-100 font-semibold'
-                        : 'text-ink hover:bg-surface-sunken'
-                    }`}
-                  >
-                    <span>All statuses</span>
-                    <span className="opacity-75 tabular-nums">
-                      {applications.length}
-                    </span>
-                  </button>
-                  {ALL_STATUSES.map((st) => {
-                    const count = applications.filter(
-                      (a) => a.status === st,
-                    ).length;
-                    return (
-                      <button
-                        key={st}
-                        type="button"
-                        onClick={() => setStatusFilter(st)}
+                        onClick={() => setRoleFilter('All')}
                         className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
-                          statusFilter === st
+                          roleFilter === 'All'
                             ? 'bg-ink-900 text-ink-100 font-semibold'
                             : 'text-ink hover:bg-surface-sunken'
                         }`}
                       >
-                        <span>{st}</span>
-                        <span className="opacity-75 tabular-nums">{count}</span>
+                        <span>All roles</span>
+                        <span className="opacity-75 tabular-nums">
+                          {applications.length}
+                        </span>
                       </button>
-                    );
-                  })}
-                </PopoverContent>
-              </Popover>
+                      {distinctRoles.map(([roleName, count]) => (
+                        <button
+                          key={roleName}
+                          type="button"
+                          onClick={() => setRoleFilter(roleName)}
+                          className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                            roleFilter === roleName
+                              ? 'bg-ink-900 text-ink-100 font-semibold'
+                              : 'text-ink hover:bg-surface-sunken'
+                          }`}
+                        >
+                          <span className="truncate">{roleName}</span>
+                          <span className="opacity-75 tabular-nums shrink-0">
+                            {count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
-              {hasActiveFilters && (
-                <button
-                  type="button"
-                  data-testid="reset-application-filters"
-                  onClick={handleResetFilters}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent-50 transition-colors cursor-pointer ml-auto"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Reset</span>
-                </button>
-              )}
-            </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="filter-company-trigger"
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer max-w-[140px] ${
+                        companyFilter !== 'All'
+                          ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                          : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
+                      }`}
+                    >
+                      <span className="truncate">
+                        {companyFilter === 'All' ? 'Company' : companyFilter}
+                      </span>
+                      <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-64 p-2.5 space-y-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1">
+                      Filter by company
+                    </div>
+                    <Input
+                      value={companyFilter === 'All' ? '' : companyFilter}
+                      onChange={(e) =>
+                        setCompanyFilter(
+                          e.target.value ? e.target.value : 'All',
+                        )
+                      }
+                      placeholder="Type company name…"
+                      aria-label="Filter by company name"
+                    />
+                    <div className="max-h-44 overflow-y-auto space-y-0.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setCompanyFilter('All')}
+                        className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                          companyFilter === 'All'
+                            ? 'bg-ink-900 text-ink-100 font-semibold'
+                            : 'text-ink hover:bg-surface-sunken'
+                        }`}
+                      >
+                        <span>All companies</span>
+                        <span className="opacity-75 tabular-nums">
+                          {applications.length}
+                        </span>
+                      </button>
+                      {distinctCompanies.map(([compName, count]) => (
+                        <button
+                          key={compName}
+                          type="button"
+                          onClick={() => setCompanyFilter(compName)}
+                          className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                            companyFilter === compName
+                              ? 'bg-ink-900 text-ink-100 font-semibold'
+                              : 'text-ink hover:bg-surface-sunken'
+                          }`}
+                        >
+                          <span className="truncate">{compName}</span>
+                          <span className="opacity-75 tabular-nums shrink-0">
+                            {count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="filter-status-trigger"
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                        statusFilter !== 'All'
+                          ? 'bg-accent-50 text-accent-900 border-accent/40 font-semibold'
+                          : 'bg-surface-sunken/70 text-ink-muted border-hairline hover:text-ink hover:border-border-strong'
+                      }`}
+                    >
+                      <span>
+                        {statusFilter === 'All' ? 'Status' : statusFilter}
+                      </span>
+                      <ChevronDown className="w-3 h-3 opacity-70" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-52 p-2 space-y-1">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted px-1.5 py-0.5">
+                      Application status
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStatusFilter('All')}
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                        statusFilter === 'All'
+                          ? 'bg-ink-900 text-ink-100 font-semibold'
+                          : 'text-ink hover:bg-surface-sunken'
+                      }`}
+                    >
+                      <span>All statuses</span>
+                      <span className="opacity-75 tabular-nums">
+                        {applications.length}
+                      </span>
+                    </button>
+                    {ALL_STATUSES.map((st) => {
+                      const count = applications.filter(
+                        (a) => a.status === st,
+                      ).length;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setStatusFilter(st)}
+                          className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-left cursor-pointer ${
+                            statusFilter === st
+                              ? 'bg-ink-900 text-ink-100 font-semibold'
+                              : 'text-ink hover:bg-surface-sunken'
+                          }`}
+                        >
+                          <span>{st}</span>
+                          <span className="opacity-75 tabular-nums">
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </PopoverContent>
+                </Popover>
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    data-testid="reset-application-filters"
+                    onClick={handleResetFilters}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent-50 transition-colors cursor-pointer ml-auto"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset</span>
+                  </button>
+                )}
+              </div>
             )}
 
-            {/* Application rows: fixed 3-row structure + right ScoreRing/EstimateRing (max 1 AttentionToken) */}
             <div className="space-y-1.5 max-h-[640px] overflow-y-auto pr-0.5">
               {filteredApps.length === 0 ? (
                 <div className="py-8 px-4 text-center space-y-2 rounded-lg border border-dashed border-hairline">
@@ -960,7 +936,8 @@ export function ApplicationsView({
                     No applications match the current filters.
                   </p>
                   <p className="text-[11px] text-ink-muted">
-                    Try lowering the minimum score or clearing role, company, or status filters.
+                    Try lowering the minimum score or clearing role, company, or
+                    status filters.
                   </p>
                   {hasActiveFilters && (
                     <Button
@@ -983,7 +960,6 @@ export function ApplicationsView({
                         firstGapTerm: app.latestScores.gapKeywords[0],
                       })
                     : null;
-
                   return (
                     <div
                       key={app.id}
@@ -1026,23 +1002,18 @@ export function ApplicationsView({
                             className="mt-0.5 shrink-0"
                           />
                           <div className="min-w-0 flex-1 space-y-1">
-                            {/* Row 1: company + status pill */}
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-semibold text-sm text-ink truncate">
                                 {app.company}
                               </span>
                               <StatusBadge status={app.status} />
                             </div>
-
-                            {/* Row 2: role title */}
                             <p
                               className="text-xs text-ink-muted truncate"
                               title={app.roleTitle}
                             >
                               {app.roleTitle}
                             </p>
-
-                            {/* Row 3: relative date + at most ONE AttentionToken */}
                             <div className="flex items-center gap-2 pt-0.5 min-h-[22px]">
                               <span className="text-xs text-ink-subtle tabular-nums shrink-0">
                                 {formatRelativeDate(app.updatedAt)}
@@ -1053,8 +1024,6 @@ export function ApplicationsView({
                             </div>
                           </div>
                         </div>
-
-                        {/* Right: 36px ScoreRing or EstimateRing */}
                         <div className="shrink-0 pl-1">
                           {app.status === 'Prospect' ? (
                             <EstimateRing score={app.latestScores.jobMatch} />
@@ -1073,11 +1042,9 @@ export function ApplicationsView({
             </div>
           </div>
 
-          {/* Right Pane (8 cols): Application Detail */}
           <div className="lg:col-span-8">
             {activeApp && (
               <div className="bg-surface border border-border rounded-xl p-6 shadow-sm space-y-5">
-                {/* 1. Detail Header */}
                 <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-hairline">
                   <div className="flex items-start gap-4 min-w-0">
                     <Avatar name={activeApp.company} size="lg" />
@@ -1096,7 +1063,10 @@ export function ApplicationsView({
                               <Pencil className="w-4 h-4 text-ink-muted opacity-40 group-hover:opacity-100 transition-opacity" />
                             </button>
                           </PopoverTrigger>
-                          <PopoverContent align="start" className="w-80 p-4 space-y-3">
+                          <PopoverContent
+                            align="start"
+                            className="w-80 p-4 space-y-3"
+                          >
                             <div className="text-xs font-semibold text-ink">
                               Edit Target Company & Role
                             </div>
@@ -1107,7 +1077,7 @@ export function ApplicationsView({
                               <Input
                                 value={activeApp.company}
                                 onChange={(e) => {
-                                  const updated = {
+                                  const updated: Application = {
                                     ...activeApp,
                                     company: e.target.value,
                                     parsedJob: activeApp.parsedJob
@@ -1136,7 +1106,7 @@ export function ApplicationsView({
                               <Input
                                 value={activeApp.roleTitle}
                                 onChange={(e) => {
-                                  const updated = {
+                                  const updated: Application = {
                                     ...activeApp,
                                     roleTitle: e.target.value,
                                     parsedJob: activeApp.parsedJob
@@ -1237,28 +1207,22 @@ export function ApplicationsView({
                           label="More application actions"
                           variant="secondary"
                         >
-                          <MoreHorizontal className="w-4 h-4" />
+                          <Ellipsis className="w-4 h-4" />
                         </IconButton>
                       </PopoverTrigger>
                       <PopoverContent align="end" className="w-56 p-1">
-                        <div role="menu" aria-label="Application actions">
-                          {activeApp.status !== 'Prospect' && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() =>
-                                onOpenStudio(
-                                  activeApp.id,
-                                  'coverLetter',
-                                  'write',
-                                )
-                              }
-                              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              <span>Open cover letter</span>
-                            </button>
-                          )}
+                        <div role="menu">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                              onOpenStudio(activeApp.id, 'coverLetter', 'write')
+                            }
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-ink rounded-sm hover:bg-surface-raised text-left cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Open cover letter</span>
+                          </button>
                           <button
                             type="button"
                             role="menuitem"
@@ -1301,7 +1265,6 @@ export function ApplicationsView({
                   </div>
                 </div>
 
-                {/* Accessible Application Details & Notes strip / form */}
                 {isDetailsOpen ? (
                   <ApplicationDetailsForm
                     postingUrl={activeApp.postingUrl}
@@ -1342,12 +1305,13 @@ export function ApplicationsView({
                       }
                       className="text-xs font-semibold text-accent hover:underline shrink-0 cursor-pointer"
                     >
-                      {hasSavedDetailsOrNotes ? 'Edit details & notes' : 'Add details & notes'}
+                      {hasSavedDetailsOrNotes
+                        ? 'Edit details & notes'
+                        : 'Add details & notes'}
                     </button>
                   </div>
                 )}
 
-                {/* 2. SCORE ROW ALWAYS FIRST (never displaced below the fold by Job facts) */}
                 {activeApp.status === 'Prospect' ? (
                   <div className="space-y-4" data-testid="detail-score-row">
                     <div className="p-4 rounded-lg bg-surface-sunken/70 border border-hairline flex flex-wrap items-center justify-between gap-4">
@@ -1362,7 +1326,8 @@ export function ApplicationsView({
                             )}
                           </span>
                           <span className="text-xs text-ink-muted">
-                            5-point band against your Experience Bank before tailoring
+                            5-point band against your Experience Bank before
+                            tailoring
                           </span>
                         </div>
                       </div>
@@ -1371,7 +1336,6 @@ export function ApplicationsView({
                         size="md"
                       />
                     </div>
-
                     {activeCoverage && (
                       <CoverageSummary summary={activeCoverage} />
                     )}
@@ -1404,7 +1368,8 @@ export function ApplicationsView({
                         />
                       </div>
                       <p className="text-xs text-ink-muted truncate tabular-nums">
-                        {activeApp.latestScores.coveredKeywords.length} covered ·{' '}
+                        {activeApp.latestScores.coveredKeywords.length} covered
+                        ·{' '}
                         {formatCount(
                           activeApp.latestScores.gapKeywords.length,
                           'gap',
@@ -1482,7 +1447,16 @@ export function ApplicationsView({
                       <div className="flex items-baseline gap-2 h-9">
                         <span className="font-display text-[32px] font-bold text-ink leading-none tabular-nums">
                           {activeFitInfo
-                            ? `${activeFitInfo.fit.fitsCount ?? activeFitInfo.fit.fittingItems?.length ?? 0}/${Math.max(1, activeFitInfo.fit.orderedItems?.length ?? activeFitInfo.fit.items?.length ?? 5)}`
+                            ? `${
+                                activeFitInfo.fit.fitsCount ??
+                                activeFitInfo.fit.fittingItems?.length ??
+                                0
+                              }/${Math.max(
+                                1,
+                                activeFitInfo.fit.orderedItems?.length ??
+                                  activeFitInfo.fit.items?.length ??
+                                  5,
+                              )}`
                             : '—'}
                         </span>
                       </div>
@@ -1497,7 +1471,6 @@ export function ApplicationsView({
                   </div>
                 )}
 
-                {/* 3. One-line FitStrip + stage-aware collapsible JobFactsTable */}
                 {activeFitInfo && (
                   <div className="space-y-2.5">
                     {isFactsHiddenBehindLink ? (
@@ -1542,12 +1515,9 @@ export function ApplicationsView({
                   </div>
                 )}
 
-                {/* 4. Prospect Requirements OR Tailored Saved Versions */}
                 {activeApp.status === 'Prospect' ? (
                   activeCoverage &&
-                  bank && (
-                    <RequirementGroup summary={activeCoverage} bank={bank} />
-                  )
+                  bank && <RequirementGroup summary={activeCoverage} bank={bank} />
                 ) : (
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1577,7 +1547,6 @@ export function ApplicationsView({
                           ]}
                         />
                       </div>
-
                       <Button
                         variant="secondary"
                         size="sm"
@@ -1591,7 +1560,11 @@ export function ApplicationsView({
                           if (res.ok) {
                             await loadData();
                             addToast(
-                              `Saved ${versionKindTab === 'coverLetter' ? 'cover letter' : 'resume'} snapshot v${res.value.number}.`,
+                              `Saved ${
+                                versionKindTab === 'coverLetter'
+                                  ? 'cover letter'
+                                  : 'resume'
+                              } snapshot v${res.value.number}.`,
                               'success',
                             );
                           }
@@ -1608,7 +1581,8 @@ export function ApplicationsView({
                         {versionKindTab === 'coverLetter'
                           ? 'cover letter'
                           : 'resume'}{' '}
-                        snapshots yet. Export or click “Save current draft” to create v1.
+                        snapshots yet. Export or click “Save current draft” to
+                        create v1.
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -1616,35 +1590,30 @@ export function ApplicationsView({
                           <VersionCard
                             key={ver.id}
                             version={ver}
-                            bank={bank}
+                            bank={bank!}
                             targetCompany={activeApp.company}
                             targetRole={activeApp.roleTitle}
                             isLatest={idx === 0}
                             isSelectedForCompare={compareIds.includes(ver.id)}
-                            onToggleCompare={() =>
-                              handleToggleCompare(ver.id)
-                            }
+                            onToggleCompare={() => handleToggleCompare(ver.id)}
                             onOpenInStudio={() =>
                               onOpenStudio(
                                 activeApp.id,
                                 ver.kind === 'coverLetter'
                                   ? 'coverLetter'
                                   : 'resume',
-                                ver.kind === 'coverLetter'
-                                  ? 'write'
-                                  : 'build',
+                                ver.kind === 'coverLetter' ? 'write' : 'build',
                               )
                             }
                             onExportVersion={async () => {
-                              const r =
-                                await useCases.exportDocument.execute({
-                                  applicationId: activeApp.id,
-                                  exporterId: 'pdf',
-                                  templateId: ver.templateId,
-                                  kind: ver.kind ?? 'resume',
-                                  versionId: ver.id,
-                                  autoSaveVersion: false,
-                                });
+                              const r = await useCases.exportDocument.execute({
+                                applicationId: activeApp.id,
+                                exporterId: 'pdf',
+                                templateId: ver.templateId,
+                                kind: ver.kind ?? 'resume',
+                                versionId: ver.id,
+                                autoSaveVersion: false,
+                              });
                               if (r.ok) {
                                 triggerBlobDownload(
                                   r.value.blob,
@@ -1674,7 +1643,6 @@ export function ApplicationsView({
         </div>
       )}
 
-      {/* Floating Bottom Action Pill when 2 versions are checked */}
       {comparedVersions && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-full bg-sidebar text-ink-100 shadow-lg border border-ink-800">
           <GitCompare className="w-4 h-4 text-sky-400" />
@@ -1699,7 +1667,6 @@ export function ApplicationsView({
         </div>
       )}
 
-      {/* Side-by-side Version Comparison Drawer */}
       <Drawer
         open={compareDrawerOpen && Boolean(comparedVersions)}
         onOpenChange={setCompareDrawerOpen}
@@ -1734,22 +1701,23 @@ export function ApplicationsView({
                 </div>
               </div>
             </div>
-
-            {(comparedVersions[1].content?.bullets ?? []).map((bRight, idx) => {
-              const bLeft =
-                comparedVersions[0].content?.bullets.find(
-                  (b) => b.id === bRight.id,
-                ) ?? comparedVersions[0].content?.bullets[idx];
-              return (
-                <DiffText
-                  key={bRight.id}
-                  originalText={
-                    bLeft?.text ?? '(Not included in earlier version)'
-                  }
-                  tailoredText={bRight.text}
-                />
-              );
-            })}
+            {(comparedVersions[1].content?.bullets ?? []).map(
+              (bRight, idx) => {
+                const bLeft =
+                  comparedVersions[0].content?.bullets.find(
+                    (b) => b.id === bRight.id,
+                  ) ?? comparedVersions[0].content?.bullets[idx];
+                return (
+                  <DiffText
+                    key={bRight.id}
+                    originalText={
+                      bLeft?.text ?? '(Not included in earlier version)'
+                    }
+                    tailoredText={bRight.text}
+                  />
+                );
+              },
+            )}
           </div>
         )}
       </Drawer>

@@ -1,5 +1,4 @@
-import { Monitor } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Navigate,
   Route,
@@ -8,7 +7,9 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
+import { Monitor } from 'lucide-react';
 import { CevinUseCases } from '../../../core/application';
+import { AppSettings } from '../../../core/application';
 import { DocumentKind, StudioStep } from '../../../core/domain';
 import {
   CevinContainerContext,
@@ -16,18 +17,13 @@ import {
   useCevinUseCases,
   useUiStore,
 } from './context';
+import { ToastBanner, TooltipProvider } from './ui/primitives';
+import { CommandPalette, QuickCheckDialog, SidebarNav } from './ui/signatures';
 import { ApplicationsView } from './features/applications/ApplicationsView';
 import { BankView } from './features/bank/BankView';
 import { DesignSystemView } from './features/design-system/DesignSystemView';
 import { SettingsView } from './features/settings/SettingsView';
 import { StudioView } from './features/studio/StudioView';
-import {
-  CommandPalette,
-  QuickCheckDialog,
-  SidebarNav,
-  ToastBanner,
-  TooltipProvider,
-} from './ui';
 
 function StudioIndexRedirect() {
   const { id } = useParams<{ id: string }>();
@@ -42,14 +38,10 @@ function StudioRouteWrapper() {
     step: string;
   }>();
   const navigate = useNavigate();
-
-  if (!id) {
-    return <Navigate to="/applications" replace />;
-  }
+  if (!id) return <Navigate to="/applications" replace />;
 
   const normalizedDoc: DocumentKind =
     doc === 'cover-letter' ? 'coverLetter' : 'resume';
-
   const validSteps: StudioStep[] = ['job', 'build', 'write', 'review'];
   const normalizedStep: StudioStep = validSteps.includes(step as StudioStep)
     ? (step as StudioStep)
@@ -63,8 +55,9 @@ function StudioRouteWrapper() {
       activeDoc={normalizedDoc}
       activeStep={normalizedStep}
       onNavigateStudio={(nextDoc, nextStep) => {
-        const docSlug = nextDoc === 'coverLetter' ? 'cover-letter' : 'resume';
-        navigate(`/applications/${id}/studio/${docSlug}/${nextStep}`);
+        navigate(
+          `/applications/${id}/studio/${nextDoc === 'coverLetter' ? 'cover-letter' : 'resume'}/${nextStep}`,
+        );
       }}
       onBackToApplications={() => navigate(`/applications/${id}`)}
     />
@@ -72,7 +65,7 @@ function StudioRouteWrapper() {
 }
 
 function ApplicationsRouteWrapper() {
-  const { id } = useParams<{ id?: string }>();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   return (
@@ -82,10 +75,9 @@ function ApplicationsRouteWrapper() {
         navigate(`/applications/${appId}`, { replace: true });
       }}
       onOpenStudio={(appId, doc = 'resume', step) => {
-        const docSlug = doc === 'coverLetter' ? 'cover-letter' : 'resume';
-        const targetStep =
-          step ?? (doc === 'coverLetter' ? 'write' : 'build');
-        navigate(`/applications/${appId}/studio/${docSlug}/${targetStep}`);
+        navigate(
+          `/applications/${appId}/studio/${doc === 'coverLetter' ? 'cover-letter' : 'resume'}/${step ?? (doc === 'coverLetter' ? 'write' : 'build')}`,
+        );
       }}
     />
   );
@@ -120,7 +112,7 @@ function InnerWorkspace() {
   const isStudioRoute = location.pathname.includes('/studio/');
 
   const applyThemeToDocument = useCallback(
-    (nextTheme: 'light' | 'dark' | 'system') => {
+    (nextTheme: AppSettings['theme']) => {
       if (typeof document === 'undefined') return;
       const prefersDark =
         typeof window !== 'undefined' &&
@@ -129,11 +121,8 @@ function InnerWorkspace() {
       const isDark =
         nextTheme === 'dark' || (nextTheme === 'system' && prefersDark);
       document.documentElement.classList.add('scheme-light', 'dark:scheme-dark');
-      if (isDark) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
+      if (isDark) document.documentElement.classList.add('dark');
+      else document.documentElement.classList.remove('dark');
     },
     [],
   );
@@ -192,8 +181,7 @@ function InnerWorkspace() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const isMod = e.metaKey || e.ctrlKey;
-      if (!isMod) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
       const key = e.key.toLowerCase();
       if (key === 'k') {
         e.preventDefault();
@@ -218,26 +206,24 @@ function InnerWorkspace() {
   };
 
   const handleToggleTheme = async () => {
-    const current = await useCases.manageSettings.getSettings();
-    const nextTheme = current.theme === 'dark' ? 'light' : 'dark';
+    const nextTheme: AppSettings['theme'] =
+      (await useCases.manageSettings.getSettings()).theme === 'dark'
+        ? 'light'
+        : 'dark';
     await useCases.manageSettings.saveSettings({ theme: nextTheme });
     applyThemeToDocument(nextTheme);
   };
 
-  const activeNavSection: 'applications' | 'bank' | 'settings' | 'design-system' =
-    location.pathname.startsWith('/bank')
-      ? 'bank'
-      : location.pathname.startsWith('/settings')
-        ? 'settings'
-        : location.pathname.startsWith('/design-system')
-          ? 'design-system'
-          : 'applications';
-
-  const effectiveCollapsed = sidebarCollapsed || autoCollapsedByViewport;
+  const activeNavSection = location.pathname.startsWith('/bank')
+    ? 'bank'
+    : location.pathname.startsWith('/settings')
+      ? 'settings'
+      : location.pathname.startsWith('/design-system')
+        ? 'design-system'
+        : 'applications';
 
   return (
     <TooltipProvider>
-      {/* Below 1024px friendly notice */}
       <div className="flex lg:hidden min-h-screen items-center justify-center p-8 bg-canvas text-ink scheme-light dark:scheme-dark">
         <div className="max-w-md bg-surface border border-border rounded-xl p-6 text-center space-y-3 shadow-md">
           <Monitor className="w-8 h-8 text-accent mx-auto" />
@@ -245,16 +231,17 @@ function InnerWorkspace() {
             Cevin is designed for larger screens
           </h1>
           <p className="text-sm text-ink-muted leading-relaxed">
-            Tailoring a resume or cover letter side-by-side with a live document preview works best on a desktop or laptop monitor (1024px and wider).
+            Tailoring a resume or cover letter side-by-side with a live document
+            preview works best on a desktop or laptop monitor (1024px and
+            wider).
           </p>
         </div>
       </div>
 
-      {/* Desktop 1024px+ Workspace with Single Labeled Sidebar (No Top Bar) */}
       <div className="hidden lg:flex min-h-screen bg-canvas text-ink scheme-light dark:scheme-dark">
         <SidebarNav
           activeSection={activeNavSection}
-          collapsed={effectiveCollapsed}
+          collapsed={sidebarCollapsed || autoCollapsedByViewport}
           overlayExpanded={autoCollapsedByViewport && studioOverlayExpanded}
           onCloseOverlay={() => setStudioOverlayExpanded(false)}
           onToggleCollapsed={() => void handleToggleCollapse()}
@@ -304,7 +291,6 @@ function InnerWorkspace() {
         </div>
       </div>
 
-      {/* Global Quick Check & New Application Modal (⌘N) */}
       <QuickCheckDialog
         open={newAppModalOpen}
         onOpenChange={setNewAppModalOpen}
@@ -313,25 +299,17 @@ function InnerWorkspace() {
           const created =
             await useCases.quickCheck.startTailoringFromQuickCheck(params);
           setNewAppModalOpen(false);
-          addToast(
-            `Started tailoring for ${created.company}`,
-            'success',
-          );
+          addToast(`Started tailoring for ${created.company}`, 'success');
           navigate(`/applications/${created.id}/studio/resume/build`);
         }}
         onSaveAsProspect={async (params) => {
-          const created =
-            await useCases.quickCheck.saveAsProspect(params);
+          const created = await useCases.quickCheck.saveAsProspect(params);
           setNewAppModalOpen(false);
-          addToast(
-            `Saved ${created.company} as a prospect`,
-            'info',
-          );
+          addToast(`Saved ${created.company} as a prospect`, 'info');
           navigate(`/applications/${created.id}`);
         }}
       />
 
-      {/* Command Palette (Ctrl/⌘+K) */}
       <CommandPalette
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}

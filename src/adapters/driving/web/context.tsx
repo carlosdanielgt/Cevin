@@ -1,20 +1,53 @@
-import React, { createContext, useContext } from 'react';
-import { create } from 'zustand';
 import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { create } from 'zustand';
+import type {
   CevinActivitySnapshot,
   CevinUseCases,
   SidebarConnectionStatus,
 } from '../../../core/application';
 import {
-  CevinActivityKind,
-  CevinMarkState,
-  CevinTimingSnapshot,
   advanceTimingMachine,
   createInitialTimingSnapshot,
   notifyThinkingLoopIteration,
   stepTimingMachine,
+  type CevinActivityKind,
+  type CevinMarkVisualState,
+  type CevinTimingSnapshot,
 } from '../../../core/domain';
-import { ToastMessage } from './ui';
+
+export type PreviewZoom = 'sm' | 'md' | 'lg';
+
+export interface ToastMessage {
+  id: string;
+  title?: string;
+  message?: string;
+  variant?: 'info' | 'success' | 'danger' | 'warning';
+  tone?: 'danger' | 'info' | 'success' | 'warning';
+  actionLabel?: string;
+  undoLabel?: string;
+  onAction?: () => void;
+  onUndo?: () => void;
+}
+
+export interface CevinActivityViewState {
+  visible: boolean;
+  visualState: CevinMarkVisualState;
+  label: string;
+  announcement: string;
+  kind: CevinActivityKind;
+  progress?: number;
+  batchCompleted?: number;
+  batchTotal?: number;
+  rawSnapshot: CevinActivitySnapshot;
+  handleThinkingLoopIteration: () => void;
+}
 
 export const CevinContainerContext = createContext<CevinUseCases | null>(null);
 
@@ -28,19 +61,6 @@ export function useCevinUseCases(): CevinUseCases {
   return ctx;
 }
 
-export interface CevinActivityViewState {
-  visible: boolean;
-  visualState: CevinMarkState;
-  label: string;
-  announcement: string;
-  kind: CevinActivityKind;
-  progress?: number;
-  batchCompleted?: number;
-  batchTotal?: number;
-  rawSnapshot: CevinActivitySnapshot;
-  handleThinkingLoopIteration: () => void;
-}
-
 /**
  * Single hook reading live LLM gateway activity (`idle | thinking | writing | warming`)
  * from the inbound port (`useCases.activity`) and applying the CevinMark timing rules:
@@ -51,16 +71,16 @@ export interface CevinActivityViewState {
  */
 export function useCevinActivity(): CevinActivityViewState {
   const useCases = useCevinUseCases();
-  const [rawSnapshot, setRawSnapshot] = React.useState<CevinActivitySnapshot>(
-    () => useCases.activity.getSnapshot(),
+  const [rawSnapshot, setRawSnapshot] = useState<CevinActivitySnapshot>(() =>
+    useCases.activity.getSnapshot(),
   );
-  const [timing, setTiming] = React.useState<CevinTimingSnapshot>(() =>
+  const [timing, setTiming] = useState<CevinTimingSnapshot>(() =>
     createInitialTimingSnapshot(),
   );
-  const lastAnnouncedPhaseRef = React.useRef<string>('');
-  const [announcement, setAnnouncement] = React.useState<string>('');
+  const lastAnnouncedPhaseRef = useRef('');
+  const [announcement, setAnnouncement] = useState('');
 
-  React.useEffect(() => {
+  useEffect(() => {
     setRawSnapshot(useCases.activity.getSnapshot());
     return useCases.activity.subscribe((nextSnap) => {
       setRawSnapshot(nextSnap);
@@ -76,7 +96,7 @@ export function useCevinActivity(): CevinActivityViewState {
     });
   }, [useCases]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const now = Date.now();
     setTiming((prev) =>
       stepTimingMachine(prev, {
@@ -94,19 +114,24 @@ export function useCevinActivity(): CevinActivityViewState {
     rawSnapshot.batchTotal,
   ]);
 
-  React.useEffect(() => {
-    const needsTick =
-      timing.pendingShowSinceMs !== null ||
-      timing.handoffToWritingRequestedAtMs !== null ||
-      timing.doneStartedAtMs !== null ||
-      (timing.visible &&
-        rawSnapshot.phase === 'idle' &&
-        timing.shownAtMs !== null);
-    if (!needsTick) return undefined;
+  useEffect(() => {
+    if (
+      !(
+        timing.pendingShowSinceMs !== null ||
+        timing.handoffToWritingRequestedAtMs !== null ||
+        timing.doneStartedAtMs !== null ||
+        (timing.visible &&
+          rawSnapshot.phase === 'idle' &&
+          timing.shownAtMs !== null)
+      )
+    ) {
+      return undefined;
+    }
 
     const timer = setInterval(() => {
       setTiming((prev) => advanceTimingMachine(prev, Date.now()));
     }, 60);
+
     return () => clearInterval(timer);
   }, [
     timing.pendingShowSinceMs,
@@ -117,7 +142,7 @@ export function useCevinActivity(): CevinActivityViewState {
     rawSnapshot.phase,
   ]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const phaseKey = timing.visible
       ? `${timing.visualState}:${timing.kind}`
       : 'idle';
@@ -127,7 +152,7 @@ export function useCevinActivity(): CevinActivityViewState {
     }
   }, [timing.visible, timing.visualState, timing.kind, timing.label]);
 
-  const handleThinkingLoopIteration = React.useCallback(() => {
+  const handleThinkingLoopIteration = useCallback(() => {
     setTiming((prev) => notifyThinkingLoopIteration(prev, Date.now()));
   }, []);
 
@@ -145,25 +170,25 @@ export function useCevinActivity(): CevinActivityViewState {
   };
 }
 
-interface ToastOptions {
-  variant?: ToastMessage['variant'];
-  actionLabel?: string;
-  onAction?: () => void;
-}
-
 interface UiState {
   toasts: ToastMessage[];
   addToast: (
     title: string,
-    variantOrOptions?: ToastMessage['variant'] | ToastOptions,
+    variantOrOptions?:
+      | ToastMessage['variant']
+      | {
+          variant?: ToastMessage['variant'];
+          actionLabel?: string;
+          onAction?: () => void;
+        },
   ) => void;
   dismissToast: (id: string) => void;
   newAppModalOpen: boolean;
   setNewAppModalOpen: (open: boolean) => void;
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
-  previewZoom: 'sm' | 'md' | 'lg';
-  setPreviewZoom: (zoom: 'sm' | 'md' | 'lg') => void;
+  previewZoom: PreviewZoom;
+  setPreviewZoom: (zoom: PreviewZoom) => void;
   connectionStatus: SidebarConnectionStatus;
   setConnectionStatus: (status: SidebarConnectionStatus) => void;
   gettingStartedDismissed: boolean;
@@ -174,7 +199,7 @@ export const useUiStore = create<UiState>((set) => ({
   toasts: [],
   addToast: (title, variantOrOptions = 'info') => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const opts: ToastOptions =
+    const opts =
       typeof variantOrOptions === 'string'
         ? { variant: variantOrOptions }
         : variantOrOptions;
@@ -185,19 +210,13 @@ export const useUiStore = create<UiState>((set) => ({
       actionLabel: opts.actionLabel,
       onAction: opts.onAction,
     };
-    set((state) => ({
-      toasts: [...state.toasts, message],
-    }));
+    set((state) => ({ toasts: [...state.toasts, message] }));
     setTimeout(() => {
-      set((state) => ({
-        toasts: state.toasts.filter((t) => t.id !== id),
-      }));
+      set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
     }, 5000);
   },
   dismissToast: (id) =>
-    set((state) => ({
-      toasts: state.toasts.filter((t) => t.id !== id),
-    })),
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
   newAppModalOpen: false,
   setNewAppModalOpen: (open) => set({ newAppModalOpen: open }),
   commandPaletteOpen: false,
@@ -215,4 +234,3 @@ export const useUiStore = create<UiState>((set) => ({
   setGettingStartedDismissed: (dismissed) =>
     set({ gettingStartedDismissed: dismissed }),
 }));
-

@@ -1,6 +1,32 @@
 import { ImporterCatalog, ResumeImporter } from '../../../core/application';
+import { RawDocument } from '../../../core/domain';
 import { markdownResumeImporter } from './markdown';
-import { pdfResumeImporter } from './pdf';
+import { extractPdfTextFromBuffer } from './pdf';
+
+export const pdfResumeImporter: ResumeImporter = {
+  id: 'pdf',
+  label: 'PDF Document',
+  accepts: {
+    extensions: ['.pdf'],
+    mimeTypes: ['application/pdf'],
+  },
+  async parse(file: File): Promise<RawDocument> {
+    const { text, pageCount } = await extractPdfTextFromBuffer(
+      await file.arrayBuffer(),
+    );
+    if (!text || text.trim().length < 20) {
+      throw new Error(
+        'SCANNED_PDF: No selectable text layer found in PDF. OCR is not supported.',
+      );
+    }
+    return {
+      fileName: file.name,
+      formatId: 'pdf',
+      text,
+      pageCount,
+    };
+  },
+};
 
 /**
  * Registry of ResumeImporters.
@@ -13,13 +39,13 @@ const REGISTERED_IMPORTERS: ResumeImporter[] = [
 
 export function createImporterCatalog(): ImporterCatalog {
   return {
-    list() {
+    list(): ResumeImporter[] {
       return [...REGISTERED_IMPORTERS];
     },
-    getById(id: string) {
+    getById(id: string): ResumeImporter | undefined {
       return REGISTERED_IMPORTERS.find((i) => i.id === id);
     },
-    findByFile(fileName: string, mimeType: string) {
+    findByFile(fileName: string, mimeType: string): ResumeImporter | undefined {
       const lowerName = fileName.toLowerCase();
       return REGISTERED_IMPORTERS.find(
         (imp) =>

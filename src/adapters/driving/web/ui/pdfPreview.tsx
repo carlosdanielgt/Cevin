@@ -1,25 +1,38 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import {
-  BlockBoundingBox,
-  CoverLetterDocument,
-  ExportableDocument,
-  PAGE_SIZES,
-  PageSize,
-  PositionedText,
-  ResumeDocument,
-  TemplateId,
   locateBlocks,
   measureTextWidthPt,
+  PAGE_SIZES,
   renderDocumentToPdfArtifact,
   segmentBulletForSkimAndHighlight,
+  type CoverLetterDocument,
+  type ExportableDocument,
+  type PageDimensions,
+  type PageSize,
+  type PositionedText,
+  type RenderedPdfArtifact,
+  type ResumeDocument,
+  type TemplateId,
 } from '../../../../core/domain';
+export type { RenderedPdfArtifact };
+import type { PreviewZoom } from '../context';
 import { cn } from './primitives';
 
-let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null =
-  null;
+type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+type RenderTask = ReturnType<
+  Awaited<ReturnType<PdfJsModule['getDocument']>['promise']>['getPage'] extends (
+    pageNumber: number,
+  ) => Promise<infer P>
+    ? P extends { render: (...args: never[]) => infer R }
+      ? () => R
+      : never
+    : never
+>;
 
-async function loadPdfJs() {
+let pdfjsPromise: Promise<PdfJsModule> | null = null;
+
+async function loadPdfJs(): Promise<PdfJsModule> {
   if (!pdfjsPromise) {
     pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((mod) => {
       if (typeof window !== 'undefined' && mod.GlobalWorkerOptions) {
@@ -31,7 +44,7 @@ async function loadPdfJs() {
   return pdfjsPromise;
 }
 
-export const SAMPLE_THUMBNAIL_RESUME: ResumeDocument = {
+const SAMPLE_THUMBNAIL_RESUME: ResumeDocument = {
   kind: 'resume',
   contentHash: 'sample-thumbnail-resume',
   meta: {
@@ -113,15 +126,10 @@ function computeOverlayGeometry(params: {
   pageSize: PageSize;
   skimMode: boolean;
   skimKeywordTerms: string[];
-  highlightedTerm?: string | null;
-  hoveredBlockId?: string | null;
-  highlightedSourceId?: string | null;
-}): {
-  skimVeilRects: OverlayRect[];
-  skimAnchorRects: OverlayRect[];
-  termHighlightRects: OverlayRect[];
-  hoveredBlockRects: BlockBoundingBox[];
-} {
+  highlightedTerm?: string;
+  hoveredBlockId?: string;
+  highlightedSourceId?: string;
+}) {
   const {
     page,
     document: doc,
@@ -138,7 +146,6 @@ function computeOverlayGeometry(params: {
   const skimVeilRects: OverlayRect[] = [];
   const skimAnchorRects: OverlayRect[] = [];
   const termHighlightRects: OverlayRect[] = [];
-
   const cleanHighlight = (highlightedTerm ?? '').trim().toLowerCase();
 
   for (const span of pageSpans) {
@@ -156,7 +163,6 @@ function computeOverlayGeometry(params: {
     const spanH = (span.height ?? fontSize) * 1.24;
     const topY = Math.max(0, span.y - fontSize * 0.88);
 
-    // 1. Term cross-highlight check
     if (cleanHighlight && text.toLowerCase().includes(cleanHighlight)) {
       const lowerText = text.toLowerCase();
       let searchFrom = 0;
@@ -191,9 +197,7 @@ function computeOverlayGeometry(params: {
       }
     }
 
-    // 2. Skim view segmentation
     if (skimMode) {
-      // Name, role headers, and section headings (`bold === true`) are always primary skim anchors
       const isDateSpan = /\b(19|20)\d{2}\b|\bPresent\b/i.test(text);
       if (span.bold || isDateSpan || fontSize >= 10.2) {
         skimAnchorRects.push({
@@ -239,15 +243,15 @@ function computeOverlayGeometry(params: {
     }
   }
 
-  // 3. Hovered block or source ID bounding box via pure domain `locateBlocks`
-  let targetBlockIds: string[] = [];
-  if (hoveredBlockId) {
-    targetBlockIds.push(hoveredBlockId);
-  }
+  const targetBlockIds: string[] = [];
+  if (hoveredBlockId) targetBlockIds.push(hoveredBlockId);
   if (highlightedSourceId) {
     if (doc.kind === 'coverLetter') {
       for (const b of doc.blocks) {
-        if (b.sourceIds.includes(highlightedSourceId) || b.id === highlightedSourceId) {
+        if (
+          b.sourceIds.includes(highlightedSourceId) ||
+          b.id === highlightedSourceId
+        ) {
           targetBlockIds.push(b.id);
         }
       }
@@ -265,18 +269,16 @@ function computeOverlayGeometry(params: {
     }
   }
 
-  const hoveredBlockRects =
-    targetBlockIds.length > 0
-      ? locateBlocks(doc, positionedText, pageSize).filter(
-          (box) => box.page === page && targetBlockIds.includes(box.blockId),
-        )
-      : [];
-
   return {
     skimVeilRects,
     skimAnchorRects,
     termHighlightRects,
-    hoveredBlockRects,
+    hoveredBlockRects:
+      targetBlockIds.length > 0
+        ? locateBlocks(doc, positionedText, pageSize).filter(
+            (box) => box.page === page && targetBlockIds.includes(box.blockId),
+          )
+        : [],
   };
 }
 
@@ -285,7 +287,7 @@ function computeOverlayGeometry(params: {
  * Uses strictly SVG attributes (zero inline styles) to render Skim view veils/anchors,
  * requirement cross-highlights, and bullet/paragraph hover boxes.
  */
-export function PreviewOverlay({
+function PreviewOverlay({
   page,
   document: doc,
   positionedText,
@@ -302,9 +304,9 @@ export function PreviewOverlay({
   pageSize?: PageSize;
   skimMode?: boolean;
   skimKeywordTerms?: string[];
-  highlightedTerm?: string | null;
-  hoveredBlockId?: string | null;
-  highlightedSourceId?: string | null;
+  highlightedTerm?: string;
+  hoveredBlockId?: string;
+  highlightedSourceId?: string;
 }) {
   const dims = PAGE_SIZES[pageSize];
   const geometry = useMemo(
@@ -333,12 +335,15 @@ export function PreviewOverlay({
     ],
   );
 
-  const hasAnyOverlay =
-    skimMode ||
-    geometry.termHighlightRects.length > 0 ||
-    geometry.hoveredBlockRects.length > 0;
-
-  if (!hasAnyOverlay) return null;
+  if (
+    !(
+      skimMode ||
+      geometry.termHighlightRects.length > 0 ||
+      geometry.hoveredBlockRects.length > 0
+    )
+  ) {
+    return null;
+  }
 
   return (
     <svg
@@ -347,7 +352,6 @@ export function PreviewOverlay({
       aria-label={`Preview overlay page ${page}`}
       className="pointer-events-none absolute inset-0 w-full h-full select-none"
     >
-      {/* 1. Skim view non-anchor veils (soft paper veil over filler words so only skim anchors pop) */}
       {skimMode &&
         geometry.skimVeilRects.map((rect, idx) => (
           <rect
@@ -361,8 +365,6 @@ export function PreviewOverlay({
             fillOpacity="0.76"
           />
         ))}
-
-      {/* 2. Skim view anchor subtle bottom guide markers */}
       {skimMode &&
         geometry.skimAnchorRects.map((rect, idx) => (
           <rect
@@ -376,8 +378,6 @@ export function PreviewOverlay({
             fillOpacity="0.28"
           />
         ))}
-
-      {/* 3. Hovered bullet / paragraph block focus frame */}
       {geometry.hoveredBlockRects.map((box) => (
         <rect
           key={`block-${box.blockId}`}
@@ -393,8 +393,6 @@ export function PreviewOverlay({
           strokeOpacity="0.55"
         />
       ))}
-
-      {/* 4. Requirement term cross-highlight rects */}
       {geometry.termHighlightRects.map((rect, idx) => (
         <rect
           key={`hl-${idx}`}
@@ -413,24 +411,17 @@ export function PreviewOverlay({
   );
 }
 
-const ZOOM_CONTAINER_CLASSES = {
+const ZOOM_CONTAINER_CLASSES: Record<PreviewZoom, string> = {
   sm: 'max-w-[640px]',
   md: 'max-w-[760px]',
   lg: 'max-w-[840px]',
-} as const;
+};
 
-const ZOOM_RENDER_SCALES = {
+const ZOOM_RENDER_SCALES: Record<PreviewZoom, number> = {
   sm: 1.25,
   md: 1.45,
   lg: 1.65,
-} as const;
-
-export interface PdfPreviewArtifactInfo {
-  bytes: Uint8Array;
-  pageCount: number;
-  contentHash: string;
-  positionedText: PositionedText[];
-}
+};
 
 function drawVectorPageToCanvas(params: {
   canvas: HTMLCanvasElement;
@@ -438,7 +429,7 @@ function drawVectorPageToCanvas(params: {
   positionedText: PositionedText[];
   pageNumber: number;
   scale: number;
-  spec: { widthPt: number; heightPt: number };
+  spec: PageDimensions;
 }) {
   const { canvas, doc, positionedText, pageNumber, scale, spec } = params;
   const targetWidth = Math.round(spec.widthPt * scale);
@@ -447,6 +438,7 @@ function drawVectorPageToCanvas(params: {
     canvas.width = targetWidth;
     canvas.height = targetHeight;
   }
+
   const visibleCtx = canvas.getContext('2d');
   if (!visibleCtx) return;
 
@@ -454,10 +446,9 @@ function drawVectorPageToCanvas(params: {
   visibleCtx.fillRect(0, 0, canvas.width, canvas.height);
 
   const pageTexts = positionedText.filter((pt) => pt.page === pageNumber);
-
-  // Draw hairline rules for section headers
   visibleCtx.strokeStyle = '#E2E8F0';
   visibleCtx.lineWidth = Math.max(0.5, 0.5 * (scale / 1.5));
+
   const marginPt = 36;
   const leftX = marginPt * scale;
   const rightX = (spec.widthPt - marginPt) * scale;
@@ -477,19 +468,17 @@ function drawVectorPageToCanvas(params: {
     visibleCtx.stroke();
   }
 
-  // Draw header divider rule on page 1
   if (pageNumber === 1) {
     const summaryHeading = pageTexts.find((pt) =>
       /^(SUMMARY|EXPERIENCE|PROJECTS|SKILLS)$/i.test(pt.text.trim()),
     );
     const cutoffY = summaryHeading ? summaryHeading.y : 120;
-    const contactItems = pageTexts.filter(
-      (pt) => pt.y < cutoffY && (pt.fontSize ?? 10) <= 9.75 && pt.y > 35,
-    );
-    const lastContact = contactItems.reduce(
-      (max, pt) => (pt.y > (max?.y ?? 0) ? pt : max),
-      undefined as PositionedText | undefined,
-    );
+    const lastContact = pageTexts
+      .filter((pt) => pt.y < cutoffY && (pt.fontSize ?? 10) <= 9.75 && pt.y > 35)
+      .reduce<PositionedText | undefined>(
+        (max, pt) => (pt.y > (max?.y ?? 0) ? pt : max),
+        undefined,
+      );
     if (lastContact) {
       const headerRuleY = Math.round((lastContact.y + 6) * scale) + 0.5;
       visibleCtx.strokeStyle =
@@ -503,16 +492,16 @@ function drawVectorPageToCanvas(params: {
   }
 
   for (const item of pageTexts) {
-    const isHeadingFont =
+    const fontFamilies =
       doc.meta.templateId === 'classic' &&
       (item.fontSize ?? 10) >= 10.5 &&
-      item.bold;
-    const fontFamilies = isHeadingFont
-      ? 'Fraunces, Georgia, serif'
-      : 'Plus Jakarta Sans, -apple-system, sans-serif';
-    const weight = item.bold ? '600 ' : '400 ';
-    const pxSize = Math.max(2.5, (item.fontSize ?? 10) * scale);
-    visibleCtx.font = `${weight}${pxSize}px ${fontFamilies}`;
+      item.bold
+        ? 'Fraunces, Georgia, serif'
+        : 'Plus Jakarta Sans, -apple-system, sans-serif';
+    visibleCtx.font = `${item.bold ? '600 ' : '400 '}${Math.max(
+      2.5,
+      (item.fontSize ?? 10) * scale,
+    )}px ${fontFamilies}`;
     visibleCtx.fillStyle =
       (item.fontSize ?? 10) <= 9.2 && !item.bold ? '#525B6B' : '#151A22';
     visibleCtx.textBaseline = 'alphabetic';
@@ -541,29 +530,27 @@ function SinglePagePdfCanvas({
 }: {
   pdfBytes: Uint8Array;
   pageNumber: number;
-  zoom: 'sm' | 'md' | 'lg';
+  zoom: PreviewZoom;
   pageSize: PageSize;
   document: ExportableDocument;
   positionedText: PositionedText[];
-  skimMode: boolean;
-  skimKeywordTerms: string[];
-  highlightedTerm?: string | null;
-  hoveredBlockId?: string | null;
-  highlightedSourceId?: string | null;
+  skimMode?: boolean;
+  skimKeywordTerms?: string[];
+  highlightedTerm?: string;
+  hoveredBlockId?: string;
+  highlightedSourceId?: string;
   onRenderDone?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const renderTaskRef = useRef<{ cancel?: () => void } | null>(null);
+  const renderTaskRef = useRef<RenderTask | null>(null);
   const onRenderDoneRef = useRef(onRenderDone);
   onRenderDoneRef.current = onRenderDone;
 
   useEffect(() => {
     let cancelled = false;
-
     async function drawPage() {
       const canvas = canvasRef.current;
       if (!canvas) return;
-
       const spec = PAGE_SIZES[pageSize] ?? PAGE_SIZES.letter;
       const dpr =
         typeof window !== 'undefined'
@@ -571,7 +558,6 @@ function SinglePagePdfCanvas({
           : 1.5;
       const scale = ZOOM_RENDER_SCALES[zoom] * dpr;
 
-      // Immediately draw crisp vector page from positionedText so canvas is never blank
       drawVectorPageToCanvas({
         canvas,
         doc,
@@ -585,21 +571,17 @@ function SinglePagePdfCanvas({
       try {
         const pdfjs = await loadPdfJs();
         if (cancelled) return;
-
         const dataCopy = new Uint8Array(pdfBytes);
-        const loadingTask = pdfjs.getDocument({
+        const pdfDoc = await pdfjs.getDocument({
           data: dataCopy,
           useSystemFonts: true,
-        });
-        const pdfDoc = await loadingTask.promise;
+        }).promise;
         if (cancelled) return;
-
         const clampedPage = Math.max(1, Math.min(pdfDoc.numPages, pageNumber));
         const pdfPage = await pdfDoc.getPage(clampedPage);
         if (cancelled) return;
 
         const viewport = pdfPage.getViewport({ scale });
-
         const offscreen = window.document.createElement('canvas');
         offscreen.width = Math.round(viewport.width);
         offscreen.height = Math.round(viewport.height);
@@ -613,7 +595,7 @@ function SinglePagePdfCanvas({
           try {
             renderTaskRef.current.cancel();
           } catch {
-            // Ignore cancel error
+            // ignore cancellation errors
           }
         }
 
@@ -624,7 +606,6 @@ function SinglePagePdfCanvas({
         });
         renderTaskRef.current = task;
         await task.promise;
-
         if (cancelled) return;
 
         canvas.width = offscreen.width;
@@ -635,7 +616,7 @@ function SinglePagePdfCanvas({
         }
         onRenderDoneRef.current?.();
       } catch {
-        // Synchronous vector render is already displayed on canvas
+        // Vector canvas fallback remains visible
       }
     }
 
@@ -647,7 +628,7 @@ function SinglePagePdfCanvas({
         try {
           renderTaskRef.current.cancel();
         } catch {
-          // Ignore
+          // ignore
         }
       }
     };
@@ -663,7 +644,9 @@ function SinglePagePdfCanvas({
     >
       <canvas
         ref={canvasRef}
-        aria-label={`${doc.kind === 'coverLetter' ? 'Cover letter' : 'Resume'} PDF page ${pageNumber}`}
+        aria-label={`${
+          doc.kind === 'coverLetter' ? 'Cover letter' : 'Resume'
+        } PDF page ${pageNumber}`}
         className="block w-full h-auto bg-paper"
       />
       <PreviewOverlay
@@ -699,26 +682,28 @@ export function PdfPreview({
   onArtifactReady,
 }: {
   document: ExportableDocument;
-  zoom?: 'sm' | 'md' | 'lg';
+  zoom?: PreviewZoom;
   pageSize?: PageSize;
   skimMode?: boolean;
   skimKeywordTerms?: string[];
-  highlightedTerm?: string | null;
-  highlightedSourceId?: string | null;
-  hoveredBlockId?: string | null;
-  onArtifactReady?: (artifact: PdfPreviewArtifactInfo) => void;
+  highlightedTerm?: string;
+  highlightedSourceId?: string;
+  hoveredBlockId?: string;
+  onArtifactReady?: (artifact: RenderedPdfArtifact) => void;
 }) {
-  const templateId = doc.meta.templateId || 'classic';
-
-  // Initial synchronous artifact so first paint has zero layout shift
+  const templateId: TemplateId = doc.meta.templateId || 'classic';
   const initialArtifact = useMemo(
-    () => renderDocumentToPdfArtifact(doc, { templateId, pageSize }),
+    () =>
+      renderDocumentToPdfArtifact(doc, {
+        templateId,
+        pageSize,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
   const [activeArtifact, setActiveArtifact] =
-    useState<PdfPreviewArtifactInfo>(initialArtifact);
+    useState<RenderedPdfArtifact>(initialArtifact);
   const [activeDoc, setActiveDoc] = useState<ExportableDocument>(doc);
   const [isUpdating, setIsUpdating] = useState(false);
   const lastRenderedKeyRef = useRef(
@@ -732,11 +717,12 @@ export function PdfPreview({
   }, [initialArtifact]);
 
   useEffect(() => {
-    const nextKey = `${doc.contentHash}::${templateId}::${pageSize}`;
-    if (nextKey === lastRenderedKeyRef.current) {
+    if (
+      `${doc.contentHash}::${templateId}::${pageSize}` ===
+      lastRenderedKeyRef.current
+    ) {
       return;
     }
-
     setIsUpdating(true);
     const timer = setTimeout(() => {
       const nextArtifact = renderDocumentToPdfArtifact(doc, {
@@ -748,7 +734,6 @@ export function PdfPreview({
       setActiveDoc(doc);
       onArtifactReadyRef.current?.(nextArtifact);
     }, 250);
-
     return () => clearTimeout(timer);
   }, [doc, doc.contentHash, templateId, pageSize]);
 
@@ -779,9 +764,8 @@ export function PdfPreview({
           </span>
         </div>
       )}
-
       {pages.map((pageNum) => (
-        <React.Fragment key={pageNum}>
+        <Fragment key={pageNum}>
           {pageNum > 1 && (
             <div
               aria-label={`Page ${pageNum} break`}
@@ -808,23 +792,23 @@ export function PdfPreview({
             highlightedSourceId={highlightedSourceId}
             onRenderDone={() => setIsUpdating(false)}
           />
-        </React.Fragment>
+        </Fragment>
       ))}
     </div>
   );
 }
 
-const THUMBNAIL_FRAME_CLASSES = {
+const THUMBNAIL_FRAME_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
   xs: 'w-11 h-14',
   sm: 'w-20 h-26',
   md: 'w-[112px] h-[145px]',
-} as const;
+};
 
-const THUMBNAIL_SCALES = {
+const THUMBNAIL_SCALES: Record<'xs' | 'sm' | 'md', number> = {
   xs: 0.16,
   sm: 0.26,
   md: 0.36,
-} as const;
+};
 
 /**
  * `PdfThumbnail` (also aliased as `PageThumbnail`):
@@ -850,22 +834,31 @@ export function PdfThumbnail({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const thumbTargetDoc: ExportableDocument = useMemo(() => {
+  const thumbTargetDoc = useMemo<ExportableDocument>(() => {
     if (coverLetterDoc) {
       return {
         ...coverLetterDoc,
-        meta: { ...coverLetterDoc.meta, templateId },
+        meta: {
+          ...coverLetterDoc.meta,
+          templateId,
+        },
       };
     }
     if (resumeDoc) {
       return {
         ...resumeDoc,
-        meta: { ...resumeDoc.meta, templateId },
+        meta: {
+          ...resumeDoc.meta,
+          templateId,
+        },
       };
     }
     return {
       ...SAMPLE_THUMBNAIL_RESUME,
-      meta: { ...SAMPLE_THUMBNAIL_RESUME.meta, templateId },
+      meta: {
+        ...SAMPLE_THUMBNAIL_RESUME.meta,
+        templateId,
+      },
     };
   }, [coverLetterDoc, resumeDoc, templateId]);
 
@@ -879,19 +872,19 @@ export function PdfThumbnail({
   );
 
   const effectiveBytes = useMemo(() => {
-    if (pdfBytes && pdfBytes.byteLength > 0) {
-      return pdfBytes;
-    }
-    if (pdfBytesBase64 && pdfBytesBase64.length > 0 && typeof atob === 'function') {
+    if (pdfBytes && pdfBytes.byteLength > 0) return pdfBytes;
+    if (
+      pdfBytesBase64 &&
+      pdfBytesBase64.length > 0 &&
+      typeof atob === 'function'
+    ) {
       try {
         const bin = atob(pdfBytesBase64);
         const arr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) {
-          arr[i] = bin.charCodeAt(i);
-        }
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
         if (arr.byteLength > 0) return arr;
       } catch {
-        // Fallback to rendering document
+        // fallback to generated artifact
       }
     }
     return thumbArtifact.bytes;
@@ -899,12 +892,9 @@ export function PdfThumbnail({
 
   useEffect(() => {
     let cancelled = false;
-
     async function drawThumb() {
       const canvas = canvasRef.current;
       if (!canvas) return;
-
-      // Immediately draw vector thumbnail so it is never blank
       drawVectorPageToCanvas({
         canvas,
         doc: thumbTargetDoc,
@@ -925,20 +915,27 @@ export function PdfThumbnail({
         if (cancelled) return;
         const page1 = await pdfDoc.getPage(1);
         if (cancelled) return;
-        const viewport = page1.getViewport({ scale: THUMBNAIL_SCALES[size] * 2 });
+        const viewport = page1.getViewport({
+          scale: THUMBNAIL_SCALES[size] * 2,
+        });
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await page1.render({ canvasContext: ctx, viewport, canvas }).promise;
+        await page1.render({
+          canvasContext: ctx,
+          viewport,
+          canvas,
+        }).promise;
       } catch {
-        // Vector thumbnail is already rendered
+        // vector fallback stays visible
       }
     }
 
     void drawThumb();
+
     return () => {
       cancelled = true;
     };

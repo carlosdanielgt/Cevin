@@ -43,12 +43,45 @@ export function resolveMlxModelPath(modelIdOrPath: string): string {
   return `./${clean}`;
 }
 
+export function isFineTunedCevinMlxModel(modelIdOrPath: string): boolean {
+  const lower = modelIdOrPath.trim().toLowerCase();
+  if (!lower) return true;
+  if (lower.startsWith('mlx-community/') || lower.includes('base-instruct')) {
+    return false;
+  }
+  return (
+    lower === 'qwen2.5-1.5b-instruct-4bit' ||
+    lower === 'cevin-1.5b-4bit-fused' ||
+    lower === './cevin-1.5b-4bit-fused' ||
+    lower === 'cevin-3b-4bit-fused' ||
+    lower === './cevin-3b-4bit-fused' ||
+    lower === 'demo mode'
+  );
+}
+
 export type MlxCareerTaskName =
   | 'experience_extraction'
   | 'experience_matching'
   | 'hallucination_audit'
   | 'bullet_evaluation_and_rewrite'
   | 'executive_summary_synthesis';
+
+const UNTUNED_TASK_JSON_SHAPES: Record<MlxCareerTaskName, string> = {
+  experience_extraction:
+    'Return ONLY a JSON object with exact keys: {"task":"experience_extraction","evidence_quote":string,"domain":string,"company":string,"role_context":string,"timeframe":string,"project":string,"action":string,"technologies":string[],"scale":string,"impact":string}.',
+  experience_matching:
+    'Return ONLY a JSON object with exact keys: {"task":"experience_matching","experience_id":string,"direct_evidence":string,"missing_evidence":string,"reasoning":string,"confidence":number,"match_level":"strong"|"covered"|"partial"|"none"|"gap"}.',
+  hallucination_audit:
+    'Return ONLY a JSON object with exact keys: {"task":"hallucination_audit","violations":string[],"explanation":string,"factual_consistency_score":number,"verdict":"supported"|"unsupported"|"grounded"|"hallucinated","corrected_bullet":string}.',
+  bullet_evaluation_and_rewrite:
+    'Return ONLY a JSON object with exact keys: {"task":"bullet_evaluation_and_rewrite","critique":string,"draft_scores":{"ownership":number,"action":number,"technical_depth":number,"scope":number,"impact":number,"clarity":number},"missing_evidence_questions":string[],"grounded_rewrite":string}.',
+  executive_summary_synthesis:
+    'Return ONLY a JSON object with exact keys: {"task":"executive_summary_synthesis","jd_sentiment_and_pain_point":string,"ideal_candidate_archetype":string,"selected_skills":string[],"omitted_jd_skills":string[],"verified_metrics_used":string[],"tailored_summary":string}.',
+};
+
+export function getUntunedJsonSchemaHint(task: MlxCareerTaskName): string {
+  return UNTUNED_TASK_JSON_SHAPES[task];
+}
 
 // ============================================================================
 // Task 1: experience_extraction (temp = 0.0)
